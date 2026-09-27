@@ -420,10 +420,15 @@ function VersionForm({ discussion, plans }: { discussion: FeeDiscussion; plans: 
     },
   );
   const offers = discussion.applicable_offers ?? [];
+  const used = discussion.used_offers ?? [];
   const e = form.formState.errors;
+  const offerHint = [
+    offers.length ? null : "No active offer for this course and branch today",
+    used.length ? `Already used by this learner (one use per person): ${used.map((u) => `${u.offer_code} on ${u.admission_code}`).join(", ")}` : null,
+  ].filter(Boolean).join(" · ");
   return (
     <form className="grid gap-3 sm:grid-cols-2" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
-      <Field label="Offer" htmlFor="v-offer" hint={offers.length ? undefined : "No active offer for this course and branch today"} error={e.offer_id?.message}>
+      <Field label="Offer" htmlFor="v-offer" hint={offerHint || undefined} error={e.offer_id?.message}>
         <NativeSelect
           id="v-offer"
           placeholder="No offer"

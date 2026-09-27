@@ -29,6 +29,7 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | Prototype v1.1 | ✅ Done | `012_prototype_v1_1.sql` — invoices, correction requests, demo reminders, imports, saved views |
 | Demo course optional | ✅ Done | `013_demo_course_optional.sql` — `demos.course_id` nullable |
 | Intake → genuine sync | ✅ Done | `014_lead_intake_sync_genuine.sql` — lead Invalid-Spam / Test excludes its enquiries from Genuine Enquiries |
+| Offer once per person | ✅ Done | `015_offer_once_per_person.sql` — a person can use each offer only once |
 
 Phases 0–3 cover the complete sales-to-cash flow and are the MVP. Phases 4–6 can follow as their screens are built.
 
@@ -275,3 +276,18 @@ Source: the Lovable project's code (`prototype/`), checked by running it with Pl
 |---|---|
 | `trg_leads_sync_enquiry_genuine` (AFTER UPDATE OF `leads.intake_status`) → `sync_lead_intake_to_enquiries()` | Staff classify the lead, but the Genuine Enquiries count reads `enquiries`. Moving a lead into Invalid-Spam / Test sets `is_genuine = FALSE` on all its enquiries; moving it out sets `is_genuine = TRUE` (re-classified by staff); other status changes leave enquiries alone |
 | Backfill | Enquiries of leads already in Invalid-Spam / Test with `is_genuine` NULL → FALSE |
+
+## Offer once per person (015) ✅
+
+A person can use each offer only once. "Using" an offer = an admission that applies it — as the offer on the admission's fee version (discount offers) or as the offer granting a complimentary admission. All versions of an offer (same `offer_code`) are the same offer.
+
+| Added | Purpose |
+|---|---|
+| `person_offer_redemptions` (view) | Every non-cancelled admission that applied an offer: person, offer code / id, admission, `redemption_admission_id` (the paid admission for complimentary courses), used as Fee offer / Complimentary course |
+| `check_offer_once_per_person()` + `trg_admissions_z_offer_once` (BEFORE INSERT on `admissions`, after `trg_admissions_before_insert`) | Refuses an admission whose offer the person already used on a different admission: "Offer X has already been used by this person (admission NIT-…); an offer can be used only once per person". Takes a per-person advisory lock so two concurrent admissions can't both use it |
+
+Rules:
+- The paid admission and the complimentary course(s) granted on top of it are one use.
+- Cancelled admissions don't count — cancelling the admission that used an offer makes it available to that person again (assumption, to confirm).
+- The API also hides used offers from the fee version picker and refuses them when saving a version or issuing an invoice, so the block normally shows before any payment.
+

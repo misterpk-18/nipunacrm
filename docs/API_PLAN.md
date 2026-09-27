@@ -360,7 +360,7 @@ Tables: `fee_discussions`, `fee_discussion_versions`, `special_closing_requests`
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | GET / POST | `/leads/{id}/fee-discussions` | Counsellors, BM | |
-| GET | `/fee-discussions/{id}` | Scoped | Current version, history, milestone, applicable offers |
+| GET | `/fee-discussions/{id}` | Scoped | Current version, history, milestone, applicable offers (minus offers the person already used), `used_offers` (offer code + admission that used it) |
 | POST | `/fee-discussions/{id}/versions` | Counsellors | New version (amounts frozen once saved) |
 | POST | `/fee-discussions/{id}/share` | Counsellors | Milestone Fee Shared |
 | POST | `/fee-discussions/{id}/accept-plan` | Counsellors | Accepted version + delivery mode + seat type + planned start (admission prerequisite 1) |
@@ -371,6 +371,8 @@ Tables: `fee_discussions`, `fee_discussion_versions`, `special_closing_requests`
 | POST | `/special-closing-requests/{id}/counteroffer` | BM, Admins | Counter amount |
 | POST | `/special-closing-requests/{id}/reject` | BM, Admins | Reason required |
 | POST | `/fee-discussion-versions/{id}/approve` | BM, Admins | Needs an approved SCR if there's an extra concession or it's below floor |
+
+**Offer once per person (migration 015):** an offer (any version of the same `offer_code`) can be used once per person. Saving a version with an already-used offer and issuing an invoice for one return 422 `BUSINESS_RULE` naming the admission that used it; the database refuses the admission itself as a last line (covers parallel discussions and complimentary courses). Cancelled admissions release the offer.
 
 **As built (step 7):**
 - Also `GET /special-closing-requests/{id}`. One open discussion per lead + course (409 names the existing one). Starting a discussion moves an early-stage lead to Fee Discussion / Payment Awaited.

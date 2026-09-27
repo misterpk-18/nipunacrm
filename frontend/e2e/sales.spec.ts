@@ -74,7 +74,7 @@ test("counsellor workspace shows queue counts, rows and AI next best action @mob
 
 test("branch manager sees branch-wide queue counts", async ({ page }) => {
   await login(page, USERS.bmGnt);
-  await page.goto("/counsellor?queue=new");
+  await page.goto("/counsellor?queue=new&q=Bhavana");
   await expect(page.getByRole("tab", { name: /^New/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("Bhavana Sri").first()).toBeVisible(); // unassigned GNT lead: not in anyone's own queue
 });

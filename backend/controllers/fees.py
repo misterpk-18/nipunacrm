@@ -23,7 +23,8 @@ def start_discussion(lead_id: int):
 def get_discussion(discussion_id: int):
     discussion = fees_service.get_discussion(discussion_id)
     offers = fees_service.applicable_offers(discussion)
-    return ok({**discussion.to_dict(), "applicable_offers": [o.to_dict() for o in offers]})
+    return ok({**discussion.to_dict(), "applicable_offers": [o.to_dict() for o in offers],
+               "used_offers": fees_service.used_offers(discussion)})
 
 
 def add_version(discussion_id: int):

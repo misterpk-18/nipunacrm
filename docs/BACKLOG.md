@@ -14,6 +14,7 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 | D4 | Password policy / MFA at launch | 10-char minimum, lockout after 5 failures |
 | D5 | LLM for AI features | Rule-based fallback; OpenAI + LangSmith keys are in `.env` for later (code reads `ANTHROPIC_API_KEY` today) |
 | D6 | Production hosting | Plan: nginx serving `frontend/dist` and proxying `/api` to gunicorn on one origin |
+| D7 | Offer once per person — what counts as "used" | Built: used = an admission applies the offer (discount or complimentary); counted per person across all versions of the offer; a cancelled admission releases it. Confirm cancellation should release it, and whether a still-open fee discussion or issued invoice should also reserve the offer |
 
 ## 2. API gaps
 

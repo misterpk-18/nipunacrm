@@ -97,8 +97,26 @@ def start_discussion(lead_id: int, data: dict) -> FeeDiscussion:
     return discussion
 
 
+def used_offers(discussion: FeeDiscussion) -> list[dict]:
+    """Offers this discussion's person has already used — each offer can be used only once per person."""
+    return fees_repo.used_offers(discussion.lead.person_id)
+
+
 def applicable_offers(discussion: FeeDiscussion) -> list[Offer]:
-    return fees_repo.applicable_offers(discussion.branch_id, discussion.course_id, date.today())
+    """Active offers for the course and branch today, minus offers the person has already used."""
+    used = {u["offer_code"] for u in used_offers(discussion)}
+    offers = fees_repo.applicable_offers(discussion.branch_id, discussion.course_id, date.today())
+    return [o for o in offers if o.offer_code not in used]
+
+
+def check_offer_not_used(discussion: FeeDiscussion, offer: Offer | None) -> None:
+    if offer is None:
+        return
+    used = next((u for u in used_offers(discussion) if u["offer_code"] == offer.offer_code), None)
+    if used:
+        raise BusinessRule(f"Offer {offer.offer_code} has already been used by this person (admission "
+                           f"{used['admission_code']}); an offer can be used only once per person",
+                           {"offer_id": ["Already used by this person"]})
 
 
 def _offer_discount(offer: Offer, standard_fee: Decimal) -> Decimal:
@@ -119,6 +137,7 @@ def add_version(discussion_id: int, data: dict) -> FeeDiscussionVersion:
     standard_fee = discussion.course.standard_fee
     offer_discount = Decimal("0.00")
     if data.get("offer_id"):
+        check_offer_not_used(discussion, db.session.get(Offer, data["offer_id"]))
         offer = next((o for o in applicable_offers(discussion) if o.offer_id == data["offer_id"]), None)
         if offer is None:
             raise ValidationError("That offer isn't active for this course and branch today",

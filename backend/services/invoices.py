@@ -35,6 +35,7 @@ def issue(version_id: int, data: dict) -> Invoice:
     if version.status != "Approved":
         raise BusinessRule(f"Invoices are issued only from an Approved fee version (version {version.version_no} is "
                            f"{version.status})")
+    fees_service.check_offer_not_used(discussion, version.offer)
     invoice = Invoice(fee_version_id=version.version_id, day0_date=data.get("day0_date") or date.today(),
                       agreed_due_days=data.get("agreed_due_days"), terms=data.get("terms"),
                       issued_by=current_user().user_id)

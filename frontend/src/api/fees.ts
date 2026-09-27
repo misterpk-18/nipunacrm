@@ -66,7 +66,11 @@ export type FeeDiscussion = {
   versions: FeeVersion[];
   created_at: DateTime;
   applicable_offers?: Offer[];
+  /** Offers this person has already used — each offer can be used only once per person. */
+  used_offers?: UsedOffer[];
 };
+
+export type UsedOffer = { offer_code: string; admission_id: number; admission_code: string; used_as: string };
 
 export type SpecialClosingRequest = ScrSummary & {
   version_id: number;

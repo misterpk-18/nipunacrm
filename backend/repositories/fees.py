@@ -1,5 +1,5 @@
 """Fee discussions, versions, special closing requests, and approver limits."""
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, text
 
 from config.database import db
 from models import (
@@ -32,6 +32,15 @@ def applicable_offers(branch_id: int, course_id: int, on_date) -> list[Offer]:
         .order_by(Offer.offer_code)
     )
     return list(db.session.execute(stmt).scalars())
+
+
+def used_offers(person_id: int) -> list[dict]:
+    """Offers the person has already used (one row per offer code, earliest admission), from person_offer_redemptions."""
+    rows = db.session.execute(text(
+        "SELECT DISTINCT ON (offer_code) offer_code, admission_id, admission_code, used_as "
+        "FROM person_offer_redemptions WHERE person_id = :person_id ORDER BY offer_code, admission_id"),
+        {"person_id": person_id}).mappings()
+    return [dict(row) for row in rows]
 
 
 def approver_limits(user_id: int, branch_id: int) -> list[ConcessionLimit]:
