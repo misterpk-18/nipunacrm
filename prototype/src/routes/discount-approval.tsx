@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { DiscountApproval } from "@/components/crm/screens";
+export const Route=createFileRoute("/discount-approval")({head:()=>({meta:[{title:"Special Closing Request — Nipuna CRM Prototype"},{name:"description",content:"Human approval workflow for sample special closing requests."},{property:"og:title",content:"Special Closing Request — Nipuna CRM"},{property:"og:description",content:"Human approval workflow for sample special closing requests."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=><DiscountApproval />});

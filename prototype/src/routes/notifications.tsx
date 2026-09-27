@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { Notifications } from "@/components/crm/screens";
+export const Route=createFileRoute("/notifications")({head:()=>({meta:[{title:"Notification Centre — Nipuna CRM Prototype"},{name:"description",content:"Sample operational alerts and action states."},{property:"og:title",content:"Notification Centre — Nipuna CRM"},{property:"og:description",content:"Sample operational alerts and action states."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:Notifications});

@@ -1,0 +1,4 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { AdminHub } from "@/components/crm/screens";
+import { ConfigAccess } from "@/components/crm/config-access";
+export const Route=createFileRoute("/admin")({head:()=>({meta:[{title:"Admin & Settings — Nipuna CRM Prototype"},{name:"description",content:"Restricted prototype configuration and readiness."},{property:"og:title",content:"Admin & Settings — Nipuna CRM"},{property:"og:description",content:"Restricted prototype configuration and readiness."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=> <ConfigAccess><AdminHub/></ConfigAccess>});

@@ -1,0 +1,4 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { TargetMaster } from "@/components/crm/screens";
+import { ConfigAccess } from "@/components/crm/config-access";
+export const Route=createFileRoute("/target-master")({head:()=>({meta:[{title:"Target Master — Nipuna CRM Prototype"},{name:"description",content:"Versioned sample branch and company targets."},{property:"og:title",content:"Target Master — Nipuna CRM"},{property:"og:description",content:"Versioned sample branch and company targets."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=> <ConfigAccess><TargetMaster/></ConfigAccess>});

@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { Dashboard } from "@/components/crm/screens";
+export const Route=createFileRoute("/branch-manager")({head:()=>({meta:[{title:"Branch Manager Dashboard — Nipuna CRM Prototype"},{name:"description",content:"Branch-level sample operations and learning summary."},{property:"og:title",content:"Branch Manager Dashboard — Nipuna CRM"},{property:"og:description",content:"Branch-level sample operations and learning summary."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=><Dashboard manager />});

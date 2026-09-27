@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { PlacementAlumni } from "@/components/crm/screens";
+export const Route=createFileRoute("/placement-alumni")({head:()=>({meta:[{title:"Placement & Alumni — Nipuna CRM Prototype"},{name:"description",content:"Sample career-assistance and alumni records."},{property:"og:title",content:"Placement & Alumni — Nipuna CRM"},{property:"og:description",content:"Sample career-assistance and alumni records."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:PlacementAlumni});

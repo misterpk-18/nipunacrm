@@ -1,0 +1,1449 @@
+# Nipuna CRM API — request collection (VS Code REST Client / JetBrains HTTP client).
+# Generated from the Flask URL map. Log in first, then paste the token into @token.
+@base = http://127.0.0.1:5050
+@token = paste-token-here
+
+### Log in
+POST {{base}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "admin@nipuna.test", "password": "Nipuna-staging-1"}
+
+# ================================================================ admissions
+### admissions.apply_fee_change
+POST {{base}}/api/v1/admission-fee-changes/1/apply
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.approve_fee_change
+POST {{base}}/api/v1/admission-fee-changes/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.reject_fee_change
+POST {{base}}/api/v1/admission-fee-changes/1/reject
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.create_admission
+POST {{base}}/api/v1/admissions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.list_admissions
+GET {{base}}/api/v1/admissions
+Authorization: Bearer {{token}}
+
+### admissions.get_admission
+GET {{base}}/api/v1/admissions/1
+Authorization: Bearer {{token}}
+
+### admissions.update_admission
+PATCH {{base}}/api/v1/admissions/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.allocate
+POST {{base}}/api/v1/admissions/1/allocations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.cancel_admission
+POST {{base}}/api/v1/admissions/1/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.complete_admission
+POST {{base}}/api/v1/admissions/1/complete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.add_complimentary
+POST {{base}}/api/v1/admissions/1/complimentary
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.map_curriculum
+POST {{base}}/api/v1/admissions/1/curricula
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.request_fee_change
+POST {{base}}/api/v1/admissions/1/fee-changes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.transfer_admission
+POST {{base}}/api/v1/admissions/1/transfers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.allocation_queue
+GET {{base}}/api/v1/batch-allocation-queue
+Authorization: Bearer {{token}}
+
+### admissions.close_allocation
+POST {{base}}/api/v1/batch-allocations/1/close
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.set_joining_date
+POST {{base}}/api/v1/batch-allocations/1/joining-date
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.list_batches
+GET {{base}}/api/v1/batches
+Authorization: Bearer {{token}}
+
+### admissions.create_batch
+POST {{base}}/api/v1/batches
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.get_batch
+GET {{base}}/api/v1/batches/1
+Authorization: Bearer {{token}}
+
+### admissions.update_batch
+PATCH {{base}}/api/v1/batches/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.allocation_check
+GET {{base}}/api/v1/batches/1/allocation-check
+Authorization: Bearer {{token}}
+
+### admissions.list_curriculum_versions
+GET {{base}}/api/v1/curriculum-versions
+Authorization: Bearer {{token}}
+
+### admissions.create_curriculum_version
+POST {{base}}/api/v1/curriculum-versions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### admissions.publish_curriculum_version
+POST {{base}}/api/v1/curriculum-versions/1/publish
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ ai
+### ai.ask
+POST {{base}}/api/v1/ai/ask
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### ai.feedback
+POST {{base}}/api/v1/ai/feedback
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### ai.management_brief
+GET {{base}}/api/v1/ai/management-brief
+Authorization: Bearer {{token}}
+
+### ai.next_best_action
+POST {{base}}/api/v1/ai/next-best-action
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### ai.lead_brief
+POST {{base}}/api/v1/leads/1/ai/brief
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### ai.lead_insights
+GET {{base}}/api/v1/leads/1/ai/insights
+Authorization: Bearer {{token}}
+
+# ================================================================ auth
+### auth.change_password
+POST {{base}}/api/v1/auth/change-password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### auth.login
+POST {{base}}/api/v1/auth/login
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### auth.logout
+POST {{base}}/api/v1/auth/logout
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### auth.me
+GET {{base}}/api/v1/auth/me
+Authorization: Bearer {{token}}
+
+### auth.reauthenticate
+POST {{base}}/api/v1/auth/reauthenticate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### auth.list_sessions
+GET {{base}}/api/v1/auth/sessions
+Authorization: Bearer {{token}}
+
+### auth.revoke_session
+DELETE {{base}}/api/v1/auth/sessions/1
+Authorization: Bearer {{token}}
+
+# ================================================================ catalog
+### catalog.list_courses
+GET {{base}}/api/v1/courses
+Authorization: Bearer {{token}}
+
+### catalog.create_course
+POST {{base}}/api/v1/courses
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.get_course
+GET {{base}}/api/v1/courses/1
+Authorization: Bearer {{token}}
+
+### catalog.update_course
+PATCH {{base}}/api/v1/courses/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.set_course_branches
+PUT {{base}}/api/v1/courses/1/branches
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.set_combo_components
+PUT {{base}}/api/v1/courses/1/components
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.list_offers
+GET {{base}}/api/v1/offers
+Authorization: Bearer {{token}}
+
+### catalog.create_offer
+POST {{base}}/api/v1/offers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.get_offer
+GET {{base}}/api/v1/offers/1
+Authorization: Bearer {{token}}
+
+### catalog.update_offer
+PATCH {{base}}/api/v1/offers/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.activate_offer
+POST {{base}}/api/v1/offers/1/activate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.set_offer_complimentary
+PUT {{base}}/api/v1/offers/1/complimentary-courses
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.deactivate_offer
+POST {{base}}/api/v1/offers/1/deactivate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.new_offer_version
+POST {{base}}/api/v1/offers/1/new-version
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.set_offer_scope
+PUT {{base}}/api/v1/offers/1/scope
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.list_payment_plans
+GET {{base}}/api/v1/payment-plans
+Authorization: Bearer {{token}}
+
+### catalog.create_payment_plan
+POST {{base}}/api/v1/payment-plans
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### catalog.get_payment_plan
+GET {{base}}/api/v1/payment-plans/1
+Authorization: Bearer {{token}}
+
+### catalog.update_payment_plan
+PATCH {{base}}/api/v1/payment-plans/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ demos
+### demos.list_demos
+GET {{base}}/api/v1/demos
+Authorization: Bearer {{token}}
+
+### demos.get_demo
+GET {{base}}/api/v1/demos/1
+Authorization: Bearer {{token}}
+
+### demos.update_demo
+PATCH {{base}}/api/v1/demos/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### demos.approve_extra
+POST {{base}}/api/v1/demos/1/approve-extra
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### demos.cancel_demo
+POST {{base}}/api/v1/demos/1/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### demos.confirm_demo
+POST {{base}}/api/v1/demos/1/confirm
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### demos.record_outcome
+POST {{base}}/api/v1/demos/1/outcome
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### demos.list_reminders
+GET {{base}}/api/v1/demos/1/reminders
+Authorization: Bearer {{token}}
+
+### demos.reschedule_demo
+POST {{base}}/api/v1/demos/1/reschedule
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### demos.schedule_demo
+POST {{base}}/api/v1/leads/1/demos
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ fees
+### fees.approve_version
+POST {{base}}/api/v1/fee-discussion-versions/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.issue_invoice
+POST {{base}}/api/v1/fee-discussion-versions/1/invoice
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.request_special_closing
+POST {{base}}/api/v1/fee-discussion-versions/1/special-closing-requests
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.get_discussion
+GET {{base}}/api/v1/fee-discussions/1
+Authorization: Bearer {{token}}
+
+### fees.accept_plan
+POST {{base}}/api/v1/fee-discussions/1/accept-plan
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.share
+POST {{base}}/api/v1/fee-discussions/1/share
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.add_version
+POST {{base}}/api/v1/fee-discussions/1/versions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.list_invoices
+GET {{base}}/api/v1/invoices
+Authorization: Bearer {{token}}
+
+### fees.get_invoice
+GET {{base}}/api/v1/invoices/1
+Authorization: Bearer {{token}}
+
+### fees.admission_readiness
+GET {{base}}/api/v1/invoices/1/admission-readiness
+Authorization: Bearer {{token}}
+
+### fees.cancel_invoice
+POST {{base}}/api/v1/invoices/1/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.set_due_date
+PUT {{base}}/api/v1/invoices/1/installments/1/due-date
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.print_invoice
+GET {{base}}/api/v1/invoices/1/print
+Authorization: Bearer {{token}}
+
+### fees.list_discussions
+GET {{base}}/api/v1/leads/1/fee-discussions
+Authorization: Bearer {{token}}
+
+### fees.start_discussion
+POST {{base}}/api/v1/leads/1/fee-discussions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.list_special_closing
+GET {{base}}/api/v1/special-closing-requests
+Authorization: Bearer {{token}}
+
+### fees.get_special_closing
+GET {{base}}/api/v1/special-closing-requests/1
+Authorization: Bearer {{token}}
+
+### fees.approve_special_closing
+POST {{base}}/api/v1/special-closing-requests/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.counteroffer_special_closing
+POST {{base}}/api/v1/special-closing-requests/1/counteroffer
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### fees.reject_special_closing
+POST {{base}}/api/v1/special-closing-requests/1/reject
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ health
+### health.get_health
+GET {{base}}/api/v1/health
+Authorization: Bearer {{token}}
+
+# ================================================================ leads
+### leads.create_enquiry
+POST {{base}}/api/v1/enquiries
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.list_enquiries
+GET {{base}}/api/v1/enquiries
+Authorization: Bearer {{token}}
+
+### leads.get_enquiry
+GET {{base}}/api/v1/enquiries/1
+Authorization: Bearer {{token}}
+
+### leads.convert_enquiry
+POST {{base}}/api/v1/enquiries/1/convert
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.link_enquiry
+POST {{base}}/api/v1/enquiries/1/link
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.upload_import
+POST {{base}}/api/v1/lead-imports
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.get_import
+GET {{base}}/api/v1/lead-imports/1
+Authorization: Bearer {{token}}
+
+### leads.run_import
+POST {{base}}/api/v1/lead-imports/1/import
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.create_lead
+POST {{base}}/api/v1/leads
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.list_leads
+GET {{base}}/api/v1/leads
+Authorization: Bearer {{token}}
+
+### leads.get_lead
+GET {{base}}/api/v1/leads/1
+Authorization: Bearer {{token}}
+
+### leads.update_lead
+PATCH {{base}}/api/v1/leads/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.list_activities
+GET {{base}}/api/v1/leads/1/activities
+Authorization: Bearer {{token}}
+
+### leads.add_activity
+POST {{base}}/api/v1/leads/1/activities
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.assign_lead
+POST {{base}}/api/v1/leads/1/assign
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.list_lead_enquiries
+GET {{base}}/api/v1/leads/1/enquiries
+Authorization: Bearer {{token}}
+
+### leads.schedule_follow_up
+POST {{base}}/api/v1/leads/1/follow-up
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.log_follow_up
+POST {{base}}/api/v1/leads/1/follow-up-log
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.mark_lost
+POST {{base}}/api/v1/leads/1/lost
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.reactivate
+POST {{base}}/api/v1/leads/1/reactivate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.change_stage
+POST {{base}}/api/v1/leads/1/stage
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.bulk_assign
+POST {{base}}/api/v1/leads/bulk-assign
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.workspace
+GET {{base}}/api/v1/leads/workspace
+Authorization: Bearer {{token}}
+
+### leads.create_person
+POST {{base}}/api/v1/persons
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.get_person
+GET {{base}}/api/v1/persons/1
+Authorization: Bearer {{token}}
+
+### leads.update_person
+PATCH {{base}}/api/v1/persons/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.search_persons
+GET {{base}}/api/v1/persons/search
+Authorization: Bearer {{token}}
+
+### leads.list_saved_views
+GET {{base}}/api/v1/saved-views
+Authorization: Bearer {{token}}
+
+### leads.create_saved_view
+POST {{base}}/api/v1/saved-views
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### leads.delete_saved_view
+DELETE {{base}}/api/v1/saved-views/1
+Authorization: Bearer {{token}}
+
+# ================================================================ management
+### management.list_sessions
+GET {{base}}/api/v1/admin/sessions
+Authorization: Bearer {{token}}
+
+### management.revoke_session
+DELETE {{base}}/api/v1/admin/sessions/1
+Authorization: Bearer {{token}}
+
+### management.audit_log
+GET {{base}}/api/v1/audit-log
+Authorization: Bearer {{token}}
+
+### management.dashboard
+GET {{base}}/api/v1/dashboard
+Authorization: Bearer {{token}}
+
+### management.counsellor_dashboard
+GET {{base}}/api/v1/dashboard/counsellor
+Authorization: Bearer {{token}}
+
+### management.list_deletions
+GET {{base}}/api/v1/deletion-requests
+Authorization: Bearer {{token}}
+
+### management.request_deletion
+POST {{base}}/api/v1/deletion-requests
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.approve_deletion
+POST {{base}}/api/v1/deletion-requests/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.execute_deletion
+POST {{base}}/api/v1/deletion-requests/1/execute
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.reject_deletion
+POST {{base}}/api/v1/deletion-requests/1/reject
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.list_incidents
+GET {{base}}/api/v1/incidents
+Authorization: Bearer {{token}}
+
+### management.create_incident
+POST {{base}}/api/v1/incidents
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.update_incident
+PATCH {{base}}/api/v1/incidents/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.list_integrations
+GET {{base}}/api/v1/integrations
+Authorization: Bearer {{token}}
+
+### management.update_integration
+PATCH {{base}}/api/v1/integrations/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.export_report
+GET {{base}}/api/v1/reports/management/export
+Authorization: Bearer {{token}}
+
+### management.funnel_report
+GET {{base}}/api/v1/reports/funnel
+Authorization: Bearer {{token}}
+
+### management.management_report
+GET {{base}}/api/v1/reports/management
+Authorization: Bearer {{token}}
+
+### management.performance_report
+GET {{base}}/api/v1/reports/performance
+Authorization: Bearer {{token}}
+
+### management.sla_report
+GET {{base}}/api/v1/reports/sla
+Authorization: Bearer {{token}}
+
+### management.list_scheduled
+GET {{base}}/api/v1/scheduled-reports
+Authorization: Bearer {{token}}
+
+### management.create_scheduled
+POST {{base}}/api/v1/scheduled-reports
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.update_scheduled
+PATCH {{base}}/api/v1/scheduled-reports/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.list_targets
+GET {{base}}/api/v1/targets
+Authorization: Bearer {{token}}
+
+### management.create_target
+POST {{base}}/api/v1/targets
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.get_target
+GET {{base}}/api/v1/targets/1
+Authorization: Bearer {{token}}
+
+### management.approve_target
+POST {{base}}/api/v1/targets/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### management.target_achievement
+GET {{base}}/api/v1/targets/achievement
+Authorization: Bearer {{token}}
+
+# ================================================================ masters
+### masters.list_branches
+GET {{base}}/api/v1/branches
+Authorization: Bearer {{token}}
+
+### masters.get_branch
+GET {{base}}/api/v1/branches/1
+Authorization: Bearer {{token}}
+
+### masters.update_branch
+PATCH {{base}}/api/v1/branches/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### masters.list_shifts
+GET {{base}}/api/v1/branches/1/shifts
+Authorization: Bearer {{token}}
+
+### masters.replace_shifts
+PUT {{base}}/api/v1/branches/1/shifts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### masters.list_concession_limits
+GET {{base}}/api/v1/concession-limits
+Authorization: Bearer {{token}}
+
+### masters.replace_concession_limits
+PUT {{base}}/api/v1/concession-limits
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### masters.list_holidays
+GET {{base}}/api/v1/holidays
+Authorization: Bearer {{token}}
+
+### masters.create_holiday
+POST {{base}}/api/v1/holidays
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### masters.delete_holiday
+DELETE {{base}}/api/v1/holidays/1
+Authorization: Bearer {{token}}
+
+### masters.all_lookups
+GET {{base}}/api/v1/lookups
+Authorization: Bearer {{token}}
+
+### masters.list_lookup
+GET {{base}}/api/v1/lookups/1
+Authorization: Bearer {{token}}
+
+### masters.create_lookup
+POST {{base}}/api/v1/lookups/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### masters.update_lookup
+PATCH {{base}}/api/v1/lookups/1/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### masters.list_settings
+GET {{base}}/api/v1/settings
+Authorization: Bearer {{token}}
+
+### masters.update_settings
+PATCH {{base}}/api/v1/settings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ operations
+### operations.extend_support
+POST {{base}}/api/v1/admissions/1/support-extensions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_alumni
+GET {{base}}/api/v1/alumni
+Authorization: Bearer {{token}}
+
+### operations.list_channels
+GET {{base}}/api/v1/branch-channels
+Authorization: Bearer {{token}}
+
+### operations.create_channel
+POST {{base}}/api/v1/branch-channels
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.update_channel
+PATCH {{base}}/api/v1/branch-channels/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_communications
+GET {{base}}/api/v1/communications
+Authorization: Bearer {{token}}
+
+### operations.record_communication
+POST {{base}}/api/v1/communications
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.match_communication
+POST {{base}}/api/v1/communications/1/match
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.reply_communication
+POST {{base}}/api/v1/communications/1/reply
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.retry_communication
+POST {{base}}/api/v1/communications/1/retry
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_companies
+GET {{base}}/api/v1/companies
+Authorization: Bearer {{token}}
+
+### operations.create_company
+POST {{base}}/api/v1/companies
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.update_company
+PATCH {{base}}/api/v1/companies/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_applications
+GET {{base}}/api/v1/job-applications
+Authorization: Bearer {{token}}
+
+### operations.apply
+POST {{base}}/api/v1/job-applications
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.add_application_event
+POST {{base}}/api/v1/job-applications/1/events
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.change_application_stage
+POST {{base}}/api/v1/job-applications/1/stage
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_jobs
+GET {{base}}/api/v1/job-openings
+Authorization: Bearer {{token}}
+
+### operations.create_job
+POST {{base}}/api/v1/job-openings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.update_job
+PATCH {{base}}/api/v1/job-openings/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_rules
+GET {{base}}/api/v1/notification-rules
+Authorization: Bearer {{token}}
+
+### operations.update_rule
+PATCH {{base}}/api/v1/notification-rules/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_notifications
+GET {{base}}/api/v1/notifications
+Authorization: Bearer {{token}}
+
+### operations.mark_notification
+POST {{base}}/api/v1/notifications/1/read
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.get_profile
+GET {{base}}/api/v1/persons/1/placement-profile
+Authorization: Bearer {{token}}
+
+### operations.save_profile
+PUT {{base}}/api/v1/persons/1/placement-profile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.record_consent
+POST {{base}}/api/v1/placement-profiles/1/consent
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.list_tasks
+GET {{base}}/api/v1/tasks
+Authorization: Bearer {{token}}
+
+### operations.create_task
+POST {{base}}/api/v1/tasks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.get_task
+GET {{base}}/api/v1/tasks/1
+Authorization: Bearer {{token}}
+
+### operations.update_task
+PATCH {{base}}/api/v1/tasks/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.transition_task
+POST {{base}}/api/v1/tasks/1/start
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### operations.revise_deadline
+POST {{base}}/api/v1/tasks/1/revise-deadline
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ payments
+### payments.list_corrections
+GET {{base}}/api/v1/correction-requests
+Authorization: Bearer {{token}}
+
+### payments.get_correction
+GET {{base}}/api/v1/correction-requests/1
+Authorization: Bearer {{token}}
+
+### payments.approve_correction
+POST {{base}}/api/v1/correction-requests/1/approve
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.reject_correction
+POST {{base}}/api/v1/correction-requests/1/reject
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.list_payments
+GET {{base}}/api/v1/payments
+Authorization: Bearer {{token}}
+
+### payments.record_payment
+POST {{base}}/api/v1/payments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.get_payment
+GET {{base}}/api/v1/payments/1
+Authorization: Bearer {{token}}
+
+### payments.allocate_payment
+POST {{base}}/api/v1/payments/1/allocate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.request_correction
+POST {{base}}/api/v1/payments/1/correction-requests
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.fail_payment
+POST {{base}}/api/v1/payments/1/fail
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.payment_receipt
+GET {{base}}/api/v1/payments/1/receipt
+Authorization: Bearer {{token}}
+
+### payments.verify_payment
+POST {{base}}/api/v1/payments/1/verify
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### payments.list_unallocated
+GET {{base}}/api/v1/payments/unallocated
+Authorization: Bearer {{token}}
+
+# ================================================================ pipeline
+### pipeline.get_pipeline
+GET {{base}}/api/v1/pipeline
+Authorization: Bearer {{token}}
+
+# ================================================================ reference
+### reference.list_roles
+GET {{base}}/api/v1/roles
+Authorization: Bearer {{token}}
+
+### reference.list_staff
+GET {{base}}/api/v1/staff?branch_id=1&role=SALES,FRONT_OFFICE
+Authorization: Bearer {{token}}
+
+# ================================================================ students
+### students.create_certificate
+POST {{base}}/api/v1/admissions/1/certificates
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.list_promises
+GET {{base}}/api/v1/admissions/1/promises
+Authorization: Bearer {{token}}
+
+### students.add_promise
+POST {{base}}/api/v1/admissions/1/promises
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.update_certificate
+PATCH {{base}}/api/v1/certificates/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.issue_certificate
+POST {{base}}/api/v1/certificates/1/issue
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.revoke_certificate
+POST {{base}}/api/v1/certificates/1/revoke
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.ageing
+GET {{base}}/api/v1/collections/ageing
+Authorization: Bearer {{token}}
+
+### students.list_dues
+GET {{base}}/api/v1/collections/dues
+Authorization: Bearer {{token}}
+
+### students.review_document
+POST {{base}}/api/v1/documents/1/review
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.promise_broken
+POST {{base}}/api/v1/payment-promises/1/broken
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.promise_cancel
+POST {{base}}/api/v1/payment-promises/1/cancel
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.promise_kept
+POST {{base}}/api/v1/payment-promises/1/kept
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.upload_document
+POST {{base}}/api/v1/persons/1/documents
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.list_refund_cases
+GET {{base}}/api/v1/refund-cases
+Authorization: Bearer {{token}}
+
+### students.register_refund_case
+POST {{base}}/api/v1/refund-cases
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.get_refund_case
+GET {{base}}/api/v1/refund-cases/1
+Authorization: Bearer {{token}}
+
+### students.update_refund_case
+PATCH {{base}}/api/v1/refund-cases/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.decide_refund_case
+POST {{base}}/api/v1/refund-cases/1/decide
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.payout_refund_case
+POST {{base}}/api/v1/refund-cases/1/payout
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.reconcile_refund_case
+POST {{base}}/api/v1/refund-cases/1/reconcile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.withdraw_refund_case
+POST {{base}}/api/v1/refund-cases/1/withdraw
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.list_students
+GET {{base}}/api/v1/students
+Authorization: Bearer {{token}}
+
+### students.get_student
+GET {{base}}/api/v1/students/1
+Authorization: Bearer {{token}}
+
+### students.student_tab
+GET {{base}}/api/v1/students/1/admissions
+Authorization: Bearer {{token}}
+
+### students.list_cases
+GET {{base}}/api/v1/support-cases
+Authorization: Bearer {{token}}
+
+### students.create_case
+POST {{base}}/api/v1/support-cases
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### students.get_case
+GET {{base}}/api/v1/support-cases/1
+Authorization: Bearer {{token}}
+
+### students.update_case
+PATCH {{base}}/api/v1/support-cases/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+# ================================================================ users
+### users.list_users
+GET {{base}}/api/v1/users
+Authorization: Bearer {{token}}
+
+### users.create_user
+POST {{base}}/api/v1/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### users.get_user
+GET {{base}}/api/v1/users/1
+Authorization: Bearer {{token}}
+
+### users.update_user
+PATCH {{base}}/api/v1/users/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### users.reset_password
+POST {{base}}/api/v1/users/1/reset-password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### users.list_scopes
+GET {{base}}/api/v1/users/1/scopes
+Authorization: Bearer {{token}}
+
+### users.grant_scope
+POST {{base}}/api/v1/users/1/scopes
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### users.revoke_scope
+DELETE {{base}}/api/v1/users/1/scopes/1
+Authorization: Bearer {{token}}

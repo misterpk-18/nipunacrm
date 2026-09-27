@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { Dashboard } from "@/components/crm/screens";
+export const Route=createFileRoute("/dashboard")({head:()=>({meta:[{title:"Founder / CEO Dashboard — Nipuna CRM Prototype"},{name:"description",content:"Executive sample CRM performance across Nipuna branches."},{property:"og:title",content:"Founder / CEO Dashboard — Nipuna CRM"},{property:"og:description",content:"Executive sample CRM performance across Nipuna branches."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=><Dashboard />});

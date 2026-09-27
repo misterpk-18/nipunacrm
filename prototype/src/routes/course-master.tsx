@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { CourseMaster } from "@/components/crm/screens";
+export const Route=createFileRoute("/course-master")({head:()=>({meta:[{title:"Course Master — Nipuna CRM Prototype"},{name:"description",content:"Approved course codes and standard fees."},{property:"og:title",content:"Course Master — Nipuna CRM"},{property:"og:description",content:"Approved course codes and standard fees."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:CourseMaster});

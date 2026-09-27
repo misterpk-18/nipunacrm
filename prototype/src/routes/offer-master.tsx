@@ -1,0 +1,4 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { OfferMaster } from "@/components/crm/screens";
+import { ConfigAccess } from "@/components/crm/config-access";
+export const Route=createFileRoute("/offer-master")({head:()=>({meta:[{title:"Offer Master — Nipuna CRM Prototype"},{name:"description",content:"Restricted sample offer configuration and eligibility."},{property:"og:title",content:"Offer Master — Nipuna CRM"},{property:"og:description",content:"Restricted sample offer configuration and eligibility."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=> <ConfigAccess><OfferMaster/></ConfigAccess>});

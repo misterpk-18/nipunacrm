@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { Admissions } from "@/components/crm/screens";
+export const Route=createFileRoute("/admissions/")({head:()=>({meta:[{title:"Admissions — Nipuna CRM Prototype"},{name:"description",content:"Track sample admissions and academic readiness."},{property:"og:title",content:"Admissions — Nipuna CRM"},{property:"og:description",content:"Track sample admissions and academic readiness."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:Admissions});

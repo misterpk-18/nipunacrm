@@ -1,0 +1,3 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { FeeQuote } from "@/components/crm/screens";
+export const Route=createFileRoute("/fee-quote")({head:()=>({meta:[{title:"Fee Discussion & Invoice — Nipuna CRM Prototype"},{name:"description",content:"Manage sample fee discussions and invoice milestones."},{property:"og:title",content:"Fee Discussion & Invoice — Nipuna CRM"},{property:"og:description",content:"Manage sample fee discussions and invoice milestones."},{property:"og:type",content:"website"},{name:"twitter:card",content:"summary_large_image"}]}),component:()=><FeeQuote />});
