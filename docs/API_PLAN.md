@@ -426,7 +426,7 @@ Tables: `admissions`, `installments`, `admission_transfers`, `admission_fee_chan
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | POST | `/admissions` | Counsellors, Front Office, BM | From an `invoice_id` (+ optional service branch, admission date). DB enforces both prerequisites (accepted plan on the invoice's version; first qualifying payment on the invoice Verified), records the first qualifying payment, links the invoice's payments, moves the lead to Admitted |
-| POST | `/admissions/{id}/complimentary` | Counsellors, BM | Complimentary course from an active offer |
+| POST | `/admissions/{id}/complimentary` | Counsellors, BM | Complimentary course from an active offer. One per offer per paid admission, and never a course the person already has (migration 016; 422 `BUSINESS_RULE` naming the admission; cancelled admissions don't count) |
 | GET | `/admissions` | Scoped | Filters: branch (original / service), enrolment, curriculum, handover, LMS, seat type |
 | GET / PATCH | `/admissions/{id}` | Scoped | Handover, LMS status, owners |
 | POST | `/admissions/{id}/cancel` | BM | Operational cancellation (refund is separate) |

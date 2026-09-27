@@ -176,7 +176,7 @@ function Actions({ a }: { a: AdmissionDetail }) {
       {canComp && active && (
         <FormDialog
           title="Add complimentary course"
-          description="From an active Offer Master version; the fee threshold and a verified payment are checked by the server."
+          description="From an active Offer Master version. Each offer gives one complimentary course per admission, and it must be a course the learner doesn't already have. The fee threshold and a verified payment are checked by the server."
           disabled={!comp.offer_id || !comp.course_id}
           onOpen={() => setComp({ offer_id: "", course_id: "" })}
           onSubmit={() => addComp.mutateAsync(undefined)}

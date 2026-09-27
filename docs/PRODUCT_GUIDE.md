@@ -98,6 +98,7 @@ Many stage moves happen automatically: booking a demo moves the lead to *Demo Sc
   - Nobody can approve their own request. The approver can approve, counteroffer or reject (with a reason).
 - **Offers** (Offer Master) are set up by admins with dates, branches and courses they apply to, and can include a **complimentary course** (for example a free add-on when the final fee is above a threshold). Changing an active offer creates a new version so past fees stay explainable.
 - **Each offer can be used only once per person.** Once a learner has been admitted with an offer (as a discount or a complimentary course), that offer no longer appears for them on any later course, and the system refuses it if someone tries — it names the admission where it was used. A different offer can still apply. If the admission that used the offer is cancelled, the offer becomes available to that learner again.
+- **An offer gives one complimentary course per admission.** If an offer lists several free courses, the learner picks one. The free course also can't be one the learner already has (paid or free); the system refuses it and names the admission they already hold. Cancelling a wrongly granted free course frees the choice again.
 - Once the learner accepts, the counsellor records the **accepted plan**: classroom or online, *Confirmed Seat* or *Future Plan* (joining later, with a planned start date).
 
 ### 4.5 Invoices

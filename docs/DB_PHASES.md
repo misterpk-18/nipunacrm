@@ -30,6 +30,7 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | Demo course optional | ✅ Done | `013_demo_course_optional.sql` — `demos.course_id` nullable |
 | Intake → genuine sync | ✅ Done | `014_lead_intake_sync_genuine.sql` — lead Invalid-Spam / Test excludes its enquiries from Genuine Enquiries |
 | Offer once per person | ✅ Done | `015_offer_once_per_person.sql` — a person can use each offer only once |
+| Complimentary rules | ✅ Done | `016_complimentary_rules.sql` — one complimentary course per offer per admission; never a course the person already has |
 
 Phases 0–3 cover the complete sales-to-cash flow and are the MVP. Phases 4–6 can follow as their screens are built.
 
@@ -291,3 +292,11 @@ Rules:
 - Cancelled admissions don't count — cancelling the admission that used an offer makes it available to that person again (assumption, to confirm).
 - The API also hides used offers from the fee version picker and refuses them when saving a version or issuing an invoice, so the block normally shows before any payment.
 
+## Complimentary rules (016) ✅
+
+| Change | Why |
+|---|---|
+| `trg_admissions_zz_complimentary_rules` (BEFORE INSERT on `admissions`) → `check_complimentary_rules()` | An offer listing several complimentary courses gave all of them on one paid admission, and a free course could duplicate one the learner already had (found on PER-GNT-00082: two DIWALI freebies, one the same Data Science course she paid for) |
+| Rule 1 | One complimentary admission per offer (same `offer_code`, any version) per paid admission |
+| Rule 2 | The complimentary course can't be one the person already has a non-cancelled admission for |
+| Order | `zz_` runs after `trg_admissions_z_offer_once`, so "offer already used" wins when both apply. Cancelled admissions don't count; existing rows are not changed |

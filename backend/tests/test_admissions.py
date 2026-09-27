@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from config.database import db
 from models import Course, CourseBranch, Installment, Invoice
-from tests.helpers import API, admitted, call, issued_invoice, record_payment
+from tests.helpers import API, admitted, call, error_of, issued_invoice, record_payment
 
 
 def test_admission_needs_both_prerequisites(client, people, course):
@@ -262,6 +262,31 @@ def test_complimentary_course(client, people, course, run_sql):
                 json={"offer_id": offer_id, "course_id": excel.course_id})
     assert comp["final_fee"] == "0.00" and comp["complimentary_of_admission_id"] == flow["admission"]["admission_id"]
     assert comp["access_until"] == (date.today() + timedelta(days=90)).isoformat()
-    again = client.post(f"{API}/admissions/{flow['admission']['admission_id']}/complimentary", headers=people["sravani"]["h"],
-                        json={"offer_id": offer_id, "course_id": excel.course_id})
-    assert again.status_code == 409
+    def grant(offer, course_id):
+        return client.post(f"{API}/admissions/{flow['admission']['admission_id']}/complimentary",
+                           headers=people["sravani"]["h"], json={"offer_id": offer, "course_id": course_id})
+
+    # one complimentary course per offer per paid admission, even when the offer lists several
+    tally = Course(course_code="NIT-CRS-091", course_title="Tally Prime", category="Office", standard_fee=4000,
+                   branch_links=[CourseBranch(branch_code="NIT-GNT")])
+    db.session.add(tally)
+    db.session.commit()
+    run_sql("INSERT INTO offer_complimentary_courses (offer_id, course_id, min_final_fee) VALUES (:o, :c, 0)",
+            o=offer_id, c=tally.course_id)
+    for course_id in (excel.course_id, tally.course_id):
+        second = grant(offer_id, course_id)
+        assert second.status_code == 422 and "one complimentary course per admission" in error_of(second)["message"]
+
+    # never a course the learner already has (here: the paid course itself, from another offer)
+    run_sql("""INSERT INTO offers (offer_code, offer_name, status, benefit_type, applies_to_all_courses, valid_from,
+                                   valid_to, approved_by)
+               VALUES ('BONUS', 'Bonus course', 'Active', 'Complimentary Course', true, current_date - 1, current_date + 30, :a)""",
+            a=people["admin"]["id"])
+    bonus_id = run_sql("SELECT offer_id FROM offers WHERE offer_code = 'BONUS'").scalar()
+    for course_id in (course, tally.course_id):
+        run_sql("INSERT INTO offer_complimentary_courses (offer_id, course_id, min_final_fee) VALUES (:o, :c, 0)",
+                o=bonus_id, c=course_id)
+    same_course = grant(bonus_id, course)
+    assert same_course.status_code == 422 and "already has this course" in error_of(same_course)["message"]
+    other = grant(bonus_id, tally.course_id)
+    assert other.status_code == 201, error_of(other)  # a different offer can still give a course they don't have
