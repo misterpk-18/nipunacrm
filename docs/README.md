@@ -3,6 +3,7 @@
 | Doc | What it covers |
 |---|---|
 | [PRODUCT_GUIDE.md](PRODUCT_GUIDE.md) | What the product does and how it behaves, in plain language — for non-technical stakeholders |
+| [ROLE_GUIDE.md](ROLE_GUIDE.md) | Every role: screens, actions, approvals, fresh-auth actions and every setting, with Mermaid diagrams |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Setup, `.env`, databases (main / dev / test), staging accounts, running and testing — start here |
 | [STAGING_ACCOUNTS.md](STAGING_ACCOUNTS.md) | Login accounts (one per role) and the password for the dev database |
 | [API_PLAN.md](API_PLAN.md) | Backend architecture, endpoint conventions, build order and every endpoint with "As built" notes |
