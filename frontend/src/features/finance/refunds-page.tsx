@@ -214,7 +214,7 @@ function CaseBody({ refund: c }: { refund: RefundCase }) {
           rowKey={(p) => p.payment_id}
           empty={<Empty title="No payments on this admission" />}
           columns={[
-            { header: "Receipt", cell: (p) => `${p.receipt_number}${c.receipt_payment_ids.includes(p.payment_id) ? " · linked to case" : ""}` },
+            { header: "Receipt", cell: (p) => `${p.receipt_number ?? p.transaction_number}${c.receipt_payment_ids.includes(p.payment_id) ? " · linked to case" : ""}` },
             { header: "Kind", cell: (p) => p.entry_type },
             {
               header: "Invoice",
@@ -467,7 +467,7 @@ function RegisterDialog({ open, onOpenChange, onCreated }: { open: boolean; onOp
                       checked={receipts.includes(p.payment_id)}
                       onChange={() => setReceipts((r) => (r.includes(p.payment_id) ? r.filter((x) => x !== p.payment_id) : [...r, p.payment_id]))}
                     />
-                    {p.receipt_number} · {money(p.amount)} · {p.verification_status}
+                    {p.receipt_number ?? p.transaction_number} · {money(p.amount)} · {p.verification_status}
                   </label>
                 ))
               ) : (

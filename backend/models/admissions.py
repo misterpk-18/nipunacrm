@@ -28,6 +28,8 @@ class Admission(db.Model):
     person_id: Mapped[int] = mapped_column(Integer, ForeignKey("persons.person_id"))
     lead_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("leads.lead_id"))
     invoice_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("invoices.invoice_id"))
+    invoice_line_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("invoice_lines.invoice_line_id"),
+                                                        unique=True)  # the invoiced course (db 021)
     fee_version_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("fee_discussion_versions.version_id"))
     course_id: Mapped[int] = mapped_column(Integer, ForeignKey("courses.course_id"))
     original_branch_id: Mapped[int] = mapped_column(Integer, ForeignKey("branches.branch_id"))
@@ -106,6 +108,7 @@ class Admission(db.Model):
             **self.to_row(),
             "lead_id": self.lead_id,
             "invoice": self.invoice.to_summary() if self.invoice_id else None,
+            "invoice_line_id": self.invoice_line_id,
             "fee_version_id": self.fee_version_id,
             "payment_plan": {"payment_plan_id": self.payment_plan_id, "plan_code": self.payment_plan.plan_code,
                              "plan_name": self.payment_plan.plan_name},
@@ -150,6 +153,8 @@ class AdmissionBalance(db.Model):
     refunded: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     outstanding: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     payment_completion: Mapped[str] = mapped_column(String(20))
+    invoice_id: Mapped[int | None] = mapped_column(Integer)
+    invoice_line_id: Mapped[int | None] = mapped_column(Integer)
 
 
 class AdmissionTransfer(db.Model):

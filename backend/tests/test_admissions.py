@@ -6,50 +6,77 @@ from sqlalchemy import select
 
 from config.database import db
 from models import Course, CourseBranch, Installment, Invoice
-from tests.helpers import API, admitted, call, error_of, issued_invoice, record_payment
+from tests.helpers import API, admitted, call, error_of, issued_invoice, record_payment, verify_payment
 
 
-def test_admission_needs_both_prerequisites(client, people, course):
-    sravani = people["sravani"]["h"]
+def test_admission_is_created_on_verification(client, people, course):
+    sravani, accounts = people["sravani"]["h"], people["accounts"]["h"]
     flow = issued_invoice(client, people, course)
     invoice_id = flow["invoice"]["invoice_id"]
 
     no_payment = client.post(f"{API}/admissions", json={"invoice_id": invoice_id}, headers=sravani)
-    assert no_payment.status_code == 422 and "must be Verified by Accounts" in no_payment.get_json()["error"]["message"]
+    assert no_payment.status_code == 422 and "admission token" in no_payment.get_json()["error"]["message"]
     payment = record_payment(client, sravani, invoice_id, "10000")["payment"]
     assert client.post(f"{API}/admissions", json={"invoice_id": invoice_id}, headers=sravani).status_code == 422
-    call(client, "post", f"/payments/{payment['payment_id']}/verify", people["accounts"]["h"])
-    assert call(client, "get", f"/invoices/{invoice_id}/admission-readiness", sravani)["ready"] is True
+    waiting = call(client, "get", "/admissions/eligibility", sravani)
+    assert [row["invoice"]["invoice_id"] for row in waiting] == [invoice_id] and waiting[0]["eligible"] is False
 
-    admission = call(client, "post", "/admissions", sravani, 201, json={"invoice_id": invoice_id})
+    verified = verify_payment(client, accounts, payment["payment_id"])
+    [summary] = verified["admissions_created"]
+    admission = call(client, "get", f"/admissions/{summary['admission_id']}", sravani)
     year = date.today().year
     assert admission["admission_code"] == f"NIT-GNT-{year}-000001"
     assert admission["final_fee"] == "30000.00" and admission["enrolment_status"] == "Awaiting Batch Allocation"
     assert admission["first_qualifying_payment_id"] == payment["payment_id"]
+    assert admission["invoice_line_id"] == flow["invoice"]["courses"][0]["invoice_line_id"]
     assert admission["balance"]["verified_paid"] == "10000.00" and admission["balance"]["payment_completion"] == "Part Paid"
     assert call(client, "get", f"/leads/{flow['lead']['lead_id']}", sravani)["stage"] == "Admitted"
     discussion = call(client, "get", f"/fee-discussions/{flow['discussion']['fee_discussion_id']}", sravani)
     assert discussion["milestone"] == "Converted"
     assert call(client, "get", f"/payments/{payment['payment_id']}", sravani)["admission_id"] == admission["admission_id"]
+    assert call(client, "get", "/admissions/eligibility", sravani) == []
 
     again = client.post(f"{API}/admissions", json={"invoice_id": invoice_id}, headers=sravani)
     assert again.status_code == 409
-    assert client.post(f"{API}/admissions", json={"invoice_id": invoice_id}, headers=people["accounts"]["h"]).status_code == 403
+    assert client.post(f"{API}/admissions", json={"invoice_id": invoice_id}, headers=people["trainer"]["h"]).status_code == 403
 
 
-def test_plan_not_accepted_blocks_admission(client, people, course):
-    from tests.helpers import plan_code_id, priced_lead
+def test_admission_needs_the_token_in_verified_payments(client, people, course):
+    """Verified money on the course must add up to the ₹1,000 token (setting admission_token_amount)."""
+    sravani, accounts = people["sravani"]["h"], people["accounts"]["h"]
+    invoice_id = issued_invoice(client, people, course)["invoice"]["invoice_id"]
+    small = record_payment(client, sravani, invoice_id, "600")["payment"]
+    assert verify_payment(client, accounts, small["payment_id"])["admissions_created"] == []
+    short = client.post(f"{API}/admissions", json={"invoice_id": invoice_id}, headers=sravani)
+    assert short.status_code == 422 and "₹600.00 verified so far" in short.get_json()["error"]["message"]
+    readiness = call(client, "get", f"/invoices/{invoice_id}/admission-readiness", sravani)
+    check = next(c for c in readiness["lines"][0]["checks"] if c["check"] == "verified_payment")
+    assert check["ok"] is False and check["token"] == "1000.00" and check["verified_total"] == "600.00"
+    [row] = call(client, "get", "/admissions/eligibility", sravani)
+    assert row["waiting_for"] == ["₹1000.00 verified"] and row["verified_total"] == "600.00"
+
+    second = record_payment(client, sravani, invoice_id, "400")["payment"]
+    [created] = verify_payment(client, accounts, second["payment_id"])["admissions_created"]
+    admission = call(client, "get", f"/admissions/{created['admission_id']}", sravani)
+    assert admission["first_qualifying_payment_id"] == second["payment_id"]  # the payment that reached ₹1,000
+
+
+def test_admission_takes_the_accepted_delivery_plan(client, people, course):
+    from tests.helpers import accept_delivery_plan, create_invoice, priced_lead, verify_payment
 
     sravani = people["sravani"]["h"]
-    lead, discussion, ver = priced_lead(client, people, course, payment_plan_id=plan_code_id("FULL"))
+    lead, discussion, ver = priced_lead(client, people, course)
     call(client, "post", f"/fee-discussion-versions/{ver['version_id']}/approve", sravani)
-    invoice = call(client, "post", f"/fee-discussion-versions/{ver['version_id']}/invoice", sravani, 201, json={})
+    start = (date.today() + timedelta(days=40)).isoformat()
+    accept_delivery_plan(client, sravani, lead["lead_id"], seat_type="Future Plan", planned_start_date=start,
+                         delivery_mode="Online", service_branch_id=2)
+    invoice = create_invoice(client, sravani, [lead["lead_id"]])
     payment = record_payment(client, sravani, invoice["invoice_id"], "30000")["payment"]
-    call(client, "post", f"/payments/{payment['payment_id']}/verify", people["accounts"]["h"])
-    readiness = call(client, "get", f"/invoices/{invoice['invoice_id']}/admission-readiness", sravani)
-    assert readiness["missing"] == ["accepted_plan"]
-    blocked = client.post(f"{API}/admissions", json={"invoice_id": invoice["invoice_id"]}, headers=sravani)
-    assert blocked.status_code == 422 and "accepted confirmed delivery plan" in blocked.get_json()["error"]["message"]
+    [created] = verify_payment(client, people["accounts"]["h"], payment["payment_id"])["admissions_created"]
+    admission = call(client, "get", f"/admissions/{created['admission_id']}", people["admin"]["h"])
+    assert (admission["delivery_mode"], admission["seat_type"], admission["planned_start_date"]) == (
+        "Online", "Future Plan", start)
+    assert admission["service_branch"]["branch_id"] == 2 and admission["original_branch"]["branch_id"] == 1
 
 
 def test_list_detail_update_and_scope(client, people, course):

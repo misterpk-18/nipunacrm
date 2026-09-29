@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { PASSWORD, USERS, login, uniquePhone } from "./helpers";
+import { PASSWORD, USERS, acceptDeliveryPlan, login, qualifyAndConvert, uniquePhone } from "./helpers";
 
 const SHOTS = "/private/tmp/claude-501/-Users-manojtungala-nipuna-crm/3aa0633b-0a9a-4dca-89e8-f5788c3e5648/scratchpad/shots";
 
@@ -14,8 +14,9 @@ async function apiLogin(request: APIRequestContext, email: string) {
 
 type Lookup = { id: number; label: string };
 
-/** A fresh Guntur lead owned by sales.gnt, with a course unless `withCourse` is false (re-runnable: unique phone). */
-async function createLead(request: APIRequestContext, name: string, withCourse = true) {
+/** A fresh Guntur lead owned by sales.gnt, with a course unless `withCourse` is false (re-runnable: unique phone).
+ *  With `deal`, it is qualified and converted (db 019: demos and fees happen on deals). */
+async function createLead(request: APIRequestContext, name: string, withCourse = true, deal = false) {
   const headers = await apiLogin(request, USERS.salesGnt);
   const lookups = (await (await request.get("/api/v1/lookups", { headers })).json()).data as Record<string, Lookup[]>;
   const courses = (await (await request.get("/api/v1/courses?per_page=100&status=Active", { headers })).json()).data as {
@@ -40,8 +41,11 @@ async function createLead(request: APIRequestContext, name: string, withCourse =
   });
   expect(res.status(), await res.text()).toBe(201);
   const lead = (await res.json()).data as { lead_id: number; name: string };
+  if (deal) await qualifyAndConvert(request, headers, lead.lead_id);
   return { ...lead, phone, headers };
 }
+
+const createDeal = (request: APIRequestContext, name: string) => createLead(request, name, true, true);
 
 async function scheduleDemo(request: APIRequestContext, headers: Record<string, string>, leadId: number, inSeconds: number) {
   const at = new Date(Date.now() + inSeconds * 1000).toISOString();
@@ -81,49 +85,166 @@ test("branch manager sees branch-wide queue counts", async ({ page }) => {
 
 // ---------------------------------------------------------------- Pipeline
 
-test("pipeline board loads stages and moves a lead between manual stages @mobile", async ({ page, request }) => {
-  const lead = await createLead(request, "Pipeline Mover");
+test("a lead is qualified and converted to a deal, then moves on the pipeline, is managed and marked lost @mobile", async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const lead = await createLead(request, `Pipeline Mover ${Date.now().toString(36)}`);
   await login(page, USERS.salesGnt);
-  await page.goto(`/pipeline?q=${lead.phone}`);
-  const newCol = page.getByRole("region", { name: "New Enquiry" });
-  await expect(newCol.getByRole("link", { name: "Pipeline Mover" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Admitted" })).toBeVisible();
-  await page.getByLabel("Move Pipeline Mover to stage").selectOption("Counselling");
-  await expect(page.getByText("Pipeline Mover moved to Counselling")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Counselling" }).getByRole("link", { name: "Pipeline Mover" })).toBeVisible();
 
+  // New enquiries are Active leads, not pipeline cards
+  await page.goto(`/leads?q=${lead.phone}`);
+  await expect(page.locator("a:visible", { hasText: lead.name }).first()).toBeVisible();
+  await page.goto(`/pipeline?q=${lead.phone}`);
+  await expect(page.getByRole("article", { name: lead.name })).toHaveCount(0);
+
+  // Lead 360: phone beside the actions; Convert stays disabled until every check is reviewed
+  await page.goto(`/leads/${lead.lead_id}`);
+  await expect(page.getByText("Phone number")).toBeVisible();
+  await expect(page.getByRole("link", { name: "WhatsApp" })).toBeVisible();
+  const convert = page.getByRole("button", { name: "Convert to deal" });
+  await expect(convert).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Move stage" })).toHaveCount(0); // not a deal yet
+  const checklist = page.getByRole("heading", { name: "Qualification checklist" }).locator("xpath=ancestor::section[1]");
+  const markQualified = checklist.getByRole("button", { name: "Mark Qualified" });
+  for (const [n, check] of ["Genuine intent confirmed", "Reachable contact confirmed", "Intended course(s) understood", "Branch and delivery mode discussed", "Exact next action agreed", "Possible identity match reviewed"].entries()) {
+    await expect(markQualified).toBeDisabled();
+    await checklist.getByRole("checkbox", { name: check }).click();
+    await expect(checklist.getByText(`${n + 1} of 6 reviewed`)).toBeVisible();
+  }
+  await markQualified.click();
+  await expect(page.getByText("Marked qualified")).toBeVisible();
+  await expect(convert).toBeEnabled();
+  await page.screenshot({ path: `${SHOTS}/lead-qualified-${test.info().project.name}.png`, fullPage: true });
+
+  await convert.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/creates no student, admission, receipt or LMS access/)).toBeVisible();
+  await dialog.getByLabel("Expected close").fill(new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10));
+  await dialog.getByRole("button", { name: "Convert lead to deal" }).click();
+  await expect(page.getByText(/Converted to deal · PL-GNT-\d+/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Confirm delivery plan" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pipeline card" })).toBeVisible();
+
+  await page.goto(`/pipeline?q=${lead.phone}`);
+  const counselling = page.getByRole("region", { name: "Counselling" });
+  await expect(counselling.getByRole("article", { name: lead.name })).toBeVisible();
+  await page.getByLabel(`Move ${lead.name} to stage`).selectOption("Demo Scheduled");
+  await expect(page.getByText(`${lead.name} moved to Demo Scheduled`)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Demo" }).getByRole("article", { name: lead.name })).toBeVisible();
+
+  // Owner & follow-up (the counsellor can move the follow-up, not the owner)
+  await page.getByRole("button", { name: `Manage ${lead.name}` }).click();
+  const manage = page.getByRole("dialog");
+  await expect(manage.getByText("only a branch manager can change it")).toBeVisible();
+  const at = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 11) + "11:00";
+  await manage.getByLabel("Next follow-up").fill(at);
+  await manage.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Card updated")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // Mark lost closes the card: it leaves the board and the lead is Lost
+  await page.getByLabel(`Move ${lead.name} to stage`).selectOption("Mark lost…");
+  const lost = page.getByRole("dialog");
+  await lost.getByLabel("Lost reason").selectOption({ index: 1 });
+  await lost.getByRole("button", { name: "Mark lost" }).click();
+  await expect(page.getByText(`${lead.name} marked lost`)).toBeVisible();
+  await expect(page.getByRole("article", { name: lead.name })).toHaveCount(0);
+  await page.goto(`/leads?q=${lead.phone}&lead_status=Inactive`);
+  await expect(page.locator(":visible", { hasText: "Lost - closed" }).first()).toBeVisible();
+});
+
+test("pipeline: seven stage chips filter the board; list view, next actions and system-set stages", async ({ page }) => {
+  await login(page, USERS.salesGnt);
   await page.goto("/pipeline");
+  await expect(page.getByRole("heading", { name: "Deal pipeline" })).toBeVisible();
+  const chips = page.getByRole("group", { name: "Stage filter" }).getByRole("button");
+  await expect(chips).toHaveCount(7);
+  await expect(chips.first()).toContainText("Counselling");
+  await expect(chips.last()).toContainText("Closed lost");
   await expect(page.getByRole("region", { name: "Counselling" }).getByRole("article").first()).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/sales-pipeline-${test.info().project.name}.png`, fullPage: true });
-  await page.getByRole("button", { name: "Table" }).click();
-  await page.getByLabel("Search pipeline").fill("Rohit Kumar");
-  await page.getByLabel("Search pipeline").press("Enter");
+  // Payment review is never moved by hand — only marked lost
+  const ppv = page.getByRole("region", { name: "Payment review" }).getByRole("article").first();
+  await expect(ppv.getByText("System-set stage")).toBeVisible();
+  await expect(ppv.getByRole("button", { name: "Mark lost" })).toBeVisible();
+
+  // A chip filters the board; "Show all stages" clears it
+  await page.getByTestId("chip-Admitted").click();
+  await expect(page).toHaveURL(/stage=Admitted/);
+  await expect(page.getByRole("region", { name: "Admitted" }).getByRole("article").first()).toBeVisible();
+  await expect(page.getByRole("region", { name: "Counselling" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show all stages" }).click();
+  await expect(page.getByRole("region", { name: "Counselling" })).toBeVisible();
+
+  const actions = page.getByRole("list", { name: "Next actions" });
+  await expect(actions.getByRole("link", { name: "Review deal" }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "List view" }).click();
   await expect(page).toHaveURL(/view=table/);
-  await expect(page.getByRole("columnheader", { name: "Stage" })).toBeVisible();
-  // protected stages are never movable by hand
-  await expect(page.getByRole("row", { name: /Rohit Kumar/ }).getByText("System-set stage")).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Delivery plan" })).toBeVisible();
+  await expect(page.getByRole("row").nth(1)).toContainText("Counselling"); // stage order
+});
+
+test("dashboard long-gap card lists the persons whose next instalment is far off", async ({ page }) => {
+  await login(page, USERS.accountsVij);
+  await page.goto("/dashboard?tab=performance"); // period KPIs live on the Performance tab of the V4 overview
+  const card = page.getByRole("button", { name: /Long-gap plans: [1-9]/ });
+  await expect(card).toBeVisible();
+  await card.click();
+  const dialog = page.getByRole("dialog", { name: "Long-gap plans" });
+  await expect(dialog.getByRole("link", { name: /Charan Teja/ })).toBeVisible(); // seeded: ₹1,000 token, next due in 40 days
+  await expect(dialog.getByText(/\d+ days/).first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/dashboard-long-gaps-${test.info().project.name}.png`, fullPage: true });
+  await dialog.getByRole("link", { name: /Charan Teja/ }).click();
+  await expect(page.getByRole("heading", { name: "Charan Teja" })).toBeVisible();
+});
+
+// ---------------------------------------------------------------- Persons
+
+test("persons: search by name or mobile, open Person 360 @mobile", async ({ page, request }) => {
+  const lead = await createLead(request, `Person Finder ${Date.now().toString(36)}`);
+  await login(page, USERS.salesGnt);
+  await page.goto("/persons");
+  await expect(page.getByRole("heading", { name: "Persons" })).toBeVisible();
+  await page.getByLabel("Search persons").fill(lead.phone.slice(-6));
+  await expect(page).toHaveURL(new RegExp(`q=.*${lead.phone.slice(-6)}`));
+  await expect(page.locator("a:visible", { hasText: lead.name })).toHaveCount(1);
+  await page.getByLabel("Search persons").fill(lead.name.split(" ").slice(0, 2).join(" "));
+  await page.locator("a:visible", { hasText: lead.name }).first().click();
+
+  await expect(page.getByRole("heading", { name: lead.name })).toBeVisible();
+  await expect(page.getByText("Not in the pipeline")).toBeVisible();
+  const leads = page.getByRole("heading", { name: "Leads" }).locator("xpath=ancestor::section[1]");
+  await expect(leads.getByText("Active", { exact: true })).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/persons-360-${test.info().project.name}.png`, fullPage: true });
+});
+
+test("header search finds persons", async ({ page }) => {
+  await login(page, USERS.bmGnt);
+  await page.getByLabel("Search all persons").fill("Ananya");
+  await page.getByLabel("Search all persons").press("Enter");
+  await expect(page).toHaveURL(/\/persons\?q=Ananya/);
+  await expect(page.locator("a:visible", { hasText: "Ananya Rao" }).first()).toBeVisible();
 });
 
 // ---------------------------------------------------------------- Demos
 
-test("counsellor books a demo for a lead with no course", async ({ page, request }) => {
-  const lead = await createLead(request, `No Course Demo ${Date.now().toString(36)}`, false);
+test("counsellor books a demo for a deal from Lead 360", async ({ page, request }) => {
+  const lead = await createDeal(request, `Deal Demo ${Date.now().toString(36)}`);
   await login(page, USERS.salesGnt);
   await page.goto(`/leads/${lead.lead_id}`);
   await page.getByRole("button", { name: /Schedule demo/ }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Course (optional)")).toBeVisible();
   const at = new Date(Date.now() + 2 * 86400_000).toISOString().slice(0, 11) + "12:00";
   await dialog.getByLabel("Demo date and time").fill(at);
   await dialog.getByRole("button", { name: "Schedule" }).click();
   await expect(page.locator("[data-sonner-toast]").getByText(/Demo DM-GNT-\d+ scheduled/)).toBeVisible();
   await page.goto("/demos");
-  await expect(page.getByRole("article").filter({ hasText: lead.name }).getByText(/No course/)).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: lead.name }).first()).toBeVisible();
 });
 
 test("counsellor confirms, reschedules and cancels a demo with reasons; reminders load", async ({ page, request }) => {
   const name = `Demo Flow ${Date.now().toString(36)}`;
-  const lead = await createLead(request, name);
+  const lead = await createDeal(request, name);
   const demo = await scheduleDemo(request, lead.headers, lead.lead_id, 3 * 86400);
   await login(page, USERS.salesGnt);
   await page.goto("/demos");
@@ -158,7 +279,7 @@ test("counsellor confirms, reschedules and cancels a demo with reasons; reminder
 
 test("trainer records demo attendance and outcome; cannot change bookings", async ({ page, request }) => {
   test.setTimeout(150_000);
-  const lead = await createLead(request, "Outcome Learner");
+  const lead = await createDeal(request, "Outcome Learner");
   const demo = await scheduleDemo(request, lead.headers, lead.lead_id, 40);
   await login(page, USERS.trainerG1);
   await page.goto(`/demos?status=Scheduled`);
@@ -185,9 +306,9 @@ test("trainer records demo attendance and outcome; cannot change bookings", asyn
 
 // ---------------------------------------------------------------- Fee discussion → special closing → invoice
 
-test("fee discussion with extra concession: request special closing, manager approves, counsellor accepts plan and issues invoice", async ({ page, request }) => {
+test("fee discussion with extra concession: special closing approved, delivery plan confirmed, invoice created from the deal", async ({ page, request }) => {
   test.setTimeout(90_000);
-  const lead = await createLead(request, "Fee Flow Learner");
+  const lead = await createDeal(request, "Fee Flow Learner");
 
   await login(page, USERS.salesGnt);
   await page.goto("/fee-quote");
@@ -236,31 +357,45 @@ test("fee discussion with extra concession: request special closing, manager app
   }
   await expect(page.getByText(/SCR-\d+ approved · version approved/)).toBeVisible();
 
-  // counsellor: share, accept plan, issue invoice
+  // counsellor: share the fee, confirm the delivery plan on the deal, create the invoice
   await logout(page);
   await login(page, USERS.salesGnt);
   await page.goto(discussionUrl);
   await expect(page.getByText("Version 1 · Approved")).toBeVisible();
   await page.getByRole("button", { name: "Share approved fee" }).click();
   await expect(page.getByText("Approved fee marked as shared")).toBeVisible();
-  await page.getByRole("button", { name: "Accept plan" }).click();
-  await dialog.getByLabel("Seat type").selectOption("Future Plan");
-  await dialog.getByLabel("Planned start date").fill("2030-03-01");
-  await dialog.getByLabel("Delivery mode").selectOption("Hybrid");
-  await dialog.getByRole("button", { name: "Accept plan" }).click();
-  await expect(page.getByText("Accepted plan recorded")).toBeVisible();
-  await expect(page.locator("dd", { hasText: "Future Plan" })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/sales-fee-quote.png`, fullPage: true });
 
-  await page.getByRole("button", { name: "Issue invoice" }).click();
-  await dialog.getByRole("button", { name: "Issue invoice" }).click();
-  await expect(page.getByText(/Invoice INV-[\w-]+ issued/)).toBeVisible();
+  await page.goto(`/leads/${lead.lead_id}`);
+  const plan = page.getByRole("heading", { name: "Confirm delivery plan" }).locator("xpath=ancestor::section[1]");
+  await plan.getByLabel("Seat type").selectOption("Future Plan");
+  await plan.getByLabel("Planned start date").fill("2030-03-01");
+  await plan.getByLabel("Delivery mode").selectOption("Hybrid");
+  await plan.getByLabel("Capacity review").selectOption("Checked");
+  await expect(plan.getByRole("button", { name: "Confirm delivery plan" })).toBeDisabled();
+  await plan.getByRole("checkbox", { name: "Student acceptance captured" }).click();
+  await plan.getByRole("button", { name: "Confirm delivery plan" }).click();
+  await expect(page.getByText(/DP-\d+ saved and accepted/)).toBeVisible();
+  await expect(plan.getByText("Future Plan")).toBeVisible();
+
+  const commercial = page.getByRole("heading", { name: "Commercial and invoice" }).locator("xpath=ancestor::section[1]");
+  await commercial.getByRole("button", { name: "Create invoice" }).click();
+  const create = page.getByRole("dialog");
+  await expect(create.getByText("Door No. 6-4-35", { exact: false })).toBeVisible(); // Guntur issuer preview
+  await expect(create.getByRole("checkbox").first()).toBeChecked();
+  await create.getByRole("button", { name: "Create invoice" }).click();
+  await expect(page.getByText(/Invoice INV-[\w-]+ created/)).toBeVisible();
   await expect(page).toHaveURL(/\/invoices\/\d+/);
+  await expect(page.getByTestId("invoice-sheet")).toContainText("Fee Flow Learner");
+
+  // back on the deal: View invoice replaces Create invoice
+  await page.goto(`/leads/${lead.lead_id}`);
+  await expect(page.getByRole("link", { name: "View invoice" })).toBeVisible();
 });
 
 test("manager rejects a special closing request with a reason", async ({ page, request }) => {
   test.setTimeout(60_000);
-  const lead = await createLead(request, "Reject Flow Learner");
+  const lead = await createDeal(request, "Reject Flow Learner");
   const headers = lead.headers;
   const start = await request.post(`/api/v1/leads/${lead.lead_id}/fee-discussions`, { headers, data: {} });
   const discussion = (await start.json()).data as { fee_discussion_id: number };
@@ -283,21 +418,32 @@ test("manager rejects a special closing request with a reason", async ({ page, r
   await expect(page.getByText(`${scr.scr_code} · Rejected`)).toBeVisible();
 });
 
-test("standard-price version is approved directly by the counsellor", async ({ page, request }) => {
-  const lead = await createLead(request, "Standard Price Learner");
+test("standard-price version is approved directly; the invoice carries a flexible schedule", async ({ page, request }) => {
+  const lead = await createDeal(request, "Standard Price Learner");
   await login(page, USERS.salesGnt);
   await page.goto(`/fee-quote?leadId=${lead.lead_id}`);
   await page.getByRole("button", { name: "Start fee discussion" }).click();
   await expect(page).toHaveURL(/discussionId=/);
-  await page.getByLabel("Payment plan").selectOption({ label: "Two Instalments" });
+  await expect(page.getByLabel("Instalments")).toHaveCount(0); // the schedule moved to the invoice
   await page.getByRole("button", { name: "Save discussion" }).click();
   await expect(page.getByText(/Version 1 saved/)).toBeVisible();
   await page.getByRole("button", { name: "Approve version" }).click();
   await expect(page.getByText("Version 1 approved")).toBeVisible();
-  await page.getByRole("button", { name: "Issue invoice" }).click();
+  await acceptDeliveryPlan(request, lead.headers, lead.lead_id);
+
+  await page.getByRole("button", { name: "Create invoice" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByLabel(/Instalment 2 .* due day/)).toHaveValue("12");
-  await dialog.getByLabel(/Instalment 2 .* due day/).fill("14");
-  await dialog.getByRole("button", { name: "Issue invoice" }).click();
+  // ₹1,000 token today and the rest in 45 days — the counsellor decides the split
+  await dialog.getByRole("button", { name: "50/50" }).click();
+  const total = Number((await dialog.getByLabel("Instalment 1 amount").inputValue())) * 2;
+  const day = (n: number) => new Date(Date.now() + 5.5 * 3600_000 + n * 86_400_000).toISOString().slice(0, 10);
+  await dialog.getByLabel("Instalment 1 amount").fill("1000");
+  await expect(dialog.getByText(/Instalments add up to/)).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Create invoice" })).toBeDisabled();
+  await dialog.getByLabel("Instalment 2 due date").fill(day(45));
+  await dialog.getByLabel("Instalment 2 amount").fill(String(total - 1000));
+  await dialog.getByRole("button", { name: "Create invoice" }).click();
   await expect(page).toHaveURL(/\/invoices\/\d+/);
+  await expect(page.getByTestId("invoice-sheet").getByText("Instalment 1")).toBeVisible();
+  await expect(page.getByTestId("invoice-sheet")).toContainText("₹1,000");
 });

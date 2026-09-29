@@ -40,11 +40,14 @@ Everyone signs in with their own account. What they see and can do depends on th
 ## 3. The learner journey at a glance
 
 ```
-Enquiry ─► Lead ─► Counselling ─► Demo class ─► Fee discussion ─► Invoice
-                                                                   │
-            Alumni ◄─ Placement ◄─ Classes (batch) ◄─ Admission ◄─ Verified payment
-                                        │
-                              Collections (remaining instalments) · Refunds if needed
+Enquiry ─► Lead ─► Qualify (6 checks) ─► Convert to deal ─► Counselling ─► Demo ─► Fee discussion
+                                                                                        │
+             Accepted delivery plan (per course) ─► Invoice (one or more courses) ◄─────┘
+                                                        │
+              Payment claim (pending) ─► Verification ─► Receipt ─► Admission per course (₹1,000 verified)
+                                                                          │
+            Alumni ◄─ Placement ◄─ Classes (batch) ◄──────────────────────┘
+                     Collections (remaining instalments) · Refunds if needed
 ```
 
 Every lead moves through these **pipeline stages**:
@@ -58,7 +61,19 @@ Every lead moves through these **pipeline stages**:
 7. **Admitted** — admission created (final stage)
 8. **Lost - closed** — they decided not to join (always with a reason)
 
-Many stage moves happen automatically: booking a demo moves the lead to *Demo Scheduled*, recording a payment moves it to *Payment Pending Verification*, and creating the admission moves it to *Admitted*.
+Many stage moves happen automatically: converting a qualified lead puts it at *Counselling*, booking a demo moves it to *Demo Scheduled*, recording a payment moves it to *Payment Pending Verification*, and the admission (created when the payment is verified) moves it to *Admitted*.
+
+**Qualify, then convert.** A new lead is reviewed against **six qualification checks** — genuine intent, reachable contact, intended course(s) understood, branch and delivery mode discussed, exact next action agreed, and possible identity match reviewed (similar persons are checked by hand, never merged automatically). Each tick records who reviewed it and when. **Mark Qualified** needs all six and never changes the stage. Only then does **Convert to deal** open: the counsellor picks the course or courses (the lead's own course plus any others), the branch, the owner and the expected close date. The same person is reused; a course they already have open is returned, not duplicated. Conversion creates no admission, receipt or LMS access. Demos and fee discussions happen on deals, so they wait for conversion.
+
+**Leads and the pipeline.** A lead stays an **Active lead** only while it is a *New Enquiry*, and the Leads screen shows these by default. Once converted, the lead becomes **Inactive** and the **person** moves onto the **Pipeline**:
+
+- There is one pipeline **card** per person per branch. All of that person's open courses (deals) at the branch sit on the card and **share its stage**.
+- Moving the card moves every course on it, and moving any one course moves the card.
+- A new enquiry from someone who already has an open card stays in Leads until it is qualified and converted; it then joins the card.
+- Admitting or losing one course closes only that course. The card stays on the board for the rest, and leaves it when its last course is admitted or lost.
+- If one course is admitted while the card is at *Payment Pending Verification*, the rest of the card goes back to *Fee Discussion / Payment Awaited*.
+- A lead lost straight from *New Enquiry* never gets a card.
+- A closed card never reopens. A later enquiry (or a reactivated lost lead) starts a new one.
 
 ## 4. How each part works
 
@@ -74,7 +89,11 @@ Many stage moves happen automatically: booking a demo moves the lead to *Demo Sc
 ### 4.2 Counselling and follow-ups
 
 - The **Counsellor Workspace** shows each counsellor their own queue in tabs: New, Untouched, Due Today, Overdue, Hot, Demos, Fee Discussion, Payment Pending, Cold / Reactivation and Future Joining.
-- **Lead 360** is the full picture of one lead: contact details, stage, timeline of every call, message, note and stage change, demos, fee discussions, tasks and AI insights.
+- **Lead 360** is the full picture of one lead: contact details, stage, timeline of every call, message, note and stage change, demos, fee discussions, tasks and AI insights. Once the lead is in the pipeline, it also shows the person's card (shared stage, owner, other courses).
+- The **Deal pipeline** shows the open opportunities, their value (the approved fee, else the standard fee) and the number admitted, then **seven stage counts** — Counselling, Demo scheduled, Demo attended, Fee discussion, Payment review, Admitted and Closed lost (the last two all-time for the branch). Clicking a count filters the board or list; "Show all stages" clears it. The board has columns *Counselling · Demo · Fee discussion · Payment review*; each card shows the person, courses, value, delivery-plan status, owner and expected close. Drag a card, or use "Move to…", between the manual stages; *Payment review* is set by a recorded payment. **Mark lost…** closes every course on the card with one reason. The card's settings button changes the owner (branch managers), the next follow-up and the expected close.
+- **Next actions** below the board list one step per deal for the selected branch, most urgent first: review payment evidence, complete the scheduled demo, confirm the delivery plan, prepare the invoice, follow up the balance — each with a **Review deal** link.
+- On **Lead 360** the phone number sits beside **Call**, **WhatsApp** (green), **Email** and **Convert to deal**; the qualification checklist is on the right until the lead is converted, then the deal's **delivery plan** and **commercial and invoice** panels take its place.
+- **Persons** lists everyone who has enquired or studied at your branches. Search by name, part of the mobile number, email or person ID (it filters as you type; the header search box opens it too). **Person 360** shows the profile, the person's pipeline cards (one per branch), every lead and course with its status, and their admissions.
 - After each conversation the counsellor **logs a follow-up** (purpose, the learner's response, notes) and must set the **next follow-up time**. Overdue follow-ups are highlighted and counted on dashboards.
 - A lead can be **marked lost** only with a reason (fee too high, joined competitor, timing, etc.), optionally a competitor name and a date to reconnect. Lost leads can be **reactivated** later.
 - **Saved views** let staff keep their favourite filters (e.g. "Hot fee discussions").
@@ -90,7 +109,7 @@ Many stage moves happen automatically: booking a demo moves the lead to *Demo Sc
 
 - Every course has a **standard fee** in the Course Master (the same at both branches). Combos ("3+1 career combos") have their own package price.
 - The counsellor opens a **fee discussion** and builds a **fee version**: standard fee, any active **offer**, any **extra concession**, the resulting final amount and a **payment plan**. Each change creates a new version (v1, v2, …) — earlier versions are kept, never overwritten. A version is valid for 7 days.
-- **Payment plans:** Full payment; Two instalments (50% now, 50% within 10–15 days); Three instalments (50% / 25% / 25%).
+- The **payment schedule** is agreed when the invoice is created (see 4.5), not on the fee version.
 - **Extra concessions need approval** through a **special closing request**:
   - Branch Managers can approve up to their limit (the lower of 5% or ₹1,000 by default); Founder / CEO and Super Admin have no limit.
   - The target is a decision within **5 working minutes**; the manager is alerted and, if it waits too long, it escalates to the Founder / CEO.
@@ -99,31 +118,31 @@ Many stage moves happen automatically: booking a demo moves the lead to *Demo Sc
 - **Offers** (Offer Master) are set up by admins with dates, branches and courses they apply to, and can include a **complimentary course** (for example a free add-on when the final fee is above a threshold). Changing an active offer creates a new version so past fees stay explainable.
 - **Each offer can be used only once per person.** Once a learner has been admitted with an offer (as a discount or a complimentary course), that offer no longer appears for them on any later course, and the system refuses it if someone tries — it names the admission where it was used. A different offer can still apply. If the admission that used the offer is cancelled, the offer becomes available to that learner again.
 - **An offer gives one complimentary course per admission.** If an offer lists several free courses, the learner picks one. The free course also can't be one the learner already has (paid or free); the system refuses it and names the admission they already hold. Cancelling a wrongly granted free course frees the choice again.
-- Once the learner accepts, the counsellor records the **accepted plan**: classroom or online, *Confirmed Seat* or *Future Plan* (joining later, with a planned start date).
+- **Delivery plan (per course).** Each deal has its own delivery plan (`DP-00001`): service branch, classroom / online / hybrid, *Confirmed Seat* or *Future Plan* (with a planned start date), capacity review (checked or waiting) and a tick that the **student's acceptance was captured**. The counsellor, branch manager or academic coordinator confirms it; an accepted plan is fixed (it can be reopened until the course is invoiced). Batch allocation stays a separate step.
 
 ### 4.5 Invoices
 
-- From an approved fee version the counsellor **issues an invoice** (for example `INV-GNT-2627-0001`). It fixes the amount, the instalment due dates and the terms, and creates the **payment schedule** — so dues are tracked even before admission.
-- Invoices cannot be edited. If something must change before any payment, a new invoice replaces the old one; after admission, only an approved fee change can revise it (see 4.8).
-- Each invoice has a **printable view** and shows what has been billed, verified, pending and outstanding.
+- **Create invoice** opens from a deal (Lead 360 or the fee discussion). It shows the **issuing branch and its address**, the learner, and every course deal of that learner at that branch. Only courses with an **approved fee** and an **accepted delivery plan**, not already invoiced and not lost, can be ticked — so one invoice can bill **one course or several compatible courses together** (for example `INV-GNT-2627-0001` with lines `…-L1`, `…-L2`). Each course's approved fee becomes its line amount.
+- **Payment schedule:** 1, 2 or 3 instalments with any dates from today and any amounts (quick fills: Full, 50/50, 50/25/25), adding up to the invoice total. The learner can pay any amount at any time up to the balance; verified money covers the oldest instalment first. The dates drive reminders and alerts (see 4.11).
+- After creating, the invoice opens and each included course shows **View invoice**. No admission is created by invoicing.
+- The issuing branch's name, address, phone and email are **copied onto the invoice** when it is issued: later branch edits, or a viewer switching the branch filter, never change it. **Guntur** invoices use the violet template and **Vijayawada** the teal one.
+- The invoice page shows the branch document itself — issuer, bill-to, course lines, payment terms, totals, verified paid, balance due, instalment cards and verified receipts — with **Print / Save PDF** (it prints on its own, A4). On a phone the tables become stacked cards. Tax / GSTIN and bank details are left off until approved values are provided.
+- Invoices cannot be edited. An unpaid invoice can be cancelled (its courses can then be invoiced again); after admission, only an approved fee change can revise a course's amount (see 4.8).
 
 ### 4.6 Payments and verification
 
-- Staff **record a payment** against an invoice: amount, mode (cash, UPI / bank transfer, payment link / card, or cheque as an exception) and the transaction reference (required for non-cash modes). A photo or PDF of the proof can be attached. Each payment gets a **receipt number** per branch and financial year (e.g. `GNT-R-2627-00001`).
-- A new payment is **Pending Verification**. It does **not** count as collected until **Accounts verifies it** against the bank or cash. Accounts is alerted immediately and has a 30-minute target before it escalates to the Branch Manager.
-- Accounts marks each payment **Verified** or **Failed** (with a reason). This happens once and cannot be undone.
+- **Record payment** (Payments & receipts, which opens with the invoice already selected from the invoice page) splits the money across the invoice's **courses** ("Allocate now" per course — no course can be paid beyond what is left on it) and takes one or several **tenders** (mode, amount, reference). Modes: cash, UPI / bank transfer, payment link / card, or cheque as an exception. A photo or PDF of the proof can be attached.
+- Each tender is a separate **payment claim** with a **transaction number** (`TXN-GNT-00001`). A claim is *Pending Verification*: it has **no receipt number**, does **not** count as paid and never looks like a receipt. Accounts is alerted immediately and has a 30-minute target before it escalates to the Branch Manager.
+- Accounts **verifies** after two confirmations — the evidence was reviewed, and (for cash) an independent cash check — or marks it **Failed** with a reason. Only then is the **receipt number** issued (`GNT-R-2627-00001`, per branch and financial year). This happens once and cannot be undone. Example: an invoice of ₹22,000 with a ₹5,000 claim pending shows ₹0 paid and ₹22,000 balance; after verification it has one receipt, ₹5,000 paid and ₹17,000 balance — on the invoice, the invoice list, collections and reports alike.
 - **Payments can never be edited or deleted.** Mistakes are fixed with a **correction**: Accounts requests it with a reason, a *different* person (Founder / CEO or Super Admin) approves it, and the system adds a reversal entry linked to the original. The full history stays visible.
 - Cheques are accepted only as an exception approved by a manager other than the person collecting.
 - Money received without an invoice is kept as an **advance** and allocated later.
 
 ### 4.7 Admission
 
-An admission can be created only when both are true:
+Admissions are **per course** and are created **automatically when a payment is verified**: every course on the invoice whose verified money reaches the **₹1,000 admission token** (or its whole amount, if smaller) and whose delivery plan is accepted gets its admission — once, reusing the same person / student for every course. Admins can change the token amount in Settings (`admission_token_amount`).
 
-1. the learner has **accepted a fee plan** (on the invoice), and
-2. **at least one payment on that invoice has been verified by Accounts**.
-
-The *New Admission* screen shows these checks one by one, so staff know exactly what is missing. Creating the admission gives it a code (e.g. `NIT-GNT-2026-000001`), moves the lead to *Admitted* and hands the student over to academics. The first verified payment date is what counts as a **"new paid admission"** in reports and targets.
+The *New Admission* screen is an **eligibility review**: invoiced courses not admitted yet, what each still needs (₹ verified so far vs the token, the delivery plan) and a manual **Create admission** if an automatic one was refused (the branch manager also gets a task). Complimentary courses are still added by hand from the paid admission. The admission gets a code (e.g. `NIT-GNT-2026-000001`), takes its service branch, mode, seat type and start date from the delivery plan, moves that course to *Admitted* and hands the student over to academics. LMS access is a separate step afterwards. The date the token was reached is what counts as a **"new paid admission"** in reports and targets.
 
 ### 4.8 After admission: changes, transfers, cancellation
 
@@ -147,6 +166,9 @@ One screen per student with everything in tabs: personal details, all enquiries 
 
 - The **Collections** screen lists every instalment that is due today, overdue or upcoming, with ageing bands (1–3, 4–7, 8–15, 16–30, 31–60, 61–90, 91+ days).
 - **Reminder and escalation schedule** for each instalment: 3 days before, on the due date, 3 days after; on day 4 it goes to the owner, day 7 to the branch manager, then weekly until day 30.
+- **Due in 2 days:** every day the owner, Accounts and the Branch Manager get a notification for each unpaid instalment due within the next 2 days (setting `installment_due_soon_days`).
+- **Long payment gap:** when a payment is verified and the next unpaid instalment is due **more than 30 days** after it (setting `payment_gap_alert_days`), the owner, Accounts, the Branch Manager, the Founder / CEO and Super Admin are notified.
+- The dashboard's **Long-gap plans** card counts those plans (and their outstanding amount); clicking it lists the persons, longest gap first.
 - Staff record **promises to pay** (amount and date) and mark them kept or broken; broken promises escalate.
 - Students with a payment still waiting for verification are put on **contact hold** so they aren't chased for money they've already paid.
 
@@ -233,9 +255,10 @@ Open product decisions are listed in [BACKLOG.md](BACKLOG.md).
 
 | Term | Meaning |
 |---|---|
-| **Lead** | One person's interest in one course, tracked until admission or lost |
+| **Lead** | One person's interest in one course, tracked until admission or lost. *Active* while at New Enquiry; *Inactive* once in the pipeline or closed |
 | **Person** | The individual learner; one person can have several leads and admissions |
-| **Stage** | Where a lead is in the pipeline (see section 3) |
+| **Pipeline card** | One person at one branch in the pipeline; their open courses there share the card's stage |
+| **Stage** | Where a lead (and its card) is in the pipeline (see section 3) |
 | **Demo** | A trial class before joining |
 | **Fee version** | One priced proposal in a fee discussion; changes create a new version |
 | **Offer** | A pre-approved campaign discount or benefit set up in the Offer Master |

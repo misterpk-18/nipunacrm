@@ -22,6 +22,16 @@ def search_persons():
     return leads_controller.search_persons()
 
 
+@lead_route("/persons", "get")
+def list_persons():
+    return leads_controller.list_persons()
+
+
+@lead_route("/persons/<int:person_id>/overview", "get")
+def person_overview(person_id: int):
+    return leads_controller.person_overview(person_id)
+
+
 @lead_route("/persons", "post")
 def create_person():
     return leads_controller.create_person()
@@ -119,6 +129,26 @@ def mark_lost(lead_id: int):
 @lead_route("/leads/<int:lead_id>/reactivate", "post")
 def reactivate(lead_id: int):
     return leads_controller.reactivate(lead_id)
+
+
+@lead_route("/leads/<int:lead_id>/qualification", "get")
+def get_qualification(lead_id: int):
+    return leads_controller.get_qualification(lead_id)
+
+
+@lead_route("/leads/<int:lead_id>/qualification/checks", "put")
+def set_qualification_check(lead_id: int):
+    return leads_controller.set_qualification_check(lead_id)
+
+
+@lead_route("/leads/<int:lead_id>/qualify", "post")
+def qualify_lead(lead_id: int):
+    return leads_controller.qualify_lead(lead_id)
+
+
+@lead_route("/leads/<int:lead_id>/convert", "post")
+def convert_lead(lead_id: int):
+    return leads_controller.convert_lead(lead_id)
 
 
 @lead_route("/leads/<int:lead_id>/activities", "get")

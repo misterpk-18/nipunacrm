@@ -1,7 +1,7 @@
 /** CRM building blocks shared by every screen (visual language from the prototype's components/crm/ui.tsx). */
 import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, MessageCircle, RefreshCw, Sparkles, type LucideIcon } from "lucide-react";
 import type { PageMeta } from "@/api/client";
 import { errorMessage } from "@/api/client";
 import { useAuth } from "@/auth/auth";
@@ -19,41 +19,56 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
-export function PageHead({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
+export function PageHead({
+  title,
+  description,
+  actions,
+  eyebrow,
+}: {
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+  /** Small caps line above the title; defaults to the branch scope. Pass "" to hide it. */
+  eyebrow?: string;
+}) {
   const { branches, branchId } = useAuth();
-  const scope = branchId ? branches.find((b) => b.branch_id === branchId)?.branch_name : branches.length > 1 ? "All branches" : branches[0]?.branch_name;
+  const scope = branchId ? branches.find((b) => b.branch_id === branchId)?.branch_name : branches.length > 1 ? "All Branches" : branches[0]?.branch_name;
+  const kicker = eyebrow ?? scope;
   return (
-    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        {scope && <div className="mb-1 text-xs font-semibold uppercase text-primary">{scope}</div>}
-        <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
-        {description && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{description}</p>}
+    <div className="page-head">
+      <div className="min-w-0">
+        {kicker && <div className="eyebrow">{kicker}</div>}
+        <h1>{title}</h1>
+        {description && <p>{description}</p>}
       </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
 
+const AUTO_LEAD_CHIP = new Set(["hot", "warm", "cold", "waiting for batch / future joining", "new enquiry"]);
 const DANGER = /Overdue|Failed|Lost|Outstanding|Rejected|Broken|Cancelled|Breach|Blocked|Escalated|Critical|High|Reversed|Not Verified/i;
 const WARN = /Hot|Due Today|Pending|Partial|Part Paid|Requested|Review|Awaiting|Registered|Scheduled|Draft|Warm|Assessment|In Progress|Open|Medium/i;
 const GOOD = /Paid|Won|Synced|Attended|Active|Admitted|Verified|Approved|Completed|Kept|Resolved|Matched|Sent|Delivered|Closed|Placed|Ready|Allocated|Configured/i;
 
-export function Status({ children, kind }: { children: ReactNode; kind?: "danger" | "warn" | "good" | "neutral" }) {
+export function Status({ children, kind }: { children: ReactNode; kind?: "danger" | "warn" | "good" | "neutral" | "info" }) {
   const text = String(children ?? "");
-  const tone = kind ?? (DANGER.test(text) ? "danger" : WARN.test(text) ? "warn" : GOOD.test(text) ? "good" : "neutral");
   if (!text) return <span className="text-muted-foreground">—</span>;
+  // Lead priorities ("Hot", "Warm · 72", …) and the New Enquiry stage wear the V4 lead chip.
+  if (!kind && AUTO_LEAD_CHIP.has(text.split(" · ")[0]!.toLowerCase())) return <LeadChip value={text.split(" · ")[0]} label={children} />;
+  const tone = kind ?? (DANGER.test(text) ? "danger" : WARN.test(text) ? "warn" : GOOD.test(text) ? "good" : "neutral");
   return <Badge className={cn("status", `status-${tone}`)}>{children}</Badge>;
 }
 
 export function Metric({ label, value, hint, to, loading }: { label: string; value: ReactNode; hint?: ReactNode; to?: string; loading?: boolean }) {
   const body = (
     <div className="metric-card group">
-      <div className="flex items-start justify-between">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        {to && <ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />}
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-sm font-medium text-[#757b8f]">{label}</span>
+        {to && <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />}
       </div>
-      {loading ? <Skeleton className="mt-3 h-7 w-24" /> : <strong className="mt-3 block text-2xl font-semibold text-foreground">{value}</strong>}
-      {hint && <span className="mt-1 block text-xs text-muted-foreground">{hint}</span>}
+      {loading ? <Skeleton className="mt-3 h-7 w-24" /> : <strong className="mt-2 block text-[26px] font-[650] tracking-[-0.04em] text-[#2c3043]">{value}</strong>}
+      {hint && <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{hint}</span>}
     </div>
   );
   return to ? (
@@ -62,6 +77,135 @@ export function Metric({ label, value, hint, to, loading }: { label: string; val
     </Link>
   ) : (
     body
+  );
+}
+
+export type KpiTone = "violet" | "blue" | "green" | "amber";
+
+/** V4 dashboard KPI card: label + tinted icon, big value, one-line hint. Links when `to` is given. */
+export function KpiCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = "violet",
+  to,
+  search,
+  loading,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  icon?: LucideIcon;
+  tone?: KpiTone;
+  to?: string;
+  search?: Record<string, unknown>;
+  loading?: boolean;
+}) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <span className="dash-kpi-label">{label}</span>
+        {Icon && (
+          <span className={cn("kpi-icon", tone)} aria-hidden>
+            <Icon />
+          </span>
+        )}
+      </div>
+      {loading ? <Skeleton className="mt-3 h-8 w-24" /> : <strong>{value}</strong>}
+      {hint && <p>{hint}</p>}
+    </>
+  );
+  return to ? (
+    <Link to={to} search={search as never} className="dash-kpi">
+      {body}
+    </Link>
+  ) : (
+    <div className="dash-kpi">{body}</div>
+  );
+}
+
+/** V4 snapshot tile (label left, count right) — a filter toggle when `onClick` is given. */
+export function StatTile({ label, value, active, onClick }: { label: string; value: ReactNode; active?: boolean; onClick?: () => void }) {
+  return onClick ? (
+    <button type="button" className="stat-tile" aria-pressed={Boolean(active)} onClick={onClick}>
+      <span>{label}</span>
+      <b>{value}</b>
+    </button>
+  ) : (
+    <div className="stat-tile">
+      <span>{label}</span>
+      <b>{value}</b>
+    </div>
+  );
+}
+
+/** Initials in a soft tinted circle; the tint is stable per name. */
+export function Avatar({ name, className }: { name: string; className?: string }) {
+  const initials = name
+    .split(/\s+/)
+    .filter((w) => /^\p{L}/u.test(w))
+    .map((w) => w[0]!.toUpperCase())
+    .slice(0, 2)
+    .join("");
+  const tone = [...name].reduce((n, c) => n + c.charCodeAt(0), 0) % 5;
+  return (
+    <span className={cn("avatar", className)} data-tone={tone || undefined} aria-hidden>
+      {initials || "?"}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------- lead colours (V4)
+
+export type LeadTone = "hot" | "warm" | "cold" | "future";
+
+/**
+ * Colour family for a lead priority / intake label: Hot, New and New Enquiry are green; Warm amber; Cold blue;
+ * "Waiting for Batch / Future Joining" (or any "future" / "waiting" label) violet. Anything else → null.
+ */
+export function leadTone(value: string | null | undefined): LeadTone | null {
+  const v = (value ?? "").trim().toLowerCase();
+  if (!v) return null;
+  if (v === "hot" || v === "new" || v === "new enquiry") return "hot";
+  if (v === "warm") return "warm";
+  if (v === "cold") return "cold";
+  if (v.includes("future") || v.includes("waiting for batch")) return "future";
+  return null;
+}
+
+const LEAD_LABELS: Record<string, string> = { "waiting for batch / future joining": "Future joining" };
+
+/** Dot + text chip in the V4 lead colours. Unknown values fall back to the neutral status chip. */
+export function LeadChip({ value, label, className }: { value: string | null | undefined; label?: ReactNode; className?: string }) {
+  if (!value) return <span className="text-muted-foreground">—</span>;
+  const tone = leadTone(value);
+  if (!tone) return <Status kind="neutral">{label ?? value}</Status>;
+  return (
+    <span className={cn("lead-chip", className)} data-tone={tone} title={value}>
+      <i aria-hidden />
+      {label ?? LEAD_LABELS[value.toLowerCase()] ?? value}
+    </span>
+  );
+}
+
+/** Lead priority chip (Hot / Warm / Cold / Future joining), optionally with the AI score. */
+export function PriorityChip({ priority, score }: { priority: string | null | undefined; score?: number | null }) {
+  if (!priority) return <span className="text-muted-foreground">—</span>;
+  const label = LEAD_LABELS[priority.toLowerCase()] ?? priority;
+  return <LeadChip value={priority} label={score !== null && score !== undefined ? `${label} · ${score}` : label} />;
+}
+
+/** WhatsApp link button in the V4 WhatsApp colours (Button variant "whatsapp"). */
+export function WhatsAppButton({ phone, label = "WhatsApp", size = "sm", iconOnly = false }: { phone: string; label?: string; size?: "sm" | "default" | "icon"; iconOnly?: boolean }) {
+  const digits = phone.replace(/\D/g, "");
+  return (
+    <Button variant="whatsapp" size={iconOnly ? "icon" : size} title={label} aria-label={iconOnly ? label : undefined} asChild>
+      <a href={`https://wa.me/${digits}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+        <MessageCircle />
+        {!iconOnly && label}
+      </a>
+    </Button>
   );
 }
 
@@ -80,10 +224,10 @@ export function Section({
 }) {
   return (
     <section className={cn("panel", className)}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          {subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>}
+      <div className="section-head mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_12rem]">
+          <h2 className="text-foreground">{title}</h2>
+          {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
         </div>
         {action}
       </div>
@@ -116,7 +260,7 @@ export function AiNote({ title = "AI Suggestion", children, actions }: { title?:
       <div className="flex items-center gap-2 text-sm font-semibold text-ai">
         <Sparkles className="size-4" />
         {title}
-        <span className="ml-auto text-[10px] uppercase text-muted-foreground">Advisory only</span>
+        <span className="ml-auto rounded border border-[#dfd7f5] px-1.5 py-0.5 text-[11px] uppercase tracking-[0.075em] text-muted-foreground">Advisory only</span>
       </div>
       <div className="mt-2 text-sm leading-6 text-foreground">{children}</div>
       {actions && <div className="mt-3 flex flex-wrap gap-2">{actions}</div>}
@@ -225,6 +369,7 @@ export function DataTable<T>({
   error,
   onRetry,
   empty,
+  stack = false,
 }: {
   columns: Column<T>[];
   rows: T[] | undefined;
@@ -234,12 +379,14 @@ export function DataTable<T>({
   error?: unknown;
   onRetry?: () => void;
   empty?: ReactNode;
+  /** On phones, show each row as a labelled card instead of a scrolling table. */
+  stack?: boolean;
 }) {
   if (loading) return <LoadingRows />;
   if (error) return <ErrorPanel error={error} onRetry={onRetry} />;
   if (!rows?.length) return <>{empty ?? <Empty />}</>;
   return (
-    <div className="table-wrap">
+    <div className={cn("table-wrap", stack && "table-stack")}>
       <table className="w-full text-left text-sm">
         <thead>
           <tr>
@@ -258,7 +405,7 @@ export function DataTable<T>({
               className={onRowClick ? "cursor-pointer" : undefined}
             >
               {columns.map((c) => (
-                <td key={c.header} className={c.className}>
+                <td key={c.header} className={c.className} data-label={c.header}>
                   {c.cell(row)}
                 </td>
               ))}

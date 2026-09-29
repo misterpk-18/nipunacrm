@@ -93,6 +93,11 @@ def list_dues():
     return collections_controller.list_dues()
 
 
+@route("/collections/payment-gaps", "get", FINANCE_ROLES)
+def collection_payment_gaps():
+    return collections_controller.payment_gaps()
+
+
 @route("/collections/ageing", "get", FINANCE_ROLES)
 def ageing():
     return collections_controller.ageing()
@@ -106,6 +111,16 @@ def list_promises(admission_id: int):
 @route("/admissions/<int:admission_id>/promises", "post", FINANCE_ROLES)
 def add_promise(admission_id: int):
     return collections_controller.add_promise(admission_id)
+
+
+@route("/invoices/<int:invoice_id>/promises", "get", FINANCE_ROLES)
+def list_invoice_promises(invoice_id: int):
+    return collections_controller.list_invoice_promises(invoice_id)
+
+
+@route("/invoices/<int:invoice_id>/promises", "post", FINANCE_ROLES)
+def add_invoice_promise(invoice_id: int):
+    return collections_controller.add_invoice_promise(invoice_id)
 
 
 @route("/payment-promises/<int:promise_id>/kept", "post", FINANCE_ROLES)

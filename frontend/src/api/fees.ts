@@ -7,6 +7,8 @@ export type FeeLeadRef = { lead_id: number; lead_code: string; branch_code: stri
 
 export type ScrSummary = { scr_id: number; scr_code: string; status: string; requested_extra: Money; counter_extra: Money | null };
 
+export type VersionInstallment = { installment_no: number; due_date: DateOnly; amount: Money };
+
 export type FeeVersion = {
   version_id: number;
   fee_discussion_id: number;
@@ -21,20 +23,13 @@ export type FeeVersion = {
   below_floor: boolean;
   needs_special_closing: boolean;
   payment_plan: { payment_plan_id: number; plan_code: string; plan_name: string };
+  /** The payment schedule saved with the version: a due date and amount per instalment. */
+  installments: VersionInstallment[];
   valid_until: DateOnly;
   notes: string | null;
   special_closing_requests: ScrSummary[];
   created_by: number;
   created_at: DateTime;
-};
-
-export type AcceptedPlan = {
-  accepted_version_id: number;
-  delivery_mode: string;
-  seat_type: string;
-  planned_start_date: DateOnly | null;
-  plan_accepted_at: DateTime;
-  recorded_by: number;
 };
 
 export type Offer = {
@@ -57,11 +52,10 @@ export type FeeDiscussion = {
   milestone: string;
   lead: FeeLeadRef;
   person: PersonRef & { email?: string | null };
-  course: CourseRef;
+  course: CourseRef & { standard_fee: Money };
   branch: BranchRef;
   counsellor: UserRef | null;
   fee_shared_at: DateTime | null;
-  accepted_plan: AcceptedPlan | null;
   current_version: FeeVersion | null;
   versions: FeeVersion[];
   created_at: DateTime;
@@ -105,9 +99,15 @@ export type PaymentPlan = {
 
 export type ConcessionLimit = { role_code: string; role_name: string; max_percent: string | null; max_amount: Money | null; unlimited: boolean };
 
-export type IssuedInvoice = { invoice_id: number; invoice_number: string; status: string; billed_amount: Money };
-
-export type LeadInvoice = { invoice_id: number; invoice_number: string; status: string; billed_amount: Money; course: CourseRef; issued_on: DateOnly; payment_plan: { plan_code: string; plan_name: string } | null };
+export type LeadInvoice = {
+  invoice_id: number;
+  invoice_number: string;
+  status: string;
+  billed_amount: Money;
+  courses: { invoice_line_id: number; course: CourseRef }[];
+  issued_on: DateOnly;
+  payment_plan: { plan_code: string; plan_name: string } | null;
+};
 
 export type ScrFilters = { queue?: "can_approve" | "higher_approval" | "all"; status?: string; branch_id?: number; page?: number; per_page?: number };
 
@@ -124,16 +124,18 @@ export const feesApi = {
   get: (id: number) => get<FeeDiscussion>(`/fee-discussions/${id}`),
   addVersion: (
     id: number,
-    body: { offer_id?: number | null; extra_concession?: Money; payment_plan_id?: number; valid_until?: DateOnly | null; notes?: string | null },
+    body: {
+      offer_id?: number | null;
+      extra_concession?: Money;
+      payment_plan_id?: number;
+      valid_until?: DateOnly | null;
+      notes?: string | null;
+    },
   ) => post<FeeVersion>(`/fee-discussions/${id}/versions`, body),
   share: (id: number) => post<FeeDiscussion>(`/fee-discussions/${id}/share`),
-  acceptPlan: (id: number, body: { version_id: number; delivery_mode: string; seat_type: string; planned_start_date?: DateOnly | null }) =>
-    post<FeeDiscussion>(`/fee-discussions/${id}/accept-plan`, body),
   approveVersion: (versionId: number) => post<FeeVersion>(`/fee-discussion-versions/${versionId}/approve`),
   requestSpecialClosing: (versionId: number, body: { requested_extra?: Money; request_reason: string }) =>
     post<SpecialClosingRequest>(`/fee-discussion-versions/${versionId}/special-closing-requests`, body),
-  issueInvoice: (versionId: number, body: { day0_date?: DateOnly | null; agreed_due_days?: number[] | null; terms?: string | null }) =>
-    post<IssuedInvoice>(`/fee-discussion-versions/${versionId}/invoice`, body),
 
   listScr: (filters: ScrFilters) => list<SpecialClosingRequest>("/special-closing-requests", filters as Query),
   getScr: (id: number) => get<SpecialClosingRequest>(`/special-closing-requests/${id}`),

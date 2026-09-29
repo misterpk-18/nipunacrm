@@ -23,13 +23,26 @@ def _admission_detail(admission) -> dict:
 # ---------------------------------------------------------------- admissions
 
 def create_admission():
-    v = Validator(json_body())
-    v.integer("invoice_id", required=True, min_value=1)
+    """From an invoiced course (invoice_line_id; invoice_id alone works for a one-course invoice)."""
+    body = json_body()
+    v = Validator(body)
+    v.integer("invoice_line_id", required="invoice_id" not in body, min_value=1)
+    v.integer("invoice_id", nullable=True, min_value=1)
     v.integer("service_branch_id", nullable=True, min_value=1)
     v.date("admission_date", nullable=True)
     for field in admissions_service.OWNER_FIELDS:
         v.integer(field, nullable=True, min_value=1)
     return created(_admission_detail(admissions_service.create(v.validate())))
+
+
+def admission_eligibility():
+    v = Validator(request.args.to_dict())
+    v.integer("branch_id", min_value=1)
+    v.integer("invoice_id", min_value=1)
+    v.string("q", max_length=100)
+    page, per_page = get_page_params()
+    rows, meta = admissions_service.eligibility(v.validate(), page, per_page)
+    return paginated(rows, meta)
 
 
 def add_complimentary(admission_id: int):

@@ -75,6 +75,7 @@ def schedule(lead_id: int, data: dict) -> Demo:
         raise Forbidden("Only counsellors or a branch manager can book demos")
     if not lead.is_open:
         raise BusinessRule(f"Lead is {lead.stage}")
+    leads_service.require_converted(lead, "booking a demo")
     if data["scheduled_at"] <= datetime.now(timezone.utc):
         raise ValidationError("A demo must be in the future", {"scheduled_at": ["Must be in the future"]})
 

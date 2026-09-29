@@ -14,12 +14,14 @@ import { Field, NativeSelect } from "@/components/crm/forms";
 import { DataTable, Empty, PageHead, Pagination, Section, Status } from "@/components/crm/ui";
 import { date, money } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
-import { RecordPaymentDialog } from "./record-payment";
+import { RecordPaymentForm } from "./record-payment";
 import { CorrectionsTable, FINANCE_INVALIDATE, LedgerTable, useFinanceRoles } from "./shared";
 
 export type PaymentSearch = Pick<PaymentFilters, "page" | "q" | "status" | "entry_type" | "payment_mode_id" | "from" | "to"> & {
-  tab?: "ledger" | "unallocated" | "corrections";
+  tab?: "ledger" | "record" | "unallocated" | "corrections";
   cstatus?: string;
+  /** Preselected invoice for Record payment (/payments?invoice=12&tab=record) */
+  invoice?: number;
 };
 
 /** Payments & Receipts: immutable ledger, record payment, verification, unallocated advances, correction requests. */
@@ -27,13 +29,14 @@ export function PaymentsPage({ search, onSearch }: { search: PaymentSearch; onSe
   const roles = useFinanceRoles();
   const branchId = useBranchFilter();
   const lookups = useLookups();
-  const [recordOpen, setRecordOpen] = useState(false);
   const [text, setText] = useState(search.q ?? "");
-  const tab = search.tab ?? "ledger";
-  const { tab: _tab, cstatus, ...ledgerSearch } = search;
+  const tab = search.tab ?? (search.invoice ? "record" : "ledger");
+  const { tab: _tab, cstatus, invoice: presetInvoice, ...ledgerSearch } = search;
   const filters: PaymentFilters = { ...ledgerSearch, branch_id: branchId, per_page: 25 };
   const payments = useQuery({ queryKey: paymentKeys.list(filters), queryFn: () => paymentsApi.list(filters), placeholderData: (prev) => prev });
   const totals = payments.data?.totals;
+  const pendingFilters: PaymentFilters = { branch_id: branchId, status: "Pending Verification", entry_type: "Payment", per_page: 1 };
+  const pending = useQuery({ queryKey: paymentKeys.list(pendingFilters), queryFn: () => paymentsApi.list(pendingFilters) });
 
   const set = (patch: Partial<PaymentSearch>) => {
     const next = { ...search, ...patch, page: undefined };
@@ -44,43 +47,42 @@ export function PaymentsPage({ search, onSearch }: { search: PaymentSearch; onSe
   return (
     <>
       <PageHead
-        title="Payments & Receipts"
-        description="Immutable ledger. New payments start as Pending Verification; corrections are linked reversals."
+        title="Payments & receipts"
+        description="Record the payment. Review the evidence. Release the receipt."
         actions={
           <>
+            <Button asChild variant="outline">
+              <Link to="/invoices">View invoices</Link>
+            </Button>
             {roles.canRecord && (
-              <Button onClick={() => setRecordOpen(true)}>
+              <Button onClick={() => onSearch({ ...search, tab: "record", page: undefined })}>
                 <CircleDollarSign />
                 Record payment
               </Button>
             )}
-            <Button asChild variant="outline">
-              <Link to="/invoices">Invoice Register</Link>
-            </Button>
           </>
         }
       />
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <div className="metric-card">
-          <span className="text-xs font-medium text-muted-foreground">Verified net (filtered)</span>
+          <span className="text-xs font-medium text-muted-foreground">Verified collections</span>
           <strong className="mt-2 block text-xl font-semibold">{money(totals?.verified_net)}</strong>
         </div>
         <div className="metric-card">
-          <span className="text-xs font-medium text-muted-foreground">Pending verification (excluded)</span>
-          <strong className="mt-2 block text-xl font-semibold">{money(totals?.pending_verification)}</strong>
+          <span className="text-xs font-medium text-muted-foreground">Awaiting verification</span>
+          <strong className="mt-2 block text-xl font-semibold">{pending.data?.meta.total ?? "…"} payments</strong>
         </div>
-        <div className="metric-card sm:col-span-2">
-          <span className="text-xs font-medium text-muted-foreground">Payment truth</span>
-          <span className="mt-2 block text-xs leading-5">
-            Completion: Unpaid / Part Paid / Paid · Due position: Upcoming / Due Today / Overdue · Verification: Pending Verification / Verified / Failed.
-            {!roles.canVerify && " Only Accounts (or an admin) can verify payments."}
-          </span>
+        <div className="metric-card">
+          <span className="text-xs font-medium text-muted-foreground">Pending amount (not counted)</span>
+          <strong className="mt-2 block text-xl font-semibold">{money(totals?.pending_verification)}</strong>
+          {!roles.canVerify && <span className="mt-1 block text-xs text-muted-foreground">Only Accounts (or an admin) can verify payments.</span>}
         </div>
       </div>
       <div className="panel overflow-x-auto">
         <Tabs value={tab} onValueChange={(v) => onSearch({ ...search, tab: v === "ledger" ? undefined : (v as PaymentSearch["tab"]), page: undefined })}>
           <TabsList className="min-w-max">
-            <TabsTrigger value="ledger">Payment ledger</TabsTrigger>
+            <TabsTrigger value="ledger">Transactions</TabsTrigger>
+            {roles.canRecord && <TabsTrigger value="record">Record payment</TabsTrigger>}
             {roles.canSeeUnallocated && <TabsTrigger value="unallocated">Unallocated advances</TabsTrigger>}
             {roles.canVerify && <TabsTrigger value="corrections">Correction requests</TabsTrigger>}
           </TabsList>
@@ -131,6 +133,35 @@ export function PaymentsPage({ search, onSearch }: { search: PaymentSearch; onSe
             />
             <Pagination meta={payments.data?.meta} onPage={(page) => onSearch({ ...search, page })} />
           </TabsContent>
+          {roles.canRecord && (
+            <TabsContent value="record" className="mt-4">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <Section title="Allocate actual payment" subtitle="Select one payer and invoice; allocate by course line" className="lg:col-span-2">
+                  <RecordPaymentForm
+                    invoiceId={presetInvoice}
+                    onDone={() => onSearch({ status: "Pending Verification" })}
+                  />
+                </Section>
+                <Section title="From payment to admission">
+                  <ol className="grid gap-4 text-sm">
+                    {[
+                      ["Allocate the amount", "Choose the student's invoice and divide the payment across course lines."],
+                      ["Review the evidence", "Accounts verifies each actual payment. Pending claims leave balances unchanged."],
+                      ["Receipt & admission", "A verified payment gets one receipt. Each course with ₹1,000 verified and an accepted plan gets its admission."],
+                    ].map(([title, text], i) => (
+                      <li key={title} className="flex gap-3">
+                        <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">{i + 1}</span>
+                        <span>
+                          <b className="block">{title}</b>
+                          <span className="text-xs text-muted-foreground">{text}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </Section>
+              </div>
+            </TabsContent>
+          )}
           {roles.canSeeUnallocated && (
             <TabsContent value="unallocated" className="mt-4">
               <Unallocated />
@@ -143,7 +174,6 @@ export function PaymentsPage({ search, onSearch }: { search: PaymentSearch; onSe
           )}
         </Tabs>
       </div>
-      <RecordPaymentDialog open={recordOpen} onOpenChange={setRecordOpen} />
     </>
   );
 }
@@ -164,7 +194,7 @@ function Unallocated() {
         rowKey={(a) => a.payment_id}
         empty={<Empty title="No unallocated advances" />}
         columns={[
-          { header: "Receipt", cell: (a) => <span className="font-medium">{a.receipt_number}</span> },
+          { header: "Transaction", cell: (a) => <span className="font-medium">{a.transaction_number}<small className="block text-muted-foreground">{a.receipt_number ?? "No receipt until verified"}</small></span> },
           { header: "Person", cell: (a) => `${a.person.full_name} · ${a.person.person_code ?? ""}` },
           { header: "Branch", cell: (a) => branches.find((b) => b.branch_id === a.collecting_branch_id)?.branch_name ?? a.collecting_branch_id },
           { header: "Date", cell: (a) => date(a.payment_date) },
@@ -198,7 +228,9 @@ function AllocateDialog({ advance, onClose }: { advance: UnallocatedAdvance | nu
     enabled: !!personId,
   });
   const allocate = useApiMutation((v: { id: number; invoice: number }) => paymentsApi.allocate(v.id, v.invoice), {
-    success: (p) => `${p.receipt_number} allocated to ${p.invoice?.invoice_number ?? "invoice"}`,
+    success: (p) =>
+      `${p.transaction_number} allocated to ${p.invoice?.invoice_number ?? "invoice"}` +
+      (p.admissions_created.length ? ` · admitted: ${p.admissions_created.map((a) => a.admission_code).join(", ")}` : ""),
     invalidate: FINANCE_INVALIDATE,
     onSuccess: () => {
       setInvoiceId("");
@@ -210,9 +242,9 @@ function AllocateDialog({ advance, onClose }: { advance: UnallocatedAdvance | nu
     <Dialog open={advance !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="w-[calc(100vw-1.5rem)] max-w-md">
         <DialogHeader>
-          <DialogTitle>Allocate {advance?.receipt_number}</DialogTitle>
+          <DialogTitle>Allocate {advance?.transaction_number}</DialogTitle>
           <DialogDescription>
-            {money(advance?.amount)} from {advance?.person.full_name}. The allocation is capped at the invoice outstanding and cannot be undone.
+            {money(advance?.amount)} from {advance?.person.full_name}. It is spread over the invoice's courses (oldest first), capped at what is left on each, and cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <Field label="Invoice" htmlFor="alloc-invoice">

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { get, list, post, patch, del, upload, type Query } from "./client";
+import { get, list, post, patch, put, del, upload, type Query } from "./client";
 import type { BranchRef, CourseRef, DateOnly, DateTime, UserRef } from "./types";
 
 export type LeadRow = {
@@ -13,6 +13,8 @@ export type LeadRow = {
   contact_channel: string;
   entry_method: string;
   intake_status: string;
+  lead_status: "Active" | "Inactive";
+  pipeline_entry_id: number | null;
   owner: UserRef | null;
   stage: string;
   next_follow_up_at: DateTime | null;
@@ -20,6 +22,8 @@ export type LeadRow = {
   age_days: number;
   ai_priority: string | null;
   ai_score: number | null;
+  qualified_at: DateTime | null;
+  converted_at: DateTime | null;
 };
 
 export type Person = {
@@ -123,6 +127,7 @@ export type LeadFilters = {
   queue?: string;
   q?: string;
   assigned_to?: string; // "me" | "unassigned" | user id
+  lead_status?: string; // "Active" (default) | "Inactive" | "All"
 };
 
 export type NewLead = {
@@ -148,6 +153,42 @@ export type NewLead = {
   campaign?: string | null;
   remarks?: string | null;
   message?: string | null;
+};
+
+/** Qualification checklist (db 019): all six reviewed → Mark Qualified → Convert to deal. */
+export const QUALIFICATION_CHECKS = [
+  "Genuine intent confirmed",
+  "Reachable contact confirmed",
+  "Intended course(s) understood",
+  "Branch and delivery mode discussed",
+  "Exact next action agreed",
+  "Possible identity match reviewed",
+] as const;
+
+export type QualificationCheck = {
+  check: string;
+  hint: string;
+  reviewed: boolean;
+  reviewed_by: UserRef | null;
+  reviewed_at: DateTime | null;
+  notes: string | null;
+};
+
+export type Qualification = {
+  lead_id: number;
+  checks: QualificationCheck[];
+  complete: boolean;
+  qualified_at: DateTime | null;
+  qualified_by: number | null;
+  converted_at: DateTime | null;
+  pipeline_entry_id: number | null;
+  can_convert: boolean;
+};
+
+export type ConvertBody = { course_ids: number[]; branch_id?: number; assigned_to?: number | null; expected_close_date?: DateOnly | null };
+export type ConvertResult = {
+  pipeline_entry: { pipeline_entry_id: number; entry_code: string; stage: string };
+  courses: { lead: { lead_id: number; lead_code: string }; course: CourseRef | null; result: "converted" | "created" | "existing" }[];
 };
 
 export const FOLLOW_UP_PURPOSES = ["Counselling call", "Demo confirmation", "Post-demo follow-up", "Fee follow-up", "Collection follow-up", "Document follow-up"];
@@ -191,6 +232,10 @@ export const leadsApi = {
   },
   getImport: (id: number) => get<LeadImport>(`/lead-imports/${id}`),
   runImport: (id: number) => post<LeadImport>(`/lead-imports/${id}/import`),
+  qualification: (id: number) => get<Qualification>(`/leads/${id}/qualification`),
+  setCheck: (id: number, check: string, reviewed: boolean) => put<Qualification>(`/leads/${id}/qualification/checks`, { check, reviewed }),
+  qualify: (id: number) => post<Qualification>(`/leads/${id}/qualify`),
+  convert: (id: number, body: ConvertBody) => post<ConvertResult>(`/leads/${id}/convert`, body),
 };
 
 export const leadKeys = {
@@ -198,6 +243,7 @@ export const leadKeys = {
   list: (filters: LeadFilters) => ["leads", "list", filters] as const,
   detail: (id: number) => ["leads", "detail", id] as const,
   activities: (id: number) => ["leads", "activities", id] as const,
+  qualification: (id: number) => ["leads", "qualification", id] as const,
   workspace: (query: Query) => ["leads", "workspace", query] as const,
   savedViews: ["saved-views", "leads"] as const,
 };

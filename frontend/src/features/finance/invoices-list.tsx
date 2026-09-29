@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { invoiceKeys, invoicesApi, type InvoiceFilters, type InvoiceRow } from "@/api/invoices";
 import { useBranchFilter } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
@@ -32,20 +32,30 @@ export function InvoicesList({ search, onSearch }: { search: InvoiceSearch; onSe
   return (
     <>
       <PageHead
-        title="Invoice Register"
-        description="Invoices by collecting branch. Pending verification is shown separately and never counted as paid."
+        title="Invoices"
+        description="Course charges, payment plans and balances in one clear ledger."
         actions={
-          <Button asChild variant="outline">
-            <Link to="/payments">Payments & Receipts</Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link to="/payments" search={{ tab: "record" } as never}>
+                Record payment
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link to="/pipeline">
+                <Plus />
+                Create from a deal
+              </Link>
+            </Button>
+          </>
         }
       />
       <MoneyTiles
         loading={invoices.isLoading}
         items={[
-          ["Invoice billed", money(totals?.billed)],
-          ["Verified paid", money(totals?.verified_paid)],
-          ["Pending verification (excluded)", money(totals?.pending_verification)],
+          ["Total invoiced", money(totals?.billed)],
+          ["Verified payments", money(totals?.verified_paid)],
+          ["Pending verification", money(totals?.pending_verification), "Never counted as paid"],
           ["Outstanding", money(totals?.outstanding)],
         ]}
       />
@@ -87,25 +97,35 @@ export function InvoicesList({ search, onSearch }: { search: InvoiceSearch; onSe
             empty={<Empty title="No invoices match">Try clearing the search or filters.</Empty>}
             columns={[
               {
-                header: "Invoice",
+                header: "Invoice / student",
                 cell: (i) => (
                   <Link to="/invoices/$invoiceId" params={{ invoiceId: String(i.invoice_id) }} className="font-semibold text-primary" onClick={(e) => e.stopPropagation()}>
                     {i.invoice_number}
-                    <small className="block font-normal text-muted-foreground">{date(i.issued_on)}</small>
+                    <small className="block font-normal text-muted-foreground">
+                      {i.person.full_name} · {i.collecting_branch.branch_name}
+                    </small>
                   </Link>
                 ),
               },
-              { header: "Person", cell: (i) => i.person.full_name },
-              { header: "Admission", cell: (i) => (i.admission_id ? `#${i.admission_id}` : <span className="text-muted-foreground">Pre-admission</span>) },
-              { header: "Course", cell: (i) => <span className="block max-w-56 truncate">{i.course?.course_title ?? "—"}</span> },
-              { header: "Branch", cell: (i) => i.collecting_branch.branch_name },
-              { header: "Plan", cell: (i) => i.payment_plan?.plan_name ?? "—" },
-              { header: "Billed", cell: (i) => money(i.billed_amount), className: "text-right" },
-              { header: "Verified paid", cell: (i) => money(i.verified_paid), className: "text-right" },
-              { header: "Pending verification", cell: (i) => money(i.pending_verification), className: "text-right" },
-              { header: "Outstanding", cell: (i) => money(i.outstanding), className: "text-right" },
-              { header: "Completion", cell: (i) => <Status>{i.payment_completion}</Status> },
-              { header: "State", cell: (i) => <Status>{i.status === "Issued" ? i.invoice_state : i.status}</Status> },
+              {
+                header: "Courses",
+                cell: (i) => (
+                  <span className="block max-w-60">
+                    {i.courses.map((c) => (
+                      <span key={c.invoice_line_id} className="block truncate">
+                        {c.course.course_title}
+                      </span>
+                    ))}
+                    <small className="block text-muted-foreground">{date(i.issued_on)}</small>
+                  </span>
+                ),
+              },
+              { header: "Plan", cell: (i) => <span className="subtle-chip">{planLabel(i)}</span> },
+              { header: "Amount", cell: (i) => money(i.billed_amount), className: "text-right" },
+              { header: "Paid", cell: (i) => <span className="text-success">{money(i.verified_paid)}</span>, className: "text-right" },
+              { header: "Pending", cell: (i) => money(i.pending_verification), className: "text-right" },
+              { header: "Balance", cell: (i) => money(i.outstanding), className: "text-right" },
+              { header: "Status", cell: (i) => <Status>{i.status === "Issued" ? (i.invoice_state === "Issued" ? "Unpaid" : i.invoice_state) : i.status}</Status> },
             ]}
           />
         </div>
@@ -121,10 +141,16 @@ export function InvoicesList({ search, onSearch }: { search: InvoiceSearch; onSe
           )}
         </div>
         <Pagination meta={invoices.data?.meta} onPage={(page) => onSearch({ ...search, page })} />
+        <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+          <span>One invoice can cover multiple courses.</span>
+          <span>Receipts are issued only after payment verification.</span>
+        </div>
       </div>
     </>
   );
 }
+
+const planLabel = (i: InvoiceRow) => ({ 1: "Full", 2: "2 instalments", 3: "3 instalments" })[i.payment_plan?.installments ?? 1] ?? i.payment_plan?.plan_name ?? "—";
 
 function InvoiceCard({ invoice: i }: { invoice: InvoiceRow }) {
   return (
@@ -133,7 +159,7 @@ function InvoiceCard({ invoice: i }: { invoice: InvoiceRow }) {
         <Link to="/invoices/$invoiceId" params={{ invoiceId: String(i.invoice_id) }} className="min-w-0 font-semibold text-primary">
           {i.invoice_number}
           <span className="mt-1 block text-xs font-normal text-muted-foreground">
-            {i.person.full_name} · {i.course?.course_title ?? "—"}
+            {i.person.full_name} · {i.courses.map((c) => c.course.course_title).join(", ")}
           </span>
         </Link>
         <Status>{i.payment_completion}</Status>

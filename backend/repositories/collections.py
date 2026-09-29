@@ -48,6 +48,6 @@ def ageing(filters: dict, branch_ids: set[int] | None) -> dict[str, dict]:
     return {band: found.get(band, {"installments": 0, "balance": 0}) for band in AGE_BANDS}
 
 
-def promises_for(admission_id: int) -> list[PaymentPromise]:
-    stmt = select(PaymentPromise).where(PaymentPromise.admission_id == admission_id).order_by(PaymentPromise.promise_id.desc())
+def promises_for(invoice_id: int) -> list[PaymentPromise]:
+    stmt = select(PaymentPromise).where(PaymentPromise.invoice_id == invoice_id).order_by(PaymentPromise.promise_id.desc())
     return list(db.session.execute(stmt).scalars())

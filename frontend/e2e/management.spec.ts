@@ -23,7 +23,7 @@ async function confirmDialog(page: Page, action: string) {
 
 test("founder dashboard shows company KPIs, branch comparison, funnel, targets and AI brief", async ({ page }) => {
   await login(page, USERS.founder);
-  await page.goto("/dashboard");
+  await page.goto("/dashboard?tab=performance"); // period KPIs live on the Performance tab of the V4 overview
   await expect(page.getByRole("heading", { name: "Founder / CEO Dashboard" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Genuine Enquiries/ })).toBeVisible();
   const comparison = page.locator("section", { has: page.getByRole("heading", { name: "Branch comparison" }) });
@@ -74,7 +74,7 @@ test("branch manager view: own branch, team queues with links, no admin access",
 
 test("staff dashboard (accounts) shows KPI tiles only", async ({ page }) => {
   await login(page, USERS.accountsGnt);
-  await page.goto("/dashboard");
+  await page.goto("/dashboard?tab=performance");
   await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
   await expect(page.getByText("Verified Collections")).toBeVisible();
   await expect(page.getByText("AI Management Brief")).toHaveCount(0);

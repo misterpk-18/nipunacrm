@@ -1,184 +1,243 @@
-import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+/** Record payment (V4 "Allocate actual payment"): one payer and invoice, money split across its course lines, one
+ *  pending transaction per tender. Nothing counts until Accounts verifies; the receipt number comes then. */
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CircleDollarSign } from "lucide-react";
-import { invoiceKeys, invoicesApi, type InvoiceRow } from "@/api/invoices";
-import { paymentsApi, type NewPayment } from "@/api/payments";
+import { CircleDollarSign, Plus, Trash2 } from "lucide-react";
+import { invoiceKeys, invoicesApi, useInvoice } from "@/api/invoices";
+import { paymentsApi, type Tender } from "@/api/payments";
 import { useLookups } from "@/api/reference";
 import { useBranchFilter } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Field, LookupSelect, NativeSelect, StaffSelect, applyServerErrors } from "@/components/crm/forms";
-import { money, todayIST } from "@/lib/format";
+import { Field, NativeSelect, StaffSelect } from "@/components/crm/forms";
+import { Empty, LoadingRows } from "@/components/crm/ui";
+import { money, sumMoney, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { FINANCE_INVALIDATE } from "./shared";
 
-type Values = {
-  invoice_id: string;
-  amount: string;
-  payment_mode_id: string;
-  payment_date: string;
-  reference: string;
-  exception_approved_by: string;
-  notes: string;
-  split_excess: boolean;
-};
+type TenderRow = { payment_mode_id: string; amount: string; reference: string; payment_date: string; exception_approved_by: string };
+const blankTender = (): TenderRow => ({ payment_mode_id: "", amount: "", reference: "", payment_date: todayIST(), exception_approved_by: "" });
 
-/** Record a payment against an issued invoice (JSON, or multipart with a proof file). */
-export function RecordPaymentDialog({
-  open,
-  onOpenChange,
-  invoice,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Preset invoice (from the invoice page); otherwise the user searches for one. */
-  invoice?: Pick<InvoiceRow, "invoice_id" | "invoice_number" | "outstanding" | "person" | "collecting_branch">;
-}) {
+export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: number | undefined; onDone?: (invoiceId: number) => void }) {
   const branchId = useBranchFilter();
   const lookups = useLookups();
   const [search, setSearch] = useState("");
+  const [invoiceId, setInvoiceId] = useState<number | undefined>(preset);
+  const [split, setSplit] = useState(false);
+  const [alloc, setAlloc] = useState<Record<number, string>>({});
+  const [tenders, setTenders] = useState<TenderRow[]>([blankTender()]);
   const [proof, setProof] = useState<File | null>(null);
-  const defaults = (): Values => ({
-    invoice_id: invoice ? String(invoice.invoice_id) : "",
-    amount: invoice && Number(invoice.outstanding) > 0 ? invoice.outstanding : "",
-    payment_mode_id: "",
-    payment_date: todayIST(),
-    reference: "",
-    exception_approved_by: "",
-    notes: "",
-    split_excess: true,
-  });
-  const form = useForm<Values>({ defaultValues: defaults() });
-  const { register, handleSubmit, watch, reset, formState, setValue } = form;
-
-  useEffect(() => {
-    if (open) {
-      reset(defaults());
-      setProof(null);
-      setSearch("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, invoice?.invoice_id]);
+  const [notes, setNotes] = useState("");
+  useEffect(() => setInvoiceId(preset), [preset]);
 
   const candidates = useQuery({
-    queryKey: invoiceKeys.list({ status: "Issued", q: search, branch_id: branchId, per_page: 50 }),
-    queryFn: () => invoicesApi.list({ status: "Issued", q: search || undefined, branch_id: branchId, per_page: 50 }),
-    enabled: open && !invoice,
+    queryKey: invoiceKeys.list({ status: "Issued", outstanding: true, q: search, branch_id: branchId, per_page: 50 }),
+    queryFn: () => invoicesApi.list({ status: "Issued", outstanding: true, q: search || undefined, branch_id: branchId, per_page: 50 }),
   });
-  const open_invoices = (candidates.data?.data ?? []).filter((i) => Number(i.outstanding) > 0);
+  const invoice = useInvoice(invoiceId ?? 0);
+  const inv = invoiceId ? invoice.data : undefined;
+  const lines = useMemo(() => inv?.lines ?? [], [inv]);
 
-  const invoiceId = watch("invoice_id");
-  const selected = invoice ?? open_invoices.find((i) => String(i.invoice_id) === invoiceId);
-  const mode = lookups.data?.payment_modes.find((m) => String(m.id) === watch("payment_mode_id"));
+  // New invoice: suggest the whole remaining amount on each course
+  useEffect(() => {
+    setAlloc(Object.fromEntries(lines.map((l) => [l.invoice_line_id, Number(l.open_to_allocate) > 0 ? l.open_to_allocate : "0.00"])));
+    setTenders([blankTender()]);
+    setSplit(false);
+  }, [lines]);
 
-  const record = useApiMutation((v: { body: NewPayment; proof: File | null }) => paymentsApi.record(v.body, v.proof), {
-    success: (r) =>
-      `${r.payment.receipt_number} recorded as ${r.payment.verification_status}${r.advance ? ` · excess ${money(r.advance.amount)} kept as advance ${r.advance.receipt_number}` : ""}`,
-    invalidate: FINANCE_INVALIDATE,
-    silentValidation: true,
-    onSuccess: () => onOpenChange(false),
-    onError: (error) => applyServerErrors(form, error),
-  });
+  const allocated = sumMoney(Object.values(alloc));
+  const tendered = sumMoney(split ? tenders.map((t) => t.amount) : [allocated]);
+  const modes = lookups.data?.payment_modes ?? [];
+  const rows = split ? tenders : [{ ...tenders[0]!, amount: allocated }];
+  const modeOf = (t: TenderRow) => modes.find((m) => String(m.id) === t.payment_mode_id);
+  const overLine = lines.find((l) => Number(alloc[l.invoice_line_id] ?? 0) > Number(l.open_to_allocate));
+  const ready =
+    inv &&
+    Number(allocated) > 0 &&
+    !overLine &&
+    tendered === allocated &&
+    rows.every((t) => t.payment_mode_id && Number(t.amount) > 0 && (!modeOf(t)?.requires_reference || t.reference.trim()) && (!modeOf(t)?.requires_approval || t.exception_approved_by));
 
-  const submit = handleSubmit((v) => {
-    record.mutate({
-      body: {
-        invoice_id: Number(v.invoice_id),
-        amount: v.amount.trim(),
-        payment_mode_id: Number(v.payment_mode_id),
-        payment_date: v.payment_date || null,
-        reference: v.reference.trim() || null,
-        exception_approved_by: v.exception_approved_by ? Number(v.exception_approved_by) : null,
-        notes: v.notes.trim() || null,
-        split_excess: v.split_excess,
+  const record = useApiMutation(
+    () => {
+      const body = {
+        invoice_id: inv!.invoice_id,
+        allocations: lines.filter((l) => Number(alloc[l.invoice_line_id]) > 0).map((l) => ({ invoice_line_id: l.invoice_line_id, amount: alloc[l.invoice_line_id]! })),
+        tenders: rows.map(
+          (t): Tender => ({
+            amount: t.amount,
+            payment_mode_id: Number(t.payment_mode_id),
+            payment_date: t.payment_date || null,
+            reference: t.reference.trim() || null,
+            exception_approved_by: t.exception_approved_by ? Number(t.exception_approved_by) : null,
+          }),
+        ),
+        notes: notes.trim() || null,
+        split_excess: false,
+      };
+      return paymentsApi.record(body, proof);
+    },
+    {
+      success: (r) => `${r.payments.map((p) => p.transaction_number).join(", ")} recorded · pending verification (no receipt yet)`,
+      invalidate: [...FINANCE_INVALIDATE, ["pipeline"]],
+      onSuccess: () => {
+        const id = inv!.invoice_id;
+        setProof(null);
+        setNotes("");
+        onDone?.(id);
       },
-      proof,
-    });
-  });
+    },
+  );
+  const setTender = (i: number, patch: Partial<TenderRow>) => setTenders(tenders.map((t, n) => (n === i ? { ...t, ...patch } : t)));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-[calc(100vw-1.5rem)] max-w-xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Record payment</DialogTitle>
-          <DialogDescription>New payments start as Pending Verification. Outstanding and verified totals change only after Accounts verifies.</DialogDescription>
-        </DialogHeader>
-        <form id="record-payment" onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
-          {invoice ? (
-            <div className="rounded-md border bg-muted/40 p-3 text-sm sm:col-span-2">
-              <b>{invoice.invoice_number}</b> · {invoice.person.full_name} · outstanding {money(invoice.outstanding)}
-            </div>
-          ) : (
-            <>
-              <Field label="Find invoice" htmlFor="rp-search" className="sm:col-span-2">
-                <Input id="rp-search" placeholder="Invoice number, name or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
-              </Field>
-              <Field label="Invoice" htmlFor="rp-invoice" error={formState.errors.invoice_id?.message} className="sm:col-span-2">
-                <NativeSelect
-                  id="rp-invoice"
-                  placeholder={candidates.isLoading ? "Loading…" : open_invoices.length ? "Select invoice…" : "No open invoices match"}
-                  options={open_invoices.map((i) => ({ value: i.invoice_id, label: `${i.invoice_number} · ${i.person.full_name} · outstanding ${money(i.outstanding)}` }))}
-                  {...register("invoice_id", {
-                    required: "Choose the invoice",
-                    onChange: (e) => {
-                      const inv = open_invoices.find((i) => String(i.invoice_id) === e.target.value);
-                      if (inv) setValue("amount", inv.outstanding);
-                    },
-                  })}
-                />
-              </Field>
-            </>
-          )}
-          <Field label="Amount (₹)" htmlFor="rp-amount" error={formState.errors.amount?.message}>
-            <Input
-              id="rp-amount"
-              inputMode="decimal"
-              {...register("amount", { required: "Enter the amount", pattern: { value: /^\d+(\.\d{1,2})?$/, message: "Rupees, up to 2 decimals" } })}
-            />
-          </Field>
-          <Field label="Payment mode" htmlFor="rp-mode" error={formState.errors.payment_mode_id?.message}>
-            <LookupSelect id="rp-mode" lookup="payment_modes" {...register("payment_mode_id", { required: "Choose the mode" })} />
-          </Field>
-          <Field label="Payment date" htmlFor="rp-date" error={formState.errors.payment_date?.message}>
-            <Input id="rp-date" type="date" max={todayIST()} {...register("payment_date")} />
-          </Field>
-          <Field label={mode?.requires_reference ? "Reference (required)" : "Reference"} htmlFor="rp-ref" error={formState.errors.reference?.message}>
-            <Input id="rp-ref" placeholder="UTR / transaction / cheque no." {...register("reference", { validate: (v) => !mode?.requires_reference || !!v.trim() || `${mode.label} needs a reference` })} />
-          </Field>
-          {mode?.requires_approval && (
-            <Field label="Exception approved by" htmlFor="rp-approver" error={formState.errors.exception_approved_by?.message} className="sm:col-span-2" hint="A branch manager or admin other than you">
-              <StaffSelect
-                id="rp-approver"
-                branchId={selected?.collecting_branch.branch_id}
-                roles={["BRANCH_MANAGER", "FOUNDER_CEO", "SUPER_ADMIN"]}
-                {...register("exception_approved_by", { required: `${mode.label} needs an approver` })}
-              />
-            </Field>
-          )}
-          <Field label="Proof (optional)" htmlFor="rp-proof" className="sm:col-span-2" hint="Screenshot or PDF of the transfer / receipt">
-            <Input id="rp-proof" type="file" accept="image/*,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
-          </Field>
-          <Field label="Notes" htmlFor="rp-notes" className="sm:col-span-2">
-            <Textarea id="rp-notes" rows={2} {...register("notes")} />
-          </Field>
-          <label className="flex items-start gap-2 text-sm sm:col-span-2">
-            <input type="checkbox" className="mt-1" {...register("split_excess")} />
-            <span>Keep any amount above the outstanding as an unallocated advance (otherwise the payment is refused)</span>
+    <div className="grid gap-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Starting invoice / payer" htmlFor="rp-invoice">
+          <NativeSelect
+            id="rp-invoice"
+            value={invoiceId ?? ""}
+            placeholder={candidates.isLoading ? "Loading…" : "Select invoice…"}
+            options={[
+              ...(inv && !(candidates.data?.data ?? []).some((c) => c.invoice_id === inv.invoice_id)
+                ? [{ value: inv.invoice_id, label: `${inv.invoice_number} · ${inv.person.full_name} · ${inv.collecting_branch.branch_name}` }]
+                : []),
+              ...(candidates.data?.data ?? []).map((i) => ({ value: i.invoice_id, label: `${i.invoice_number} · ${i.person.full_name} · ${i.collecting_branch.branch_name}` })),
+            ]}
+            onChange={(e) => setInvoiceId(e.target.value ? Number(e.target.value) : undefined)}
+          />
+        </Field>
+        <Field label="Find invoice" htmlFor="rp-search">
+          <Input id="rp-search" placeholder="Invoice number, name or course" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </Field>
+      </div>
+      {invoiceId && invoice.isLoading && <LoadingRows rows={3} />}
+      {!invoiceId && <Empty title="Choose the invoice the money is for" />}
+      {inv && (
+        <>
+          <div className="table-wrap">
+            <table className="w-full text-left text-sm" aria-label="Allocate to courses">
+              <thead>
+                <tr>
+                  <th>Invoice / course</th>
+                  <th className="text-right">Charge</th>
+                  <th className="text-right">Verified paid</th>
+                  <th className="text-right">Remaining</th>
+                  <th>Allocate now</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={l.invoice_line_id}>
+                    <td className="min-w-40 max-w-64 whitespace-normal">
+                      <b>{l.course.course_title}</b>
+                      <small className="block text-muted-foreground">
+                        {inv.invoice_number} · {l.line_code}
+                        {Number(l.pending_verification) > 0 ? ` · ${money(l.pending_verification)} pending` : ""}
+                      </small>
+                    </td>
+                    <td className="text-right">{money(l.billed_amount)}</td>
+                    <td className="text-right">{money(l.verified_paid)}</td>
+                    <td className="text-right">{money(l.open_to_allocate)}</td>
+                    <td className="w-32 min-w-28">
+                      <Input
+                        inputMode="decimal"
+                        aria-label={`Allocate to ${l.course.course_title}`}
+                        value={alloc[l.invoice_line_id] ?? ""}
+                        onChange={(e) => setAlloc({ ...alloc, [l.invoice_line_id]: e.target.value })}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {overLine && <p className="text-xs text-destructive">Only {money(overLine.open_to_allocate)} is left on {overLine.course.course_title}.</p>}
+          <label className="check-tile max-w-xs">
+            <Checkbox aria-label="Split payment" checked={split} onCheckedChange={(v) => setSplit(v === true)} />
+            <span className="text-sm">Split payment (several tenders)</span>
           </label>
-        </form>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" form="record-payment" disabled={record.isPending}>
-            <CircleDollarSign />
-            Record payment
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <div className="rounded-xl border p-3">
+            <div className="mb-2 flex justify-between text-sm font-semibold">
+              <span>Tenders</span>
+              <span>
+                {money(tendered)} / {money(allocated)}
+              </span>
+            </div>
+            <div className="grid gap-2">
+              {rows.map((t, i) => {
+                const mode = modeOf(t);
+                return (
+                  <div key={i} className="grid gap-2 sm:grid-cols-[1.2fr_0.8fr_1fr_0.8fr_auto]">
+                    <NativeSelect
+                      aria-label={`Tender ${i + 1} mode`}
+                      placeholder="Payment mode…"
+                      value={t.payment_mode_id}
+                      options={modes.filter((m) => m.is_active).map((m) => ({ value: m.id, label: m.label }))}
+                      onChange={(e) => setTender(i, { payment_mode_id: e.target.value })}
+                    />
+                    <Input
+                      inputMode="decimal"
+                      aria-label={`Tender ${i + 1} amount`}
+                      placeholder="Amount"
+                      value={t.amount}
+                      disabled={!split}
+                      onChange={(e) => setTender(i, { amount: e.target.value })}
+                    />
+                    <Input aria-label={`Tender ${i + 1} reference`} placeholder={mode?.requires_reference ? "Reference (required)" : "Reference"} value={t.reference} onChange={(e) => setTender(i, { reference: e.target.value })} />
+                    <Input type="date" aria-label={`Tender ${i + 1} date`} max={todayIST()} value={t.payment_date} onChange={(e) => setTender(i, { payment_date: e.target.value })} />
+                    {split ? (
+                      <Button size="icon" variant="ghost" aria-label="Remove tender" disabled={tenders.length === 1} onClick={() => setTenders(tenders.filter((_, n) => n !== i))}>
+                        <Trash2 />
+                      </Button>
+                    ) : (
+                      <span />
+                    )}
+                    {mode?.requires_approval && (
+                      <div className="sm:col-span-5">
+                        <StaffSelect
+                          aria-label={`Tender ${i + 1} exception approver`}
+                          branchId={inv.collecting_branch.branch_id}
+                          roles={["BRANCH_MANAGER", "FOUNDER_CEO", "SUPER_ADMIN"]}
+                          placeholder={`${mode.label} needs an approver (not you)…`}
+                          value={t.exception_approved_by}
+                          onChange={(e) => setTender(i, { exception_approved_by: e.target.value })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {split && (
+              <Button size="sm" variant="ghost" className="mt-2" onClick={() => setTenders([...tenders, blankTender()])}>
+                <Plus />
+                Add tender
+              </Button>
+            )}
+            {split && tendered !== allocated && <p className="mt-1 text-xs text-destructive">Tenders must add up to the allocated {money(allocated)}.</p>}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Proof (optional)" htmlFor="rp-proof" hint="Screenshot or PDF of the transfer / receipt">
+              <Input id="rp-proof" type="file" accept="image/*,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
+            </Field>
+            <Field label="Notes" htmlFor="rp-notes">
+              <Textarea id="rp-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </Field>
+          </div>
+          <div>
+            <Button disabled={!ready || record.isPending} onClick={() => record.mutate(undefined)}>
+              <CircleDollarSign />
+              Record payment
+            </Button>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Every tender becomes a separate Pending Verification transaction. A single tender gets one receipt after verification; split tenders get independent receipts.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

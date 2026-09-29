@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Filter, MessageCircle, Phone, Plus, Save, Search, Trash2, Upload, Users } from "lucide-react";
 import { leadKeys, leadsApi, type LeadFilters, type LeadRow } from "@/api/leads";
 import { LEAD_OWNER_ROLES, useLookups, useStaff } from "@/api/reference";
@@ -8,15 +8,22 @@ import { useAuth, useBranchFilter } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CourseSelect, Field, LookupSelect, NativeSelect } from "@/components/crm/forms";
-import { ConfirmAction, DataTable, Empty, LoadingRows, ErrorPanel, PageHead, Pagination, Status } from "@/components/crm/ui";
-import { dateTime, isPast, maskPhone, relative } from "@/lib/format";
+import { ConfirmAction, DataTable, Empty, LeadChip, LoadingRows, ErrorPanel, PageHead, Pagination, PriorityChip, StatTile, Status } from "@/components/crm/ui";
+import { CourseSource, LeadContact, LeadIdentity, LeadMobileCard } from "@/features/workspace/lead-parts";
+import { dateTime, isPast, relative } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { ImportDialog } from "./import-dialog";
 import { NewLeadDialog } from "./new-lead-dialog";
 
 export type LeadSearch = Omit<LeadFilters, "per_page" | "branch_id">;
 
-const FILTER_KEYS: (keyof LeadSearch)[] = ["stage", "course_id", "source_id", "intake_status", "priority", "queue", "assigned_to"];
+const FILTER_KEYS: (keyof LeadSearch)[] = ["lead_status", "stage", "course_id", "source_id", "intake_status", "priority", "queue", "assigned_to"];
+
+/** Leads = Active enquiries (New Enquiry) unless another status is chosen; a stage filter searches every lead. */
+const LEAD_STATUS_OPTIONS = [
+  { value: "Inactive", label: "Inactive — in the pipeline or closed" },
+  { value: "All", label: "All leads" },
+];
 
 export function ContactButtons({ phone, prominent = false }: { phone: string; prominent?: boolean }) {
   const digits = phone.replace(/\D/g, "");
@@ -28,7 +35,7 @@ export function ContactButtons({ phone, prominent = false }: { phone: string; pr
           {prominent && "Call"}
         </a>
       </Button>
-      <Button size={prominent ? "sm" : "icon"} variant="outline" title="WhatsApp" asChild>
+      <Button size={prominent ? "sm" : "icon"} variant="whatsapp" title="WhatsApp" asChild>
         <a href={`https://wa.me/${digits}`} target="_blank" rel="noreferrer">
           <MessageCircle />
           {prominent && "WhatsApp"}
@@ -46,6 +53,14 @@ export function followUpLabel(lead: Pick<LeadRow, "next_follow_up_at">) {
     </span>
   );
 }
+
+/** V4 snapshot tiles: each is a count and a one-click filter (lead status / stage). */
+const SNAPSHOTS: { label: string; filters: Pick<LeadSearch, "lead_status" | "stage"> }[] = [
+  { label: "All enquiries", filters: { lead_status: "All" } },
+  { label: "New enquiries", filters: {} },
+  { label: "In counselling", filters: { lead_status: "All", stage: "Counselling" } },
+  { label: "Payment review", filters: { lead_status: "All", stage: "Payment Pending Verification" } },
+];
 
 /** Leads register: search, filters (in the URL), saved views, bulk assign, create / import. */
 export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: (next: LeadSearch) => void }) {
@@ -65,6 +80,12 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
   const leads = useQuery({ queryKey: leadKeys.list(filters), queryFn: () => leadsApi.list(filters), placeholderData: (prev) => prev });
   const views = useQuery({ queryKey: leadKeys.savedViews, queryFn: leadsApi.savedViews });
   const rows = leads.data?.data;
+  const snapshotCounts = useQueries({
+    queries: SNAPSHOTS.map((t) => {
+      const f: LeadFilters = { ...t.filters, branch_id: branchId, per_page: 1 };
+      return { queryKey: leadKeys.list(f), queryFn: () => leadsApi.list(f) };
+    }),
+  });
 
   const selectedRows = (rows ?? []).filter((l) => selected.includes(l.lead_id));
   const selectedBranches = [...new Set(selectedRows.map((l) => l.branch.branch_id))];
@@ -95,7 +116,7 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
     <>
       <PageHead
         title="Leads"
-        description="Search, filter, assign and progress enquiries."
+        description="New enquiries (Active leads). Once a lead moves on, the person is tracked in Pipeline — use the Lead status filter to see those leads."
         actions={
           <>
             <Button onClick={() => setNewOpen(true)}>
@@ -109,6 +130,17 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
           </>
         }
       />
+      <div className="mb-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4" aria-label="Lead snapshots">
+        {SNAPSHOTS.map((t, i) => (
+          <StatTile
+            key={t.label}
+            label={t.label}
+            value={snapshotCounts[i]?.data?.meta.total ?? "…"}
+            active={search.lead_status === t.filters.lead_status && search.stage === t.filters.stage}
+            onClick={() => set({ lead_status: t.filters.lead_status ?? "", stage: t.filters.stage ?? "" })}
+          />
+        ))}
+      </div>
       <div className="panel">
         <div className="mb-3 flex flex-wrap gap-2">
           <form
@@ -157,6 +189,9 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
         </div>
         {showFilters && (
           <div className="mb-3 grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Lead status">
+              <NativeSelect value={search.lead_status ?? ""} placeholder="Active (new enquiries)" options={LEAD_STATUS_OPTIONS} onChange={(e) => set({ lead_status: e.target.value })} />
+            </Field>
             <Field label="Stage">
               <NativeSelect value={search.stage ?? ""} placeholder="Any" options={(lookups.data?.enums["lead_stages"] ?? []).map((s) => ({ value: s, label: s }))} onChange={(e) => set({ stage: e.target.value })} />
             </Field>
@@ -245,7 +280,15 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
             onRetry={() => void leads.refetch()}
             rowKey={(l) => l.lead_id}
             onRowClick={(l) => void navigate({ to: "/leads/$leadId", params: { leadId: String(l.lead_id) } })}
-            empty={<Empty title="No leads match">Try clearing the search or filters.</Empty>}
+            empty={
+              <Empty title="No leads match">
+                Try clearing the search or filters. Someone already in the pipeline isn&apos;t an Active lead — set Lead status to All, or search{" "}
+                <Link to="/persons" search={{ q: search.q }} className="text-primary">
+                  Persons
+                </Link>
+                .
+              </Empty>
+            }
             columns={[
               {
                 header: "",
@@ -259,26 +302,14 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
                   />
                 ),
               },
-              {
-                header: "Name",
-                cell: (l) => (
-                  <Link to="/leads/$leadId" params={{ leadId: String(l.lead_id) }} className="font-semibold text-primary" onClick={(e) => e.stopPropagation()}>
-                    {l.name}
-                    <small className="block font-normal text-muted-foreground">{l.lead_code}</small>
-                  </Link>
-                ),
-              },
-              { header: "Phone", cell: (l) => maskPhone(l.phone) },
-              { header: "Course", cell: (l) => <span className="block max-w-56 truncate">{l.course?.course_title ?? "—"}</span> },
-              { header: "Branch", cell: (l) => l.branch.branch_name },
-              { header: "Source", cell: (l) => l.original_source },
-              { header: "Channel", cell: (l) => l.contact_channel },
-              { header: "Intake", cell: (l) => <Status>{l.intake_status}</Status> },
+              { header: "Lead", cell: (l) => <LeadIdentity lead={l} /> },
+              { header: "Course / source", cell: (l) => <CourseSource lead={l} /> },
               { header: "Owner", cell: (l) => l.owner?.full_name ?? <Status kind="warn">Unassigned</Status> },
-              { header: "Stage", cell: (l) => <Status>{l.stage}</Status> },
-              { header: "Next follow-up", cell: followUpLabel },
-              { header: "AI priority", cell: (l) => (l.ai_priority ? <Status>{`${l.ai_priority}${l.ai_score !== null ? ` · ${l.ai_score}` : ""}`}</Status> : "—") },
-              { header: "", cell: (l) => <ContactButtons phone={l.phone} /> },
+              { header: "Stage", cell: (l) => <Status kind={l.lead_status === "Active" ? undefined : "neutral"}>{l.stage}</Status> },
+              { header: "Intake", cell: (l) => (l.intake_status === "New" ? <LeadChip value="New" /> : <Status>{l.intake_status}</Status>) },
+              { header: "Follow-up", cell: followUpLabel },
+              { header: "Priority", cell: (l) => <PriorityChip priority={l.ai_priority} score={l.ai_score} /> },
+              { header: "", cell: (l) => <LeadContact phone={l.phone} /> },
             ]}
           />
         </div>
@@ -288,33 +319,7 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
           ) : leads.error ? (
             <ErrorPanel error={leads.error} onRetry={() => void leads.refetch()} />
           ) : rows?.length ? (
-            rows.map((l) => (
-              <div className="mobile-lead-card" key={l.lead_id}>
-                <div className="flex items-start justify-between gap-3">
-                  <label className="flex min-w-0 items-start gap-2">
-                    <input type="checkbox" className="mt-1" aria-label={`Select ${l.name}`} checked={selected.includes(l.lead_id)} onChange={() => toggle(l.lead_id)} />
-                    <span className="min-w-0">
-                      <Link to="/leads/$leadId" params={{ leadId: String(l.lead_id) }} className="font-semibold text-primary">
-                        {l.name}
-                      </Link>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {l.course?.course_title ?? "No course"} · {l.stage}
-                      </span>
-                    </span>
-                  </label>
-                  {l.ai_priority && <Status>{l.ai_priority}</Status>}
-                </div>
-                <div className="my-3 space-y-1 text-xs">
-                  <div>
-                    {maskPhone(l.phone)} · {l.next_follow_up_at ? dateTime(l.next_follow_up_at) : "Unscheduled"}
-                  </div>
-                  <div className="break-words text-muted-foreground">
-                    {l.branch.branch_name} · {l.owner?.full_name ?? "Unassigned"} · {l.original_source} · {l.intake_status}
-                  </div>
-                </div>
-                <ContactButtons phone={l.phone} prominent />
-              </div>
-            ))
+            rows.map((l) => <LeadMobileCard key={l.lead_id} lead={l} selected={selected.includes(l.lead_id)} onToggle={() => toggle(l.lead_id)} />)
           ) : (
             <Empty title="No leads match" />
           )}

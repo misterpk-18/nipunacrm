@@ -280,8 +280,8 @@ function FinanceTab({ personId }: { personId: number }) {
                   </Link>
                 ),
               },
-              { header: "Admission", cell: (i) => (i.admission_id ? `#${i.admission_id}` : "Pre-admission") },
-              { header: "Course", cell: (i) => i.course.course_title },
+              { header: "Courses", cell: (i) => i.courses.map((c) => c.course.course_title).join(", ") },
+              { header: "Admitted", cell: (i) => `${i.admitted_lines} of ${i.courses.length}` },
               { header: "Billed", cell: (i) => money(i.billed_amount) },
               { header: "Verified paid", cell: (i) => money(i.verified_paid) },
               { header: "Pending verification", cell: (i) => money(i.pending_verification) },
@@ -295,7 +295,7 @@ function FinanceTab({ personId }: { personId: number }) {
             rowKey={(x) => x.payment_id}
             empty={<Empty title="No payments" />}
             columns={[
-              { header: "Receipt", cell: (x) => x.receipt_number },
+              { header: "Transaction / receipt", cell: (x) => <span>{x.transaction_number}<small className="block text-muted-foreground">{x.receipt_number ?? "No receipt until verified"}</small></span> },
               { header: "Date", cell: (x) => date(x.payment_date) },
               { header: "Type", cell: (x) => x.entry_type },
               { header: "Amount", cell: (x) => money(x.amount) },

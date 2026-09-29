@@ -2,14 +2,14 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, SmallInteger, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config.database import db
 from models.access import User
 from models.commercials import Offer, PaymentPlan
 from models.courses import Course
-from models.enums import DeliveryMode, FeeDiscussionMilestone, FeeVersionStatus, ScrStatus, SeatType
+from models.enums import CapacityReview, DeliveryMode, FeeDiscussionMilestone, FeeVersionStatus, ScrStatus, SeatType
 from models.leads import Lead, user_summary
 from models.masters import Branch
 
@@ -25,12 +25,6 @@ class FeeDiscussion(db.Model):
     counsellor_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     milestone: Mapped[str] = mapped_column(FeeDiscussionMilestone, default="In Discussion")
     fee_shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    delivery_mode: Mapped[str | None] = mapped_column(DeliveryMode)
-    seat_type: Mapped[str | None] = mapped_column(SeatType)
-    planned_start_date: Mapped[date | None] = mapped_column(Date)
-    accepted_version_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("fee_discussion_versions.version_id"))
-    plan_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    plan_accepted_recorded_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
 
@@ -59,22 +53,28 @@ class FeeDiscussion(db.Model):
             **self.to_summary(),
             "lead": self.lead.to_summary(),
             "person": self.lead.person.to_summary(),
-            "course": self.course.to_summary(),
+            "course": {**self.course.to_summary(), "standard_fee": self.course.standard_fee},
             "branch": self.branch.to_summary(),
             "counsellor": user_summary(self.counsellor),
             "fee_shared_at": self.fee_shared_at,
-            "accepted_plan": {
-                "accepted_version_id": self.accepted_version_id,
-                "delivery_mode": self.delivery_mode,
-                "seat_type": self.seat_type,
-                "planned_start_date": self.planned_start_date,
-                "plan_accepted_at": self.plan_accepted_at,
-                "recorded_by": self.plan_accepted_recorded_by,
-            } if self.plan_accepted_at else None,
             "current_version": current.to_dict() if current else None,
             "versions": [v.to_dict() for v in self.versions],
             "created_at": self.created_at,
         }
+
+
+class FeeVersionInstallment(db.Model):
+    """The version's payment schedule: a due date and amount per instalment (db 018). Frozen with the version."""
+
+    __tablename__ = "fee_version_installments"
+
+    version_id: Mapped[int] = mapped_column(Integer, ForeignKey("fee_discussion_versions.version_id"), primary_key=True)
+    installment_no: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    due_date: Mapped[date] = mapped_column(Date)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+
+    def to_dict(self) -> dict:
+        return {"installment_no": self.installment_no, "due_date": self.due_date, "amount": self.amount}
 
 
 class FeeDiscussionVersion(db.Model):
@@ -105,6 +105,9 @@ class FeeDiscussionVersion(db.Model):
     special_closing_requests: Mapped[list["SpecialClosingRequest"]] = relationship(
         lazy="selectin", order_by="SpecialClosingRequest.scr_id", back_populates="version"
     )
+    installments: Mapped[list[FeeVersionInstallment]] = relationship(
+        lazy="selectin", order_by=FeeVersionInstallment.installment_no, cascade="all, delete-orphan"
+    )
 
     @property
     def is_below_floor(self) -> bool:
@@ -131,6 +134,7 @@ class FeeDiscussionVersion(db.Model):
             "needs_special_closing": self.needs_special_closing,
             "payment_plan": {"payment_plan_id": self.payment_plan.payment_plan_id, "plan_code": self.payment_plan.plan_code,
                              "plan_name": self.payment_plan.plan_name},
+            "installments": [i.to_dict() for i in self.installments],
             "valid_until": self.valid_until,
             "notes": self.notes,
             "special_closing_requests": [s.to_summary() for s in self.special_closing_requests],
@@ -195,4 +199,44 @@ class SpecialClosingRequest(db.Model):
             "decision_reason": self.decision_reason,
             "independent_approved_by": self.independent_approved_by,
             "independent_approved_at": self.independent_approved_at,
+        }
+
+
+class DeliveryPlan(db.Model):
+    """Per course deal (db 020): DP-00001. Draft → accepted (student acceptance captured); accepted plans are frozen
+    until reopened. Admissions take their service branch, mode, seat type and start from it."""
+
+    __tablename__ = "delivery_plans"
+
+    delivery_plan_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_code: Mapped[str] = mapped_column(String(20), unique=True)  # set by trigger
+    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("leads.lead_id"), unique=True)
+    service_branch_id: Mapped[int] = mapped_column(Integer, ForeignKey("branches.branch_id"))
+    delivery_mode: Mapped[str] = mapped_column(DeliveryMode)
+    seat_type: Mapped[str] = mapped_column(SeatType, default="Confirmed Seat")
+    planned_start_date: Mapped[date | None] = mapped_column(Date)
+    capacity_review: Mapped[str] = mapped_column(CapacityReview, default="Waiting")
+    student_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepted_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
+
+    service_branch: Mapped[Branch] = relationship(lazy="joined")
+    acceptor: Mapped[User | None] = relationship(foreign_keys=[accepted_by], lazy="joined")
+
+    @property
+    def status(self) -> str:
+        return "Accepted" if self.accepted_at else "Draft"
+
+    def to_dict(self) -> dict:
+        return {
+            "delivery_plan_id": self.delivery_plan_id, "plan_code": self.plan_code, "lead_id": self.lead_id,
+            "status": self.status, "service_branch": self.service_branch.to_summary(),
+            "delivery_mode": self.delivery_mode, "seat_type": self.seat_type,
+            "planned_start_date": self.planned_start_date, "capacity_review": self.capacity_review,
+            "student_accepted": self.student_accepted, "accepted_by": user_summary(self.acceptor),
+            "accepted_at": self.accepted_at, "notes": self.notes, "updated_at": self.updated_at,
         }

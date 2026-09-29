@@ -3,9 +3,9 @@
 Tables are created in dependency order: a table is only built once everything it references exists.
 Derived from the prototype at https://nipuna-crm-frozen-demo.nipunatech.chatgpt.site/ (sample data only).
 
-**Core flow:** Enquiry/Lead → Counselling → Demo → Fee discussion (offer versions) → Special closing approval → Admission → Payments (verified ledger) → Collections → Batch/LMS → Placement
+**Core flow (V4, db 019–022):** Enquiry/Lead → Qualify (six checks) → Convert to deal → Counselling → Demo → Fee discussion (offer versions, special closing) → Accepted delivery plan per course → Invoice (one or more courses, 1–3 instalments) → Payment claim → Verification (receipt) → Admission per course (₹1,000 verified) → Collections → Batch/LMS → Placement
 
-Every record is branch-scoped (NIT-GNT Guntur, NIT-VIJ Vijayawada). One canonical **Person** can have many leads and admissions.
+Every record is branch-scoped (NIT-GNT Guntur, NIT-VIJ Vijayawada). One canonical **Person** can have many leads and admissions. A lead is **Active** while at New Enquiry; once it is qualified and converted to a deal it is **Inactive** and the person is tracked on a pipeline card (017, 019).
 
 Migration files live in `db/` and are applied in numeric order, each in its own transaction (009 must commit before 010):
 
@@ -31,6 +31,12 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | Intake → genuine sync | ✅ Done | `014_lead_intake_sync_genuine.sql` — lead Invalid-Spam / Test excludes its enquiries from Genuine Enquiries |
 | Offer once per person | ✅ Done | `015_offer_once_per_person.sql` — a person can use each offer only once |
 | Complimentary rules | ✅ Done | `016_complimentary_rules.sql` — one complimentary course per offer per admission; never a course the person already has |
+| Person pipeline | ✅ Done (dev only) | `017_pipeline_entries.sql` — pipeline cards are persons (one per person per branch); leads get `lead_status` Active / Inactive |
+| Flexible instalments | ✅ Done (dev only) | `018_flexible_instalments.sql` — dates and amounts per instalment on the fee version, ₹1,000 admission token, due-soon and payment-gap alerts |
+| V4 · Qualify and convert | ✅ Done (dev only) | `019_qualify_convert.sql` — six-check qualification review; a lead joins the pipeline only through Convert; expected close on the card |
+| V4 · Delivery plans | ✅ Done (dev only) | `020_delivery_plans.sql` — one delivery plan per course deal (DP-00001), replacing the fee discussion's accepted plan |
+| V4 · Multi-course invoices | ✅ Done (dev only) | `021_multi_course_invoices.sql` — invoice lines, per-course payment allocation and balances, admission per line, issuer snapshot, invoice-level promises |
+| V4 · Transactions and receipts | ✅ Done (dev only) | `022_transaction_receipts.sql` — TXN numbers on record; receipt numbers only at verification; evidence and cash checks |
 
 Phases 0–3 cover the complete sales-to-cash flow and are the MVP. Phases 4–6 can follow as their screens are built.
 
@@ -300,3 +306,108 @@ Rules:
 | Rule 1 | One complimentary admission per offer (same `offer_code`, any version) per paid admission |
 | Rule 2 | The complimentary course can't be one the person already has a non-cancelled admission for |
 | Order | `zz_` runs after `trg_admissions_z_offer_once`, so "offer already used" wins when both apply. Cancelled admissions don't count; existing rows are not changed |
+
+## Person pipeline (017) ✅ (applied to `nipunacrm-dev` only)
+
+The pipeline tracks persons, not leads. A lead is an enquiry for one course. It is **Active** while at New Enquiry. On its first stage change it becomes **Inactive** (it leaves the Leads list) and the person joins a **pipeline entry** (card), with one card per person per branch.
+
+| Added | Purpose |
+|---|---|
+| `lead_status` enum (`Active`, `Inactive`) | `leads.lead_status` is generated from `stage`: Active = New Enquiry, Inactive = anything else |
+| `pipeline_entries` | Card: `entry_code` (`PL-GNT-00001`), person, branch, shared stage, owner, next follow-up, AI priority / score, lost reason / competitor / notes / reactivation date, `closed_at`. Stage is never New Enquiry. Only one open card per person per branch |
+| `leads.pipeline_entry_id` | The card a lead belongs to (kept after the lead or card closes, as history) |
+| `attach_lead_to_pipeline()` (BEFORE INSERT / UPDATE OF stage on `leads`, `b_` between the guard and the logger) | A lead leaving New Enquiry joins the person's open card at that branch (taking the card's stage) or opens a new card at its new stage. While a card is open, a new lead for that person and branch joins it straight away |
+| `sync_pipeline_from_lead()` (AFTER INSERT / UPDATE OF stage on `leads`) | Pulls the person's other New Enquiry leads at the branch onto the card; moving an open lead moves the card; closes the card when its last open course closes |
+| `guard_pipeline_entry_stage()` + `cascade_pipeline_entry_stage()` (on `pipeline_entries`) | Card moves apply to every open lead on it. Lost copies the card's lost details to them |
+| `guard_lead_stage()` (replaced) | Also refuses moving back to New Enquiry except from Lost (reactivation). The PPV rule can be bypassed only by the sync triggers |
+
+Rules:
+- All open courses on a card share one stage. Each lead's timeline still logs every change.
+- Admitting or losing one course closes only that lead. The card closes when the last open course closes: **Admitted** if any course on it was admitted, otherwise **Lost**. A card can't be moved to Admitted by hand.
+- If one course is admitted while the card is in Payment Pending Verification and other courses remain, the card goes back to Fee Discussion / Payment Awaited (assumption).
+- Moving the card to Lost needs a lost reason and closes every open course on it.
+- Closed cards never reopen. A later enquiry, or a Lost lead that is reactivated, opens a new card.
+- A lead that goes straight from New Enquiry to Lost becomes Inactive without a card. Reactivating it to New Enquiry makes it Active again.
+- Different branches get separate cards, each with its own stage and owner.
+- A new card takes its owner, follow-up and priority from the lead that opened it (assumption). After that they are the card's own.
+
+Backfill: one card per person and branch that had open leads past New Enquiry (68 cards on dev). The card takes the furthest stage among those leads, and the person's other open leads there move to it. Persons 66 and 120 each had two courses at different stages, so both of their courses are now at Payment Pending Verification. Admitted and Lost leads were not given cards.
+
+API: see API_PLAN step 5, "As built (person pipeline)". Screens: Pipeline (person cards), Persons and Person 360, and the Lead status filter on Leads.
+
+## Flexible instalments (018) ✅ (applied to `nipunacrm-dev` only)
+
+| Change | Purpose |
+|---|---|
+| `fee_version_installments` | The version's payment schedule: `installment_no` (1–3), `due_date`, `amount`. Saved with the version and frozen (no update / delete; no insert once the version has an invoice) |
+| `check_fee_version_schedule()` (deferred constraint trigger) | At commit: the count matches the plan (Full 1 / Two 2 / Three 3), numbered 1..n, amounts add up to `final_payable`, dates strictly in order |
+| `check_fee_version_has_schedule()` (deferred, on `fee_discussion_versions`) | Every new version with a final payable above zero must have a schedule |
+| `before_invoice_insert()` / `after_invoice_insert()` (replaced) | No agreed-due-days or window checks; `installments` are copied from the version's schedule (`agreed_due_days` is set to NULL) |
+| `guard_installment_update()` (replaced) | Due dates can move to any date; amounts still change only through an applied fee change |
+| `before_fee_change_write()` (replaced) | An applied fee change rescales the instalments in proportion to their current amounts (rounding into the last) |
+| `admission_token_amount()`, `invoice_token_payment(invoice_id)` | Token setting (default ₹1,000) and the verified, un-reversed payment at which verified money reaches it (or the whole bill, if smaller) |
+| `before_admission_insert()` (replaced) | Needs the token reached: "verified payments of at least ₹1000 (the admission token) — ₹600 verified so far". `first_qualifying_payment_id` = the payment that reached it |
+| `payment_gaps` (view) | Open invoices with a verified payment whose next unpaid instalment is due more than `payment_gap_alert_days` after the last verified payment date: last payment, next instalment / due / balance, `gap_days`, outstanding |
+| Settings | `admission_token_amount` 1000, `installment_due_soon_days` 2, `payment_gap_alert_days` 30 |
+| Notification rules | `INSTALMENT_DUE_SOON` (daily job `dues-due-soon`: owner, Accounts, BM), `PAYMENT_GAP_LONG` (on verification: owner, Accounts, BM, Founder / CEO, Super Admin) |
+
+Rules:
+- The plans' percentages and due-day windows are no longer enforced. The screen starts with blank dates and amounts; the API uses the plan's split from today only when a request sends no schedule.
+- Payments of any amount up to the invoice balance were already allowed (verified money covers the oldest instalment first). Money beyond the whole invoice still becomes an unallocated advance.
+- Backfill: existing versions got their plan's split of the final payable, on their invoice's due dates if one was issued (else the plan's default days from the version date).
+- "1 month" for the gap is 30 days (setting). The gap is measured from the last verified payment's date.
+
+
+## V4 · Qualify and convert (019) ✅ (applied to `nipunacrm-dev` only)
+
+| Added / changed | Purpose |
+|---|---|
+| `qualification_check` enum, `lead_qualification_reviews` | The six checks (genuine intent; reachable contact; intended course(s) understood; branch and delivery mode discussed; exact next action agreed; possible identity match reviewed — never auto-merged), with who ticked each and when |
+| `leads.qualified_at/by`, `leads.converted_at/by` | Mark Qualified needs all six (`check_lead_qualification()`); the checklist is frozen afterwards; qualifying never changes the stage |
+| `leads_pipeline_needs_conversion` (CHECK), `guard_lead_stage()` (replaced) | Any stage other than New Enquiry / Lost needs a conversion. Reactivating a Lost lead to New Enquiry clears the conversion (it is a lead again) |
+| `attach_lead_to_pipeline()`, `sync_pipeline_from_lead()` (replaced) | A lead joins (or opens) the person's card only when a converted lead leaves New Enquiry. New Enquiry leads are no longer pulled onto an open card; a new lead for a person with an open card stays in Leads until converted (replaces 017's rule) |
+| `pipeline_entries.expected_close_date` | Given at conversion; editable on the card |
+
+Rules: convert only a qualified New Enquiry lead; the lead's own course must be included; other courses reuse the person (an open New Enquiry lead for that course is converted; an existing deal is returned, never duplicated; otherwise a lead is created). Conversion creates no admission, receipt or LMS access. Moving an unconverted lead straight to Lost is still allowed.
+
+Backfill: leads on a card or past New Enquiry are marked qualified and converted (at their creation time).
+
+## V4 · Delivery plans (020) ✅ (applied to `nipunacrm-dev` only)
+
+| Added / changed | Purpose |
+|---|---|
+| `delivery_plans` (`DP-00001`), `capacity_review` enum | One plan per course deal: service branch, mode, seat type (Confirmed Seat / Future Plan), planned start (required for Future Plan), capacity review (Checked / Waiting), student acceptance captured, accepted by / at |
+| `guard_delivery_plan()`, `prevent_delivery_plan_delete()` | Only converted, open deals; an accepted plan is frozen until reopened (reopening clears the acceptance); plans are never deleted |
+| `fee_discussions` delivery columns dropped | `accepted_version_id`, `delivery_mode`, `seat_type`, `planned_start_date`, `plan_accepted_at/by` moved into `delivery_plans` (19 accepted plans migrated on dev) |
+| `before_admission_insert()` (replaced) | Needs the course's accepted plan; the admission takes service branch, mode, seat type and start from it |
+
+## V4 · Multi-course invoices (021) ✅ (applied to `nipunacrm-dev` only)
+
+| Added / changed | Purpose |
+|---|---|
+| `branches.legal_name`, `branches.invoice_accent` | Issuer name and template colour (Guntur `#6251DA`, Vijayawada `#137E89`); addresses / phones / emails seeded from the V4 handoff |
+| `invoices.issuer_*` | Snapshot of the issuing branch at issue time — later branch edits (or a viewer's branch filter) never change an issued invoice |
+| `invoices` course columns dropped | `fee_discussion_id`, `fee_version_id`, `lead_id`, `course_id`, `agreed_due_days` moved to lines; `billed_amount` / `standard_fee` are the sum of the lines |
+| `invoice_lines` (`INV-GNT-2627-0001-L1`) | One line per course deal: lead, fee discussion, approved version, course, delivery plan, standard fee, amount. `before_invoice_line_insert()` checks eligibility: same person and branch, converted and open, current version Approved, accepted delivery plan, not on another Issued invoice; lines are added only while the invoice is being issued |
+| `check_invoice_complete()` (deferred) | At commit: at least one line; 1–3 instalments matching the plan count, numbered, dates in order, adding up to the total |
+| `guard_installment_insert()` | The schedule is written with the invoice (it no longer comes from the fee version; versions need no schedule) |
+| `payment_allocations` | How much of each payment went to each course line (reversals negate them). `before_payment_allocation_insert()` caps each line (pending counts, waivers excluded); `check_payment_allocations_total()` (deferred) makes an invoice payment fully allocated and an advance unallocated |
+| `invoice_line_balances` (view); `invoice_balances`, `admission_balances`, `installment_dues`, `payment_gaps` (rebuilt) | Per-course verified / pending / waived / outstanding / open-to-allocate; invoice totals from the lines; instalment dues stay at invoice level (oldest instalment first) |
+| `admissions.invoice_line_id` (unique), `invoice_line_token_payment()` | One admission per course line; it needs verified money on the line reaching ₹1,000 (or the whole line). `admissions.invoice_id` is no longer unique |
+| `payments.admission_id` | Kept as "the admission, when the whole payment went to one admitted course line" (maintained by triggers) |
+| `payment_promises.invoice_id` | Promises to pay are per invoice (`admission_id` optional) |
+| `before_fee_change_write()`, `check_refund_decision()` (replaced) | A fee change revises its line; the invoice total follows and instalments rescale. Refund approval is capped by the line's verified money |
+| `after_invoice_status_change()` | Cancelling an unpaid invoice sends its courses' discussions back to Fee Shared / Approved so they can be invoiced again (re-issue no longer supersedes automatically) |
+
+Backfill: every existing invoice became a one-line invoice; payments were allocated to that line; admissions linked to it; promises moved to the admission's invoice.
+
+## V4 · Transactions and receipts (022) ✅ (applied to `nipunacrm-dev` only)
+
+| Added / changed | Purpose |
+|---|---|
+| `payments.transaction_number` (`TXN-GNT-00001`) | Given when a payment is recorded (per collecting branch) |
+| `payments.receipt_number` (nullable), `next_receipt_number()` | Issued only when the payment is verified (`GNT-R-2627-00001`); reversals keep `REV-…`; failed claims never get one |
+| `payments.evidence_reviewed`, `payments.cash_checked` | Recorded with the verification decision; Verified needs the evidence review, and a cash payment the independent cash check |
+| `unallocated_advances`, `task_board` (views) | Carry the transaction number (the task link shows the receipt, else the transaction) |
+
+Backfill: transaction numbers in recording order; pending and failed payments lost the receipt number they had been given at recording; verified ones were marked as checked.

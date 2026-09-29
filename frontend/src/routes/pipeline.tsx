@@ -10,6 +10,7 @@ export const Route = createFileRoute("/pipeline")({
       owner_id: str(s["owner_id"]),
       priority: str(s["priority"]),
       course_id: num(s["course_id"]),
+      stage: str(s["stage"]),
       page: num(s["page"]),
     }),
   component: PipelinePage,

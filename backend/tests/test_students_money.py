@@ -142,10 +142,24 @@ def test_dues_ageing_and_promises(client, people, course, run_sql):
     assert len(call(client, "get", f"/admissions/{aid}/promises", accounts)) == 1
 
 
+def test_promises_are_per_invoice_even_before_admission(client, people, course):
+    """db 021: a promise to pay belongs to the invoice (shared by every course on it), so it works pre-admission."""
+    invoice_id = issued_invoice(client, people, course)["invoice"]["invoice_id"]
+    accounts = people["accounts"]["h"]
+    body = {"promised_amount": "5000", "promised_date": (date.today() + timedelta(days=2)).isoformat()}
+    promise = call(client, "post", f"/invoices/{invoice_id}/promises", accounts, 201, json=body)
+    assert promise["invoice_id"] == invoice_id and promise["admission_id"] is None
+    assert client.post(f"{API}/invoices/{invoice_id}/promises", json=body, headers=accounts).status_code == 409
+    assert [p["promise_id"] for p in call(client, "get", f"/invoices/{invoice_id}/promises", accounts)] == [promise["promise_id"]]
+    assert client.get(f"{API}/invoices/{invoice_id}/promises", headers=people["mounika"]["h"]).status_code == 404
+    detail = call(client, "get", f"/invoices/{invoice_id}", accounts)
+    assert [p["promise_id"] for p in detail["promises"]] == [promise["promise_id"]]
+
+
 def test_pre_admission_invoice_shows_in_dues(client, people, course):
     issued_invoice(client, people, course)
     plans = call(client, "get", "/collections/dues?position=Due Today", people["accounts"]["h"])
-    assert len(plans) == 1 and plans[0]["admission_id"] is None
+    assert len(plans) == 1 and plans[0]["admission_ids"] == [] and len(plans[0]["courses"]) == 1
 
 
 # ---------------------------------------------------------------- refunds

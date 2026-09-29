@@ -1,4 +1,5 @@
-"""Fee discussions, frozen versions, the accepted delivery plan, and special closing requests (SCR).
+"""Fee discussions, frozen versions and special closing requests (SCR). The delivery plan is per course deal
+(services/delivery_plans.py) and the payment schedule is set on the invoice (db 020–021).
 
 The database computes version numbers, the 70% advisory floor, validity and final payable; it freezes amounts,
 refuses an Approved version with extra concession / below floor unless a matching SCR is Approved, checks the
@@ -10,7 +11,9 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from config.database import db
-from models import Course, FeeDiscussion, FeeDiscussionVersion, Offer, PaymentPlan, SpecialClosingRequest
+from models import (
+    Course, FeeDiscussion, FeeDiscussionVersion, Offer, PaymentPlan, SpecialClosingRequest,
+)
 from repositories import fees as fees_repo
 from services import audit, notifications, tasks
 from services import leads as leads_service
@@ -72,6 +75,7 @@ def start_discussion(lead_id: int, data: dict) -> FeeDiscussion:
         raise Forbidden("Only counsellors or a branch manager can start a fee discussion")
     if not lead.is_open:
         raise BusinessRule(f"Lead is {lead.stage}")
+    leads_service.require_converted(lead, "starting a fee discussion")
     course_id = data.get("course_id") or lead.course_id
     if course_id is None:
         raise ValidationError("Choose the course being priced", {"course_id": ["Required (the lead has no course)"]})
@@ -127,12 +131,25 @@ def _offer_discount(offer: Offer, standard_fee: Decimal) -> Decimal:
     return Decimal("0.00")  # complimentary course: no discount on this fee
 
 
+def _plan_for(data: dict) -> PaymentPlan:
+    """The version's plan is informational now (db 021): the invoice carries the real 1–3 instalment schedule."""
+    plan_id = data.get("payment_plan_id")
+    if plan_id:
+        plan = db.session.get(PaymentPlan, plan_id)
+    else:
+        plan = db.session.execute(select(PaymentPlan).where(PaymentPlan.plan_code == "FULL")).scalar_one_or_none()
+    if plan is None or not plan.is_active:
+        raise ValidationError("Unknown or inactive payment plan", {"payment_plan_id": ["Not an active plan"]})
+    return plan
+
+
 def add_version(discussion_id: int, data: dict) -> FeeDiscussionVersion:
     """New version with the course's standard fee, the chosen offer and any extra concession. Earlier open
     versions are superseded; amounts on this one are frozen once saved."""
     discussion = _workable_discussion(discussion_id)
-    if discussion.plan_accepted_at is not None:
-        raise BusinessRule("The delivery plan is already accepted; issue the invoice from the accepted version")
+    if discussion.milestone == "Invoice Issued":
+        raise BusinessRule("The course is invoiced; cancel the unpaid invoice to change its price, or request a "
+                           "fee change after admission")
 
     standard_fee = discussion.course.standard_fee
     offer_discount = Decimal("0.00")
@@ -147,11 +164,7 @@ def add_version(discussion_id: int, data: dict) -> FeeDiscussionVersion:
     if standard_fee - offer_discount - extra < 0:
         raise ValidationError("Discounts can't exceed the standard fee", {"extra_concession": ["Too large"]})
 
-    plan_id = data.get("payment_plan_id")
-    plan = db.session.get(PaymentPlan, plan_id) if plan_id else db.session.execute(
-        select(PaymentPlan).where(PaymentPlan.plan_code == "FULL")).scalar_one()
-    if plan is None or not plan.is_active:
-        raise ValidationError("Unknown or inactive payment plan", {"payment_plan_id": ["Not an active plan"]})
+    plan = _plan_for(data)
     if data.get("valid_until") and data["valid_until"] < date.today():
         raise ValidationError("Validity can't be in the past", {"valid_until": ["Must be today or later"]})
 
@@ -182,29 +195,6 @@ def share(discussion_id: int) -> FeeDiscussion:
     discussion.milestone = "Fee Shared"  # trigger stamps fee_shared_at
     db.session.flush()
     db.session.refresh(discussion)
-    return discussion
-
-
-def accept_plan(discussion_id: int, data: dict) -> FeeDiscussion:
-    """Admission prerequisite 1: the student accepts an Approved version with a confirmed delivery plan."""
-    discussion = _workable_discussion(discussion_id)
-    version = next((v for v in discussion.versions if v.version_id == data["version_id"]), None)
-    if version is None:
-        raise ValidationError("Not a version of this discussion", {"version_id": ["Not found"]})
-    if data["seat_type"] == "Future Plan" and not data.get("planned_start_date"):
-        raise ValidationError("A future plan needs a planned start date", {"planned_start_date": ["Required"]})
-
-    discussion.accepted_version_id = version.version_id  # the DB checks it's Approved and locks it afterwards
-    discussion.delivery_mode = data["delivery_mode"]
-    discussion.seat_type = data["seat_type"]
-    discussion.planned_start_date = data.get("planned_start_date")
-    discussion.plan_accepted_recorded_by = current_user().user_id
-    db.session.flush()
-    db.session.refresh(discussion)
-    audit.record("FEE_PLAN_ACCEPTED", "fee_discussion", discussion.fee_discussion_id,
-                 new={"version_id": version.version_id, "final_payable": version.final_payable,
-                      "delivery_mode": discussion.delivery_mode, "seat_type": discussion.seat_type},
-                 branch_id=discussion.branch_id)
     return discussion
 
 

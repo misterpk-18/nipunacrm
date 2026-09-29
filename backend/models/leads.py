@@ -2,7 +2,7 @@
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text
+from sqlalchemy import BigInteger, Boolean, Computed, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,7 +11,7 @@ from models.access import User
 from models.courses import Course
 from models.enums import (
     ActivityDirection, ActivityType, AppLanguage, CLOSED_STAGES, IntakeStatus, LeadImportRowResult, LeadImportStatus,
-    LeadPriority, LeadStage,
+    LeadPriority, LeadStage, LeadStatus, QualificationCheck,
 )
 from models.masters import Branch, ContactChannel, EntryMethod, LeadSource, LostReason
 
@@ -134,6 +134,9 @@ class Lead(db.Model):
     intake_status: Mapped[str] = mapped_column(IntakeStatus, default="New")
     assigned_to: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     stage: Mapped[str] = mapped_column(LeadStage, default="New Enquiry")
+    lead_status: Mapped[str] = mapped_column(
+        LeadStatus, Computed("CASE WHEN stage = 'New Enquiry' THEN 'Active' ELSE 'Inactive' END"))  # db 017
+    pipeline_entry_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("pipeline_entries.pipeline_entry_id"))
     stage_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     next_follow_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -146,6 +149,10 @@ class Lead(db.Model):
     reactivation_date: Mapped[date | None] = mapped_column(Date)
     campaign: Mapped[str | None] = mapped_column(String(150))
     remarks: Mapped[str | None] = mapped_column(Text)
+    qualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # db 019
+    qualified_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    converted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # joined the pipeline via Convert
+    converted_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -180,6 +187,8 @@ class Lead(db.Model):
             "contact_channel": self.channel.label,
             "entry_method": self.entry_method.label,
             "intake_status": self.intake_status,
+            "lead_status": self.lead_status,
+            "pipeline_entry_id": self.pipeline_entry_id,
             "owner": user_summary(self.owner),
             "stage": self.stage,
             "next_follow_up_at": self.next_follow_up_at,
@@ -187,6 +196,8 @@ class Lead(db.Model):
             "age_days": (datetime.now(timezone.utc) - self.created_at).days,
             "ai_priority": self.ai_priority,
             "ai_score": self.ai_score,
+            "qualified_at": self.qualified_at,
+            "converted_at": self.converted_at,
         }
 
     def to_dict(self) -> dict:
@@ -206,6 +217,20 @@ class Lead(db.Model):
             } if self.stage == "Lost - closed" else None,
             "created_at": self.created_at,
         }
+
+
+class LeadQualificationReview(db.Model):
+    """One ticked qualification check (db 019): who reviewed it and when. Frozen once the lead is qualified."""
+
+    __tablename__ = "lead_qualification_reviews"
+
+    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("leads.lead_id"), primary_key=True)
+    check_code: Mapped[str] = mapped_column(QualificationCheck, primary_key=True)
+    reviewed_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.user_id"))
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    reviewer: Mapped[User] = relationship(foreign_keys=[reviewed_by], lazy="joined")
 
 
 class LeadActivity(db.Model):

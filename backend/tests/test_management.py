@@ -6,7 +6,9 @@ from datetime import date, timedelta
 from config.database import db
 from models import DocumentType, ReportRun
 from services import reports as reports_service
-from tests.helpers import API, admitted, call, create_lead, lookup_id
+from tests.helpers import (
+    API, admitted, call, create_lead, issued_invoice, lookup_id, record_payment, verify_payment,
+)
 
 
 def test_period_presets(app):
@@ -118,6 +120,40 @@ def test_dashboards_are_role_aware(client, people, course):
     workspace = call(client, "get", "/dashboard/counsellor", people["sravani"]["h"])
     assert set(workspace["queues"]) >= {"new", "overdue", "hot"} and workspace["tasks"] == {"due_today": 0, "overdue": 0}
     assert client.get(f"{API}/dashboard/counsellor", headers=people["accounts"]["h"]).status_code == 403
+
+
+def test_dashboard_overview_kpis_chart_pipeline_and_scope(client, people, course):
+    sravani, bm = people["sravani"]["h"], people["bm"]["h"]
+    create_lead(client, sravani, course_id=course)
+    invoice = issued_invoice(client, people, course)["invoice"]
+    payment = record_payment(client, sravani, invoice["invoice_id"], "5000")["payment"]
+
+    view = call(client, "get", "/dashboard/overview", bm)
+    kpis = view["kpis"]
+    assert kpis["open_enquiries"] == 2 and kpis["new_enquiries"] == 1
+    # A pending claim is never a collection and never reduces the balance
+    assert kpis["pending_verification"] == {"count": 1, "amount": "5000.00"}
+    assert kpis["verified_collections"] == "0.00" and kpis["outstanding_balance"] == "30000.00"
+    assert view["attention"]["payments"] == 1
+    assert [b["label"] for b in view["pipeline"]["bars"]] == ["Counselling", "Demo", "Fee discussion", "Verification", "Admitted"]
+    assert view["pipeline"]["open_opportunities"] == 1 and view["pipeline"]["open_value"] == "30000.00"
+    assert len(view["collections_daily"]) == 7 and view["collections_daily"][-1]["amount"] == "0.00"
+
+    verify_payment(client, people["accounts"]["h"], payment["payment_id"])
+    view = call(client, "get", "/dashboard/overview", bm)
+    assert view["kpis"]["verified_collections"] == "5000.00" and view["kpis"]["verified_payments"] == 1
+    assert view["kpis"]["outstanding_balance"] == "25000.00" and view["kpis"]["pending_verification"]["count"] == 0
+    assert view["collections_daily"][-1] == {"date": view["as_of"], "amount": "5000.00"}
+    assert [(b["branch"]["branch_id"], b["net_verified"]) for b in view["branches"]] == [(1, "5000.00")]
+
+    # Branch scope: Vijayawada sees none of it; the company view sees both branches
+    other = call(client, "get", "/dashboard/overview", people["bm_vij"]["h"])
+    assert other["kpis"]["open_enquiries"] == 0 and other["kpis"]["verified_collections"] == "0.00"
+    company = call(client, "get", "/dashboard/overview?branch_id=1", people["founder"]["h"])
+    assert company["kpis"]["verified_collections"] == "5000.00" and len(company["branches"]) == 1
+    assert len(call(client, "get", "/dashboard/overview", people["founder"]["h"])["branches"]) == 2
+    assert client.get(f"{API}/dashboard/overview", headers=people["trainer"]["h"]).status_code == 200
+    assert client.get(f"{API}/dashboard/overview?period=Someday", headers=bm).status_code == 400
 
 
 def test_marking_a_lead_spam_or_test_updates_genuine_enquiries(client, people, course):

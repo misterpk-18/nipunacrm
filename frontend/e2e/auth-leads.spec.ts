@@ -24,12 +24,12 @@ test("roles land on their home screen and see only their menus", async ({ page }
 
 test("counsellor sees only own-branch leads, opens Lead 360 and logs a follow-up", async ({ page }) => {
   await login(page, USERS.salesGnt);
-  await page.goto("/leads?q=Ananya");
+  await page.goto("/leads?q=Ananya&lead_status=All"); // in the pipeline, so not an Active lead
   await expect(page.getByRole("link", { name: /Ananya Rao/ })).toBeVisible();
-  await page.goto("/leads?q=Karthik");
+  await page.goto("/leads?q=Karthik&lead_status=All"); // in the pipeline, so not an Active lead
   await expect(page.getByText("No leads match").filter({ visible: true })).toBeVisible(); // Vijayawada lead is out of scope
 
-  await page.goto("/leads?q=Meghana");
+  await page.goto("/leads?q=Meghana&lead_status=All"); // in the pipeline, so not an Active lead
   await page.getByRole("link", { name: /Meghana Varma/ }).click();
   await expect(page.getByRole("heading", { name: "Meghana Varma" })).toBeVisible();
   await expect(page.getByText("New Enquiry → Counselling")).toBeVisible();
@@ -93,10 +93,10 @@ test("branch manager creates an unassigned lead and bulk-assigns it", async ({ p
 
 test("founder can switch branch scope @mobile", async ({ page }) => {
   await login(page, USERS.founder);
-  await page.goto("/leads?q=Karthik");
+  await page.goto("/leads?q=Karthik&lead_status=All"); // in the pipeline, so not an Active lead
   await expect(page.getByText("Karthik Reddy").filter({ visible: true }).first()).toBeVisible();
   await page.getByLabel("Branch scope").selectOption({ label: "Guntur" });
   await expect(page.getByText("Karthik Reddy")).toHaveCount(0);
-  await page.goto("/leads?q=Ananya");
+  await page.goto("/leads?q=Ananya&lead_status=All"); // in the pipeline, so not an Active lead
   await expect(page.getByText("Ananya Rao").filter({ visible: true }).first()).toBeVisible();
 });

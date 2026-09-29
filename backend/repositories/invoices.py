@@ -1,8 +1,10 @@
 """Invoice register queries (scoped by collecting branch)."""
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, exists, func, or_, select, text
 
 from config.database import db
-from models import InstallmentDue, Invoice, InvoiceBalance, Payment, PaymentCorrectionRequest, Person
+from models import (
+    Admission, Course, InstallmentDue, Invoice, InvoiceBalance, InvoiceLine, Payment, PaymentCorrectionRequest, Person,
+)
 
 
 def invoices_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
@@ -15,13 +17,19 @@ def invoices_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
     if branch_ids is not None:
         stmt = stmt.where(Invoice.collecting_branch_id.in_(branch_ids))
     for field, column in (("branch_id", Invoice.collecting_branch_id), ("status", Invoice.status),
-                          ("person_id", Invoice.person_id), ("lead_id", Invoice.lead_id),
-                          ("completion", InvoiceBalance.payment_completion)):
+                          ("person_id", Invoice.person_id), ("completion", InvoiceBalance.payment_completion)):
         if filters.get(field) is not None:
             stmt = stmt.where(column == filters[field])
+    if filters.get("lead_id") is not None:
+        stmt = stmt.where(exists().where(InvoiceLine.invoice_id == Invoice.invoice_id,
+                                         InvoiceLine.lead_id == filters["lead_id"]))
+    if filters.get("outstanding"):
+        stmt = stmt.where(InvoiceBalance.outstanding > 0, Invoice.status == "Issued")
     if filters.get("q"):
         pattern = f"%{filters['q']}%"
-        stmt = stmt.where(or_(Invoice.invoice_number.ilike(pattern), Person.full_name.ilike(pattern)))
+        course_match = exists().where(InvoiceLine.invoice_id == Invoice.invoice_id,
+                                      InvoiceLine.course_id == Course.course_id, Course.course_title.ilike(pattern))
+        stmt = stmt.where(or_(Invoice.invoice_number.ilike(pattern), Person.full_name.ilike(pattern), course_match))
     return stmt
 
 
@@ -54,10 +62,14 @@ def corrections_for(invoice_id: int) -> list[PaymentCorrectionRequest]:
     return list(db.session.execute(stmt).scalars())
 
 
-def first_qualifying_payment(invoice_id: int) -> Payment | None:
-    """The earliest Verified, un-reversed payment allocated to the invoice (admission prerequisite 2)."""
-    reversed_ids = select(Payment.reverses_payment_id).where(Payment.reverses_payment_id.is_not(None))
-    stmt = (select(Payment).where(Payment.invoice_id == invoice_id, Payment.entry_type == "Payment",
-                                  Payment.verification_status == "Verified", Payment.payment_id.not_in(reversed_ids))
-            .order_by(Payment.verified_at, Payment.payment_id).limit(1))
-    return db.session.execute(stmt).scalar_one_or_none()
+def admissions_for(invoice_id: int) -> list[Admission]:
+    stmt = select(Admission).where(Admission.invoice_id == invoice_id).order_by(Admission.admission_id)
+    return list(db.session.execute(stmt).scalars())
+
+
+def line_token_status(invoice_line_id: int) -> dict:
+    """Admission prerequisite (db 021): verified money on the course line reaching the admission token (₹1,000 or
+    the whole line if smaller). payment_id is the payment that reached it (None until then)."""
+    row = db.session.execute(text("SELECT * FROM invoice_line_token_payment(:id)"),
+                             {"id": invoice_line_id}).mappings().one()
+    return dict(row)

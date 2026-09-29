@@ -1,5 +1,5 @@
 import { get, list, post, type Query } from "./client";
-import type { DateOnly, DateTime, Money, PersonRef } from "./types";
+import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef, UserRef } from "./types";
 import type { ScheduleRow } from "./invoices";
 
 export const AGE_BANDS = ["1–3", "4–7", "8–15", "16–30", "31–60", "61–90", "91+"] as const;
@@ -8,7 +8,6 @@ export const DUE_POSITIONS = ["Overdue", "Due Today", "Upcoming"] as const;
 export type DueInstallment = ScheduleRow & {
   invoice_id: number;
   invoice_number: string;
-  admission_id: number | null;
   person: PersonRef;
   collecting_branch_id: number;
 };
@@ -16,7 +15,9 @@ export type DueInstallment = ScheduleRow & {
 export type DuePlan = {
   invoice: { invoice_id: number; invoice_number: string; status: string; billed_amount: Money };
   person: PersonRef;
-  admission_id: number | null;
+  /** One invoice can carry several courses (db 021): each may have its own admission. */
+  courses: CourseRef[];
+  admission_ids: number[];
   collecting_branch_id: number;
   plan: string;
   balance: Money;
@@ -30,8 +31,10 @@ export type Ageing = Record<string, { installments: number; balance: Money | num
 
 export type PaymentPromise = {
   promise_id: number;
-  admission_id: number;
-  admission_code: string;
+  invoice_id: number;
+  invoice_number: string;
+  admission_id: number | null;
+  admission_code: string | null;
   promised_amount: Money;
   promised_date: DateOnly;
   status: "Pending" | "Kept" | "Broken" | "Cancelled";
@@ -61,12 +64,32 @@ export type DuesFilters = {
   contact_hold?: boolean;
 };
 
+/** A person whose next instalment is due long after their last verified payment. */
+export type PaymentGap = {
+  invoice_id: number;
+  invoice_number: string;
+  person: PersonRef;
+  lead_id: number;
+  owner: UserRef | null;
+  courses: CourseRef[];
+  branch: BranchRef;
+  last_payment_date: DateOnly;
+  next_installment_no: number;
+  next_due_date: DateOnly;
+  next_due_balance: Money;
+  gap_days: number;
+  outstanding: Money;
+};
+
 export const collectionsApi = {
+  paymentGaps: (filters: { branch_id?: number; page?: number; per_page?: number }) =>
+    list<PaymentGap>("/collections/payment-gaps", filters as Query),
   dues: (filters: DuesFilters) => list<DuePlan>("/collections/dues", filters as Query),
   ageing: (filters: Omit<DuesFilters, "position" | "page" | "per_page">) => get<Ageing>("/collections/ageing", filters as Query),
-  promises: (admissionId: number) => get<PaymentPromise[]>(`/admissions/${admissionId}/promises`),
-  addPromise: (admissionId: number, body: { promised_amount: Money; promised_date: DateOnly; notes?: string | null }) =>
-    post<PaymentPromise>(`/admissions/${admissionId}/promises`, body),
+  /** Promises to pay are per invoice (db 021). */
+  promises: (invoiceId: number) => get<PaymentPromise[]>(`/invoices/${invoiceId}/promises`),
+  addPromise: (invoiceId: number, body: { promised_amount: Money; promised_date: DateOnly; notes?: string | null }) =>
+    post<PaymentPromise>(`/invoices/${invoiceId}/promises`, body),
   resolvePromise: (promiseId: number, status: "kept" | "broken" | "cancel") => post<PaymentPromise>(`/payment-promises/${promiseId}/${status}`),
   plans: () => get<PaymentPlan[]>("/payment-plans"),
 };
@@ -75,6 +98,6 @@ export const collectionKeys = {
   all: ["collections"] as const,
   dues: (filters: DuesFilters) => ["collections", "dues", filters] as const,
   ageing: (filters: object) => ["collections", "ageing", filters] as const,
-  promises: (admissionId: number) => ["collections", "promises", admissionId] as const,
+  promises: (invoiceId: number) => ["collections", "promises", invoiceId] as const,
   plans: ["payment-plans"] as const,
 };

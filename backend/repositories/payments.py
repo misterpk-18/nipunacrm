@@ -22,8 +22,8 @@ def payments_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
         stmt = stmt.where(Payment.payment_date <= filters["to"])
     if filters.get("q"):
         pattern = f"%{filters['q']}%"
-        stmt = stmt.where(or_(Payment.receipt_number.ilike(pattern), Person.full_name.ilike(pattern),
-                              Payment.reference.ilike(pattern)))
+        stmt = stmt.where(or_(Payment.receipt_number.ilike(pattern), Payment.transaction_number.ilike(pattern),
+                              Person.full_name.ilike(pattern), Payment.reference.ilike(pattern)))
     return stmt
 
 

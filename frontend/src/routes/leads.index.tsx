@@ -9,6 +9,7 @@ export const Route = createFileRoute("/leads/")({
     const out: LeadSearch = {
       page: num(s["page"]),
       q: str(s["q"]),
+      lead_status: str(s["lead_status"]),
       stage: str(s["stage"]),
       course_id: num(s["course_id"]),
       source_id: num(s["source_id"]),

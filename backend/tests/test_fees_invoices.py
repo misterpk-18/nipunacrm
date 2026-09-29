@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from config.database import db
 from models import Admission, Notification, Offer, Task
-from tests.helpers import API, call, issued_invoice, plan_code_id, priced_lead
+from tests.helpers import API, call, create_deal, create_lead, issued_invoice, priced_lead
 
 
 def test_discussion_and_versions(client, people, course):
@@ -54,7 +54,7 @@ def test_offer_discount_applies_only_when_active_for_scope(client, people, cours
                        json={"offer_id": draft.offer_id}).status_code == 400
 
 
-def test_standard_version_approve_share_accept(client, people, course):
+def test_standard_version_approve_share(client, people, course):
     sravani = people["sravani"]["h"]
     lead, discussion, v1 = priced_lead(client, people, course)
     did = discussion["fee_discussion_id"]
@@ -64,14 +64,37 @@ def test_standard_version_approve_share_accept(client, people, course):
     assert approved["status"] == "Approved"
     shared = call(client, "post", f"/fee-discussions/{did}/share", sravani)
     assert shared["milestone"] == "Fee Shared" and shared["fee_shared_at"]
+    assert "accepted_plan" not in shared  # the delivery plan is per course deal now (db 020)
 
-    future_no_date = client.post(f"{API}/fee-discussions/{did}/accept-plan", headers=sravani,
-                                 json={"version_id": v1["version_id"], "delivery_mode": "Online", "seat_type": "Future Plan"})
-    assert future_no_date.status_code == 400
-    accepted = call(client, "post", f"/fee-discussions/{did}/accept-plan", sravani,
-                    json={"version_id": v1["version_id"], "delivery_mode": "Online", "seat_type": "Confirmed Seat"})
-    assert accepted["accepted_plan"]["accepted_version_id"] == v1["version_id"]
-    assert client.post(f"{API}/fee-discussions/{did}/versions", json={}, headers=sravani).status_code == 422
+
+def test_delivery_plan_draft_accept_reopen(client, people, course):
+    sravani = people["sravani"]["h"]
+    lead = create_deal(client, sravani, course_id=course)
+    url = f"/leads/{lead['lead_id']}/delivery-plan"
+    assert call(client, "get", url, sravani)["plan"] is None
+
+    unconverted = create_lead(client, sravani, person={"full_name": "Not Yet", "phone": "9000000501"}, course_id=course)
+    assert client.put(f"{API}/leads/{unconverted['lead_id']}/delivery-plan", headers=sravani,
+                      json={"delivery_mode": "Online"}).status_code == 422
+    assert client.put(f"{API}{url}", json={"seat_type": "Future Plan"}, headers=sravani).status_code == 400  # mode
+    assert client.put(f"{API}{url}", json={"delivery_mode": "Online", "seat_type": "Future Plan"},
+                      headers=sravani).status_code == 400                                               # start date
+    draft = call(client, "put", url, sravani, json={"delivery_mode": "Online", "capacity_review": "Waiting"})["plan"]
+    assert draft["plan_code"] == "DP-00001" and draft["status"] == "Draft" and draft["service_branch"]["branch_id"] == 1
+    assert client.post(f"{API}{url}/accept", json={"student_accepted": False}, headers=sravani).status_code == 400
+
+    accepted = call(client, "post", f"{url}/accept", sravani,
+                    json={"student_accepted": True, "capacity_review": "Checked"})["plan"]
+    assert accepted["status"] == "Accepted" and accepted["accepted_by"]["full_name"] == "Sravani"
+    assert accepted["capacity_review"] == "Checked" and accepted["student_accepted"] is True
+    assert client.put(f"{API}{url}", json={"delivery_mode": "Classroom"}, headers=sravani).status_code == 422
+    assert client.put(f"{API}{url}", json={"delivery_mode": "Classroom"}, headers=people["accounts"]["h"]).status_code == 403
+    reopened = call(client, "post", f"{url}/reopen", sravani, json={"reason": "Student prefers weekends"})["plan"]
+    assert reopened["status"] == "Draft" and reopened["student_accepted"] is False
+
+    coordinator = people.get("coordinator")
+    if coordinator:
+        assert call(client, "get", url, coordinator["h"])["plan"]["plan_code"] == "DP-00001"
 
 
 def test_extra_concession_needs_special_closing(client, people, course):
@@ -155,54 +178,134 @@ def test_below_floor_needs_admin_and_independent_approval(client, people, course
 
 # ---------------------------------------------------------------- invoices
 
+def _schedule(*rows):
+    return [{"due_date": (date.today() + timedelta(days=days)).isoformat(), "amount": amount} for days, amount in rows]
+
+
 def test_issue_invoice_builds_schedule(client, people, course):
-    flow = issued_invoice(client, people, course, plan="TWO_INSTALMENTS", agreed_due_days=[0, 12])
+    flow = issued_invoice(client, people, course, plan="TWO_INSTALMENTS")
     invoice = flow["invoice"]
     assert invoice["invoice_number"].startswith("INV-GNT-") and invoice["billed_amount"] == "30000.00"
     assert invoice["payment_completion"] == "Unpaid" and invoice["outstanding"] == "30000.00"
+    assert invoice["issuer"]["address"].startswith("Door No. 6-4-35") and invoice["issuer"]["accent"] == "#6251DA"
+    assert [c["line_code"] for c in invoice["courses"]] == [invoice["invoice_number"] + "-L1"]
 
     detail = call(client, "get", f"/invoices/{invoice['invoice_id']}", people["sravani"]["h"])
     assert [(r["installment_no"], r["amount_due"], r["due_position"]) for r in detail["schedule"]] == [
         (1, "15000.00", "Due Today"), (2, "15000.00", "Upcoming")]
-    assert detail["terms"].startswith("Standard ₹30000.00")
+    assert detail["split"] == "50/50" and detail["payment_plan"]["plan_code"] == "TWO_INSTALMENTS"
+    assert detail["lines"][0]["billed_amount"] == "30000.00" and detail["lines"][0]["open_to_allocate"] == "30000.00"
     discussion = call(client, "get", f"/fee-discussions/{flow['discussion']['fee_discussion_id']}", people["sravani"]["h"])
     assert discussion["milestone"] == "Invoice Issued"
 
     readiness = call(client, "get", f"/invoices/{invoice['invoice_id']}/admission-readiness", people["sravani"]["h"])
-    assert readiness["ready"] is False and readiness["missing"] == ["verified_payment"]
+    assert readiness["ready"] is False and readiness["lines"][0]["missing"] == ["verified_payment"]
     printed = call(client, "get", f"/invoices/{invoice['invoice_id']}/print", people["sravani"]["h"])
-    assert printed["invoice_number"] == invoice["invoice_number"] and len(printed["schedule"]) == 2
+    assert printed["invoice_number"] == invoice["invoice_number"] and len(printed["installments"]) == 2
+    assert printed["issuer"]["branch_code"] == "NIT-GNT" and printed["lines"][0]["course"]["course_id"] == course
+    assert printed["plan"]["split"] == "50/50" and printed["receipts"] == []
 
 
-def test_invoice_rules(client, people, course):
+def test_invoice_rules(client, people, course, run_sql):
+    from tests.helpers import accept_delivery_plan, create_invoice
+
     sravani = people["sravani"]["h"]
-    lead, discussion, ver = priced_lead(client, people, course, payment_plan_id=plan_code_id("TWO_INSTALMENTS"))
-    not_approved = client.post(f"{API}/fee-discussion-versions/{ver['version_id']}/invoice", json={}, headers=sravani)
-    assert not_approved.status_code == 422
+    lead, discussion, ver = priced_lead(client, people, course)
+    body = {"lead_ids": [lead["lead_id"]]}
+    not_approved = client.post(f"{API}/invoices", json=body, headers=sravani)
+    assert not_approved.status_code == 422 and "No approved fee version" in not_approved.get_json()["error"]["message"]
     call(client, "post", f"/fee-discussion-versions/{ver['version_id']}/approve", sravani)
-    outside = client.post(f"{API}/fee-discussion-versions/{ver['version_id']}/invoice", headers=sravani,
-                          json={"agreed_due_days": [0, 30]})
-    assert outside.status_code == 422 and "windows" in outside.get_json()["error"]["message"]
-    wrong_count = client.post(f"{API}/fee-discussion-versions/{ver['version_id']}/invoice", headers=sravani,
-                              json={"agreed_due_days": [0]})
-    assert wrong_count.status_code == 422
+    no_plan = client.post(f"{API}/invoices", json=body, headers=sravani)
+    assert no_plan.status_code == 422 and "Delivery plan not accepted" in no_plan.get_json()["error"]["message"]
+    accept_delivery_plan(client, sravani, lead["lead_id"])
 
-    first = call(client, "post", f"/fee-discussion-versions/{ver['version_id']}/invoice", sravani, 201, json={})
-    second = call(client, "post", f"/fee-discussion-versions/{ver['version_id']}/invoice", sravani, 201, json={})
-    assert call(client, "get", f"/invoices/{first['invoice_id']}", sravani)["status"] == "Superseded"
-    assert call(client, "get", f"/invoices/{first['invoice_id']}", sravani)["superseded_by_invoice_id"] == second["invoice_id"]
+    first = create_invoice(client, sravani, [lead["lead_id"]], installments=_schedule((0, "10000"), (15, "20000")))
+    duplicate = client.post(f"{API}/invoices", json=body, headers=sravani)
+    assert duplicate.status_code == 422 and first["invoice_number"] in duplicate.get_json()["error"]["message"]
+    assert client.put(f"{API}/leads/{lead['lead_id']}/delivery-plan", json={"delivery_mode": "Online"},
+                      headers=sravani).status_code == 422  # invoiced: the plan is fixed
 
-    moved = call(client, "put", f"/invoices/{second['invoice_id']}/installments/2/due-date", sravani,
-                 json={"due_date": (date.today() + timedelta(days=14)).isoformat()})
-    assert moved["due_date"] == (date.today() + timedelta(days=14)).isoformat()
-    assert client.put(f"{API}/invoices/{second['invoice_id']}/installments/2/due-date", headers=sravani,
-                      json={"due_date": (date.today() + timedelta(days=40)).isoformat()}).status_code == 422
+    # Due dates move (in order); the issued invoice keeps its issuer snapshot when the branch changes
+    moved = call(client, "put", f"/invoices/{first['invoice_id']}/installments/2/due-date", sravani,
+                 json={"due_date": (date.today() + timedelta(days=90)).isoformat()})
+    assert moved["due_date"] == (date.today() + timedelta(days=90)).isoformat()
+    assert client.put(f"{API}/invoices/{first['invoice_id']}/installments/2/due-date", headers=sravani,
+                      json={"due_date": date.today().isoformat()}).status_code == 400
+    run_sql("UPDATE branches SET address = 'Moved office' WHERE branch_id = 1")
+    assert call(client, "get", f"/invoices/{first['invoice_id']}/print", sravani)["issuer"]["address"].startswith("Door No.")
 
-    assert client.post(f"{API}/invoices/{second['invoice_id']}/cancel", json={"reason": "x"}, headers=sravani).status_code == 403
-    assert client.post(f"{API}/invoices/{second['invoice_id']}/cancel", json={}, headers=people["accounts"]["h"]).status_code == 400
-    cancelled = call(client, "post", f"/invoices/{second['invoice_id']}/cancel", people["accounts"]["h"],
+    assert client.post(f"{API}/invoices/{first['invoice_id']}/cancel", json={"reason": "x"}, headers=sravani).status_code == 403
+    assert client.post(f"{API}/invoices/{first['invoice_id']}/cancel", json={}, headers=people["accounts"]["h"]).status_code == 400
+    cancelled = call(client, "post", f"/invoices/{first['invoice_id']}/cancel", people["accounts"]["h"],
                      json={"reason": "Student changed course"})
     assert cancelled["status"] == "Cancelled" and cancelled["invoice_state"] == "Cancelled"
+    # the course can be invoiced again, with the branch's current address
+    again = create_invoice(client, sravani, [lead["lead_id"]], total="30000")
+    assert again["issuer"]["address"] == "Moved office"
+    assert client.post(f"{API}/invoices", json=body, headers=people["trainer"]["h"]).status_code == 403
+
+
+def test_invoice_schedule_dates_and_amounts(client, people, course):
+    from tests.helpers import ready_deal
+
+    sravani = people["sravani"]["h"]
+    lead, _, ver = ready_deal(client, people, course)
+
+    def refused(installments):
+        response = client.post(f"{API}/invoices", json={"lead_ids": [lead["lead_id"]], "installments": installments},
+                               headers=sravani)
+        assert response.status_code == 400, response.get_json()
+        return response.get_json()["error"]["details"]
+
+    assert "installments" in refused(_schedule((0, "10000"), (45, "10000"), (100, "9000")))      # ₹29,000 ≠ ₹30,000
+    assert "installments.1.due_date" in refused(_schedule((20, "10000"), (10, "20000")))          # out of order
+    assert "installments.0.due_date" in refused(_schedule((-1, "30000")))                          # in the past
+    assert "installments" in refused(_schedule((0, "7500"), (5, "7500"), (9, "7500"), (12, "7500")))  # max 3
+
+    # Any split and any dates: ₹1,000 token today, ₹9,000 in 45 days, ₹20,000 in 100 days
+    invoice = call(client, "post", "/invoices", sravani, 201, json={
+        "lead_ids": [lead["lead_id"]], "installments": _schedule((0, "1000"), (45, "9000"), (100, "20000"))})
+    assert invoice["payment_plan"]["plan_code"] == "THREE_INSTALMENTS"  # from the number of instalments
+    detail = call(client, "get", f"/invoices/{invoice['invoice_id']}", sravani)
+    assert [r["amount_due"] for r in detail["schedule"]] == ["1000.00", "9000.00", "20000.00"]
+    assert detail["split"] == "3/30/67"
+
+
+def test_multi_course_invoice_combines_only_compatible_deals(app, client, people, course):
+    from tests.helpers import accept_delivery_plan, convert_lead, create_invoice, ready_deal
+
+    sravani = people["sravani"]["h"]
+    java = _second_course(app)
+    lead, _, _ = ready_deal(client, people, course)
+    person_id = lead["person"]["person_id"]
+    other = create_lead(client, sravani, person=None, person_id=person_id, course_id=java)
+    convert_lead(client, sravani, other["lead_id"])
+
+    options = call(client, "get", f"/invoices/options?lead_id={lead['lead_id']}", sravani)
+    assert options["issuer"]["branch_code"] == "NIT-GNT" and options["bill_to"]["person_id"] == person_id
+    by_lead = {c["lead"]["lead_id"]: c for c in options["courses"]}
+    assert by_lead[lead["lead_id"]]["eligible"] is True and by_lead[lead["lead_id"]]["amount"] == "30000.00"
+    assert by_lead[other["lead_id"]]["eligible"] is False
+    assert set(by_lead[other["lead_id"]]["reasons"]) == {"No approved fee version", "Delivery plan not accepted"}
+    blocked = client.post(f"{API}/invoices", json={"lead_ids": [lead["lead_id"], other["lead_id"]]}, headers=sravani)
+    assert blocked.status_code == 422 and other["lead_code"] in blocked.get_json()["error"]["details"]["leads"]
+
+    disc = call(client, "post", f"/leads/{other['lead_id']}/fee-discussions", sravani, 201, json={})
+    ver = call(client, "post", f"/fee-discussions/{disc['fee_discussion_id']}/versions", sravani, 201, json={})
+    call(client, "post", f"/fee-discussion-versions/{ver['version_id']}/approve", sravani)
+    accept_delivery_plan(client, sravani, other["lead_id"])
+
+    stranger, _, _ = ready_deal(client, people, course, person={"full_name": "Someone Else", "phone": "9000000502"})
+    mixed = client.post(f"{API}/invoices", json={"lead_ids": [lead["lead_id"], stranger["lead_id"]]}, headers=sravani)
+    assert mixed.status_code == 422 and "different person" in mixed.get_json()["error"]["message"]
+
+    invoice = create_invoice(client, sravani, [lead["lead_id"], other["lead_id"]], plan="TWO_INSTALMENTS", total="55000")
+    assert invoice["billed_amount"] == "55000.00" and len(invoice["courses"]) == 2
+    assert [c["course"]["course_id"] for c in invoice["courses"]] == [course, java]
+    options = call(client, "get", f"/invoices/options?lead_id={lead['lead_id']}", sravani)
+    assert all(c["invoice"]["invoice_id"] == invoice["invoice_id"] and not c["eligible"] for c in options["courses"])
+    assert {i["invoice_id"] for i in call(client, "get", f"/invoices?lead_id={other['lead_id']}", sravani)} == {
+        invoice["invoice_id"]}
 
 
 def test_invoice_register_totals_and_scope(client, people, course):
@@ -237,37 +340,42 @@ def _second_course(app):
     return other.course_id
 
 
-def _invoice_for(client, people, lead_id, offer_id):
-    """Fee discussion → version with the offer → approve → accept plan → invoice → verified full payment."""
-    from tests.helpers import record_payment
+def _invoice_for(client, people, lead_id, offer_id, pay=True):
+    """Fee discussion → version with the offer → approve → accept plan → invoice → verified full payment (which
+    creates the admission). Returns (discussion, invoice, admissions created on verification)."""
+    from tests.helpers import accept_delivery_plan, create_invoice
 
     sravani = people["sravani"]["h"]
     discussion = call(client, "post", f"/leads/{lead_id}/fee-discussions", sravani, 201, json={})
     version = call(client, "post", f"/fee-discussions/{discussion['fee_discussion_id']}/versions", sravani, 201,
                    json={"offer_id": offer_id})
     call(client, "post", f"/fee-discussion-versions/{version['version_id']}/approve", sravani)
-    call(client, "post", f"/fee-discussions/{discussion['fee_discussion_id']}/accept-plan", sravani,
-         json={"version_id": version["version_id"], "delivery_mode": "Classroom", "seat_type": "Confirmed Seat"})
-    invoice = call(client, "post", f"/fee-discussion-versions/{version['version_id']}/invoice", sravani, 201, json={})
-    payment = record_payment(client, sravani, invoice["invoice_id"], invoice["billed_amount"])["payment"]
-    call(client, "post", f"/payments/{payment['payment_id']}/verify", people["accounts"]["h"])
-    return discussion, invoice
+    accept_delivery_plan(client, sravani, lead_id)
+    invoice = create_invoice(client, sravani, [lead_id])
+    return (discussion, invoice, _pay(client, people, invoice) if pay else [])
+
+
+def _pay(client, people, invoice):
+    from tests.helpers import record_payment, verify_payment
+
+    payment = record_payment(client, people["sravani"]["h"], invoice["invoice_id"], invoice["billed_amount"])["payment"]
+    return verify_payment(client, people["accounts"]["h"], payment["payment_id"])["admissions_created"]
 
 
 def test_offer_used_once_per_person(app, client, people, course, run_sql):
-    from tests.helpers import create_lead
+    from tests.helpers import create_deal
 
     sravani = people["sravani"]["h"]
     offer_id = _offer(run_sql, people)
     java = _second_course(app)
 
-    first = create_lead(client, sravani, course_id=course)
+    first = create_deal(client, sravani, course_id=course)
     person_id = first["person"]["person_id"]
-    _, invoice = _invoice_for(client, people, first["lead_id"], offer_id)
-    admission = call(client, "post", "/admissions", sravani, 201, json={"invoice_id": invoice["invoice_id"]})
+    _, invoice, created = _invoice_for(client, people, first["lead_id"], offer_id)
+    admission = created[0]
 
     # Same person, another course: the offer is no longer offered and can't be applied
-    second = create_lead(client, sravani, person=None, person_id=person_id, course_id=java)
+    second = create_deal(client, sravani, person=None, person_id=person_id, course_id=java)
     discussion = call(client, "post", f"/leads/{second['lead_id']}/fee-discussions", sravani, 201, json={})
     detail = call(client, "get", f"/fee-discussions/{discussion['fee_discussion_id']}", sravani)
     assert detail["applicable_offers"] == []
@@ -279,7 +387,7 @@ def test_offer_used_once_per_person(app, client, people, course, run_sql):
     assert "already been used by this person" in refused.get_json()["error"]["message"]
 
     # A different person can still use it
-    stranger = create_lead(client, sravani, course_id=java, person={"full_name": "Other Learner", "phone": "91234 56789"})
+    stranger = create_deal(client, sravani, course_id=java, person={"full_name": "Other Learner", "phone": "91234 56789"})
     other_discussion = call(client, "post", f"/leads/{stranger['lead_id']}/fee-discussions", sravani, 201, json={})
     assert call(client, "post", f"/fee-discussions/{other_discussion['fee_discussion_id']}/versions", sravani, 201,
                 json={"offer_id": offer_id})["offer"]["offer_code"] == "ONCE"
@@ -293,18 +401,21 @@ def test_offer_used_once_per_person(app, client, people, course, run_sql):
 def test_offer_once_enforced_at_invoice_and_admission(app, client, people, course, run_sql):
     """Two parallel discussions with the same offer: the second is stopped at invoicing, or at admission if its
     invoice was already issued (database rule, covers every version of the offer)."""
-    from tests.helpers import create_lead
+    from tests.helpers import create_deal
 
     sravani = people["sravani"]["h"]
     offer_id = _offer(run_sql, people)
     java = _second_course(app)
-    first = create_lead(client, sravani, course_id=course)
+    first = create_deal(client, sravani, course_id=course)
     person_id = first["person"]["person_id"]
-    second = create_lead(client, sravani, person=None, person_id=person_id, course_id=java)
+    second = create_deal(client, sravani, person=None, person_id=person_id, course_id=java)
 
-    _, invoice_1 = _invoice_for(client, people, first["lead_id"], offer_id)
-    _, invoice_2 = _invoice_for(client, people, second["lead_id"], offer_id)  # both issued before any admission
-    admission = call(client, "post", "/admissions", sravani, 201, json={"invoice_id": invoice_1["invoice_id"]})
+    _, invoice_1, _ = _invoice_for(client, people, first["lead_id"], offer_id, pay=False)
+    _, invoice_2, _ = _invoice_for(client, people, second["lead_id"], offer_id, pay=False)  # both before any admission
+    admission = _pay(client, people, invoice_1)[0]
+    assert _pay(client, people, invoice_2) == []  # verified, but the admission is refused (task for the manager)
+    task = db.session.execute(select(Task).where(Task.dedupe_key.like("admission-blocked:%"))).scalar_one()
+    assert "already been used" in task.title
 
     blocked = client.post(f"{API}/admissions", headers=sravani, json={"invoice_id": invoice_2["invoice_id"]})
     assert blocked.status_code == 422
@@ -314,7 +425,7 @@ def test_offer_once_enforced_at_invoice_and_admission(app, client, people, cours
 
     # A priced-but-not-invoiced version is stopped when the invoice is issued
     third_course = _third_course(app)
-    third = create_lead(client, sravani, person=None, person_id=person_id, course_id=third_course)
+    third = create_deal(client, sravani, person=None, person_id=person_id, course_id=third_course)
     # Price it while the offer is free (first admission briefly cancelled), then the first admission is live again
     status = db.session.execute(select(Admission.enrolment_status).where(
         Admission.admission_id == admission["admission_id"])).scalar_one()
@@ -324,11 +435,12 @@ def test_offer_once_enforced_at_invoice_and_admission(app, client, people, cours
     version = call(client, "post", f"/fee-discussions/{discussion['fee_discussion_id']}/versions", sravani, 201,
                    json={"offer_id": offer_id})
     call(client, "post", f"/fee-discussion-versions/{version['version_id']}/approve", sravani)
-    call(client, "post", f"/fee-discussions/{discussion['fee_discussion_id']}/accept-plan", sravani,
-         json={"version_id": version["version_id"], "delivery_mode": "Classroom", "seat_type": "Confirmed Seat"})
+    from tests.helpers import accept_delivery_plan
+
+    accept_delivery_plan(client, sravani, third["lead_id"])
     run_sql("UPDATE admissions SET enrolment_status = :s, cancelled_by = NULL, cancelled_at = NULL, "
             "cancellation_reason = NULL WHERE admission_id = :a", s=status, a=admission["admission_id"])
-    refused = client.post(f"{API}/fee-discussion-versions/{version['version_id']}/invoice", headers=sravani, json={})
+    refused = client.post(f"{API}/invoices", headers=sravani, json={"lead_ids": [third["lead_id"]]})
     assert refused.status_code == 422 and "already been used" in refused.get_json()["error"]["message"]
 
 
@@ -346,7 +458,7 @@ def test_complimentary_offer_counts_once_per_person(app, client, people, course,
     """The paid admission that applies a complimentary offer and the free course it grants are one use; the same
     person can't get that offer's complimentary course again on a later admission."""
     from models import Course, CourseBranch
-    from tests.helpers import create_lead
+    from tests.helpers import create_deal
 
     sravani = people["sravani"]["h"]
     excel = Course(course_code="NIT-CRS-090", course_title="Advanced Excel", category="Office", standard_fee=5000,
@@ -362,16 +474,16 @@ def test_complimentary_offer_counts_once_per_person(app, client, people, course,
             "VALUES (:o, :c, 15000, 90)", o=offer_id, c=excel.course_id)
     java = _second_course(app)
 
-    first = create_lead(client, sravani, course_id=course)
+    first = create_deal(client, sravani, course_id=course)
     person_id = first["person"]["person_id"]
-    _, invoice = _invoice_for(client, people, first["lead_id"], offer_id)  # offer chosen on the fee version
-    parent = call(client, "post", "/admissions", sravani, 201, json={"invoice_id": invoice["invoice_id"]})
+    _, invoice, created = _invoice_for(client, people, first["lead_id"], offer_id)  # offer chosen on the fee version
+    parent = created[0]
     call(client, "post", f"/admissions/{parent['admission_id']}/complimentary", sravani, 201,
          json={"offer_id": offer_id, "course_id": excel.course_id})
 
-    second = create_lead(client, sravani, person=None, person_id=person_id, course_id=java)
-    _, invoice_2 = _invoice_for(client, people, second["lead_id"], None)
-    later = call(client, "post", "/admissions", sravani, 201, json={"invoice_id": invoice_2["invoice_id"]})
+    second = create_deal(client, sravani, person=None, person_id=person_id, course_id=java)
+    _, invoice_2, created = _invoice_for(client, people, second["lead_id"], None)
+    later = created[0]
     again = client.post(f"{API}/admissions/{later['admission_id']}/complimentary", headers=sravani,
                         json={"offer_id": offer_id, "course_id": excel.course_id})
     assert again.status_code == 422

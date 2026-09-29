@@ -1,8 +1,11 @@
 """Fee discussions, versions, accepted plan, special closing requests, and the invoice register."""
+from decimal import Decimal
+
 from flask import request
 
 from controllers.common import Validator, created, get_page_params, json_body, ok, paginated
-from models.enums import DELIVERY_MODES, INVOICE_STATUSES, SCR_STATUSES, SEAT_TYPES
+from models.enums import CAPACITY_REVIEWS, DELIVERY_MODES, INVOICE_STATUSES, SCR_STATUSES, SEAT_TYPES
+from services import delivery_plans as plans_service
 from services import fees as fees_service
 from services import invoices as invoices_service
 
@@ -31,7 +34,7 @@ def add_version(discussion_id: int):
     v = Validator(json_body())
     v.integer("offer_id", nullable=True, min_value=1)
     v.decimal("extra_concession", min_value=0)
-    v.integer("payment_plan_id", min_value=1)
+    v.integer("payment_plan_id", min_value=1)  # informational; the invoice carries the schedule (db 021)
     v.date("valid_until", nullable=True)
     v.string("notes", nullable=True)
     return created(fees_service.add_version(discussion_id, v.validate()).to_dict())
@@ -41,13 +44,38 @@ def share(discussion_id: int):
     return ok(fees_service.share(discussion_id).to_dict())
 
 
-def accept_plan(discussion_id: int):
-    v = Validator(json_body())
-    v.integer("version_id", required=True, min_value=1)
-    v.choice("delivery_mode", DELIVERY_MODES, required=True)
-    v.choice("seat_type", SEAT_TYPES, required=True)
+# ---------------------------------------------------------------- delivery plan (per course deal, db 020)
+
+def get_delivery_plan(lead_id: int):
+    return ok(plans_service.get(lead_id))
+
+
+def _plan_rules(v: Validator) -> None:
+    v.integer("service_branch_id", min_value=1)
+    v.choice("delivery_mode", DELIVERY_MODES)
+    v.choice("seat_type", SEAT_TYPES)
     v.date("planned_start_date", nullable=True)
-    return ok(fees_service.accept_plan(discussion_id, v.validate()).to_dict())
+    v.choice("capacity_review", CAPACITY_REVIEWS)
+    v.string("notes", nullable=True, max_length=2000)
+
+
+def save_delivery_plan(lead_id: int):
+    v = Validator(json_body())
+    _plan_rules(v)
+    return ok(plans_service.save(lead_id, v.validate()))
+
+
+def accept_delivery_plan(lead_id: int):
+    v = Validator(json_body())
+    _plan_rules(v)
+    v.boolean("student_accepted", required=True)
+    return ok(plans_service.accept(lead_id, v.validate()))
+
+
+def reopen_delivery_plan(lead_id: int):
+    v = Validator(json_body())
+    v.string("reason", required=True, max_length=1000)
+    return ok(plans_service.reopen(lead_id, v.validate()["reason"]))
 
 
 def approve_version(version_id: int):
@@ -100,12 +128,24 @@ def reject_special_closing(scr_id: int):
 # ---------------------------------------------------------------- invoices
 
 
-def issue_invoice(version_id: int):
+def invoice_options():
+    v = Validator(request.args.to_dict())
+    v.integer("lead_id", required=True, min_value=1)
+    return ok(invoices_service.options(v.validate()["lead_id"]))
+
+
+def create_invoice():
     v = Validator(json_body())
+    v.id_list("lead_ids", required=True, min_items=1)
+    v.list_of("installments", _installment_rules)  # omitted: the whole total today
     v.date("day0_date", nullable=True)
-    v.int_list("agreed_due_days", nullable=True, min_value=0)
-    v.string("terms", nullable=True)
-    return created(invoices_service.issue(version_id, v.validate()).to_dict())
+    v.string("terms", nullable=True, max_length=2000)
+    return created(invoices_service.create(v.validate()).to_dict())
+
+
+def _installment_rules(v: Validator) -> None:
+    v.date("due_date", required=True)
+    v.decimal("amount", required=True, min_value=Decimal("0.01"))
 
 
 def list_invoices():
@@ -115,6 +155,7 @@ def list_invoices():
     v.integer("person_id", min_value=1)
     v.integer("lead_id", min_value=1)
     v.choice("completion", ("Unpaid", "Part Paid", "Paid"))
+    v.boolean("outstanding")
     v.string("q", max_length=100)
     page, per_page = get_page_params()
     invoices, meta, totals = invoices_service.list_invoices(v.validate(), page, per_page)
@@ -125,7 +166,13 @@ def get_invoice(invoice_id: int):
     d = invoices_service.detail(invoice_id)
     schedule = [row.to_dict() for row in d["schedule"]] or [
         {"installment_no": i.installment_no, "due_date": i.due_date, "amount_due": i.amount_due} for i in d["installments"]]
-    return ok({**d["invoice"].to_dict(), "schedule": schedule, "payments": [p.to_row() for p in d["payments"]],
+    invoice = d["invoice"]
+    return ok({**invoice.to_dict(), "lines": [line.to_dict() for line in invoice.lines], "schedule": schedule,
+               "split": invoices_service.split_label([i.amount_due for i in d["installments"]], invoice.billed_amount),
+               "payments": [p.to_row() for p in d["payments"]],
+               "receipts": [p.to_row() for p in d["payments"] if p.verification_status == "Verified"],
+               "admissions": [a.to_summary() for a in d["admissions"]],
+               "promises": [p.to_dict() for p in d["promises"]],
                "correction_requests": [c.to_dict() for c in d["corrections"]]})
 
 

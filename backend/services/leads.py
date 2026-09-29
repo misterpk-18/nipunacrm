@@ -32,7 +32,7 @@ def get_lead(lead_id: int) -> Lead:
     return lead
 
 
-def _can_work(lead: Lead) -> bool:
+def can_work(lead: Lead) -> bool:
     """Owner, branch manager, admin — or any counsellor of the branch while the lead is unassigned."""
     user = current_user()
     return (user.is_manager_of(lead.branch_id)
@@ -42,7 +42,7 @@ def _can_work(lead: Lead) -> bool:
 
 def _workable(lead_id: int) -> Lead:
     lead = get_lead(lead_id)
-    if not _can_work(lead):
+    if not can_work(lead):
         raise Forbidden("Only the lead's owner or a branch manager can do this")
     return lead
 
@@ -60,12 +60,19 @@ def check_assignee(user_id: int, branch_id: int, field: str = "assigned_to") -> 
                               {field: ["Not eligible for this branch"]})
 
 
-def _check_course(course_id: int, branch_id: int) -> None:
+def check_course(course_id: int, branch_id: int) -> None:
     course = db.session.get(Course, course_id)
     if course is None or course.status != "Active":
         raise ValidationError("Unknown or inactive course", {"course_id": ["Not an active course"]})
     if not any(link.branch.branch_id == branch_id for link in course.branch_links):
         raise ValidationError("This course isn't offered at the lead's branch", {"course_id": ["Not offered at this branch"]})
+
+
+def require_converted(lead: Lead, action: str) -> None:
+    """Demos and fee discussions happen on deals: the lead must be qualified and converted first (db 019)."""
+    if lead.converted_at is None:
+        raise BusinessRule(f"Qualify and convert {lead.lead_code} to a deal before {action}",
+                           {"missing_fields": ["qualified_at" if lead.qualified_at is None else "converted_at"]})
 
 
 def log_activity(lead: Lead, activity_type: str, summary: str | None, **fields) -> LeadActivity:
@@ -112,7 +119,7 @@ def create_from_enquiry(enquiry: Enquiry, person: Person, data: dict) -> Lead:
     user = current_user()
     course_id = data.get("course_id", enquiry.course_id)
     if course_id is not None:
-        _check_course(course_id, enquiry.branch_id)
+        check_course(course_id, enquiry.branch_id)
 
     existing = leads_repo.find_open_lead(person.person_id, course_id, enquiry.branch_id)
     if existing is not None:
@@ -176,7 +183,7 @@ def list_enquiries(lead_id: int) -> list[Enquiry]:
 def update_lead(lead_id: int, data: dict) -> Lead:
     lead = _workable(lead_id)
     if data.get("course_id") is not None:
-        _check_course(data["course_id"], lead.branch_id)
+        check_course(data["course_id"], lead.branch_id)
     old = {field: getattr(lead, field) for field in data}
     for field, value in data.items():
         setattr(lead, field, value)
@@ -188,7 +195,7 @@ def update_lead(lead_id: int, data: dict) -> Lead:
 
 def assign(lead_id: int, assigned_to: int) -> Lead:
     lead = _managed(lead_id)
-    _assign(lead, assigned_to)
+    assign_to(lead, assigned_to)
     db.session.flush()
     return lead
 
@@ -197,12 +204,12 @@ def bulk_assign(lead_ids: list[int], assigned_to: int) -> list[Lead]:
     """All or nothing: every lead must be visible and managed by the caller."""
     leads = [_managed(lead_id) for lead_id in lead_ids]
     for lead in leads:
-        _assign(lead, assigned_to)
+        assign_to(lead, assigned_to)
     db.session.flush()
     return leads
 
 
-def _assign(lead: Lead, assigned_to: int) -> None:
+def assign_to(lead: Lead, assigned_to: int) -> None:
     check_assignee(assigned_to, lead.branch_id)
     if lead.assigned_to == assigned_to:
         return
@@ -224,12 +231,20 @@ def change_stage(lead_id: int, stage: str, note: str | None) -> Lead:
     if stage == "Admitted":
         raise BusinessRule("A lead becomes Admitted when its admission is created",
                            {"missing_fields": ["admission"]})
+    if stage != "New Enquiry":
+        require_converted(lead, f"moving it to {stage}")
     if stage == "Payment Pending Verification":
         missing = [field for field in ("course_id",) if getattr(lead, field) is None]
         if missing:
             raise BusinessRule("Fill in the required fields first", {"missing_fields": missing})
+        others = [other.lead_code for other in leads_repo.open_leads_on_card(lead) if other.course_id is None]
+        if others:
+            raise BusinessRule("Every course on the person's pipeline card needs a course first",
+                               {"missing_fields": ["course_id"], "leads": others})
 
-    lead.stage = stage  # the DB logs the change and blocks moving back from Payment Pending Verification
+    # The DB logs the change, moves the person's pipeline card (and its other open courses) with it,
+    # and blocks moving back from Payment Pending Verification or back to New Enquiry
+    lead.stage = stage
     if note:
         log_activity(lead, "Note", note)
     db.session.flush()
@@ -256,7 +271,7 @@ def log_follow_up(lead_id: int, data: dict):
     """
     lead = get_lead(lead_id)
     user = current_user()
-    if not (_can_work(lead) or user.has_role("FRONT_OFFICE", branch_id=lead.branch_id)):
+    if not (can_work(lead) or user.has_role("FRONT_OFFICE", branch_id=lead.branch_id)):
         raise Forbidden("Only the lead's owner, front office or a branch manager can log follow-ups")
     if not lead.is_open:
         raise BusinessRule(f"Lead is {lead.stage}")

@@ -44,7 +44,7 @@ flask --app app create-dev-db --yes     # drops and replays db/*.sql (refuses na
 flask --app app seed-dev                # staging data, created through the real API so every rule applies
 ```
 
-The seed (`backend/cli/seed.py`) creates 20 staff accounts, 8 courses (both branches), curricula and 5 batches, 20 leads across every pipeline stage in both branches, demos, fee discussions with invoices, payments (verified and pending), 5 admissions with batch allocations, an overdue instalment with a payment promise, a refund case, tasks, communications, a support case, companies and a job opening, this month's approved targets and an incident.
+The seed (`backend/cli/seed.py`) creates 20 staff accounts, 8 courses (both branches), curricula and 5 batches, 22 leads in both branches — new, **qualified but not converted** (Ravi Teja), converted deals at every pipeline stage (qualification checklist + Convert, db 019), demos, approved fee discussions, **accepted delivery plans**, invoices with their own 1–3 instalment schedules, payment claims and verified receipts, 7 admissions created on verification with batch allocations, a **two-course invoice paid with split tenders** giving two admissions for one person (Meera Joshi), the V4 **₹22,000 invoice with a ₹5,000 cash claim pending** (Sana Begum), an overdue instalment with an invoice promise, a long payment gap, a refund case, tasks, communications, a support case, companies and a job opening, this month's approved targets and an incident.
 
 ### Staging accounts
 
@@ -89,7 +89,7 @@ Other backend commands (from `backend/`): `flask --app app create-admin` (first 
 | Frontend build | `cd frontend && npm run build` | Type-check + production build into `dist/` |
 | End-to-end | `cd frontend && npx playwright test` | Needs the API (dev DB) and Vite running; desktop + `@mobile` projects |
 
-E2E specs live in `frontend/e2e/` (`auth-leads`, `sales`, `finance`, `academics`, `operations`, `management`); `e2e/helpers.ts` has the staging users and `login()`. Tests create their own records with unique phones/names, so they can be re-run without reseeding. Run one Playwright process at a time — parallel runs share `test-results/` (use `--output=<dir>` if you must run two).
+E2E specs live in `frontend/e2e/` (`auth-leads`, `sales`, `finance`, `academics`, `operations`, `management`, `v4-shell`, `v4-deals`); `e2e/helpers.ts` has the staging users, `login()` and API setup helpers for the V4 flow (`qualifyAndConvert`, `approvedFee`, `acceptDeliveryPlan`, `createInvoice`, `recordPayment`, `verifyPayment`). `E2E_BASE_URL` points Playwright at another Vite port. Tests create their own records with unique phones/names, so they can be re-run without reseeding. Run one Playwright process at a time — parallel runs share `test-results/` (use `--output=<dir>` if you must run two).
 
 ## 6. Docs to keep up to date
 
@@ -100,3 +100,4 @@ E2E specs live in `frontend/e2e/` (`auth-leads`, `sales`, `finance`, `academics`
 | Change a screen or frontend convention | [FRONTEND_PLAN.md](FRONTEND_PLAN.md) |
 | Find a gap or make a product decision | [BACKLOG.md](BACKLOG.md) |
 | Change setup, environments or test commands | this file |
+| Change the server, deploy steps, or apply a migration on it | [DEPLOYMENT.md](DEPLOYMENT.md) ("Applied so far" list) |

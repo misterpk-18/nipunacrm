@@ -15,6 +15,10 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 | D5 | LLM for AI features | Rule-based fallback; OpenAI + LangSmith keys are in `.env` for later (code reads `ANTHROPIC_API_KEY` today) |
 | D6 | Production hosting | Plan: nginx serving `frontend/dist` and proxying `/api` to gunicorn on one origin |
 | D7 | Offer once per person — what counts as "used" | Built: used = an admission applies the offer (discount or complimentary); counted per person across all versions of the offer; a cancelled admission releases it. Confirm cancellation should release it, and whether a still-open fee discussion or issued invoice should also reserve the offer |
+| D8 | V4 open questions (defaults built — confirm) | (1) A lead gets demos / fee discussions only after qualify + convert; (2) Admitted / Closed-lost chip counts are all-time per branch; (3) LMS access is a read-only list until a real LMS exists; (4) tax / GSTIN / bank details are left off invoices until approved values are provided |
+| D9 | V4 · conversion owner | Converting onto an existing card keeps that card's owner; the owner in the dialog applies to a new card only. Confirm, or let conversion reassign the card |
+| D10 | V4 · independent cash check | Recorded as a tick at verification; should the verifier also have to be someone other than the collector for cash? |
+| D11 | V4 · promises to pay | Moved to the invoice (one promise per invoice, shared by its courses). Confirm per-invoice rather than per-course promises |
 
 ## 2. API gaps
 
@@ -24,11 +28,13 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 |---|---|---|
 | Collections | No endpoint to set / clear **contact hold** on dues | Shown and filterable, not editable |
 | Placement | No list of placement profiles | "Profiles ready / consent recorded" metrics replaced by application metrics; profiles picked via students |
-| Invoices | No filter for invoices without an admission | New Admission picker filters Issued invoices client-side (≤100) |
-| Leads | No `person_id` filter on `GET /leads` | Student 360 finds a person's opportunities by phone search |
+| Leads | No `person_id` filter on `GET /leads` | Student 360 finds a person's opportunities by phone search (`lead_status=All`). Person 360 uses `GET /persons/{id}/overview` instead |
 | Fees | No company-wide list of fee discussions | Fee screen without a lead shows lead search + leads in the fee stage |
 | Workspace | `GET /leads/workspace` counts only the user's own leads | Managers' tab counts use one `GET /leads?queue=…&per_page=1` per queue |
 | Dashboard | Company view has no funnel | Fetched from `/reports/funnel` |
+| Pipeline | Lead-level assign / follow-up (`/leads/{id}/assign`, `/follow-up`) don't update the person's card | Use the card's settings on the Pipeline screen (it updates the card and every open course) |
+| Workspace | The Counsellor Workspace / My work still lists open leads (courses), not pipeline cards | A person with two courses shows twice there |
+| Convert dialog | No `person_id` filter on `GET /leads`, so "existing open deals" are found by phone search | Good enough for the warning; the API returns existing deals as `existing` anyway |
 | Demos | No way to record a past demo; list row lacks `extra_demo_approved_by` | Outcome only after start time; extra-demo button inferred from "attended demos" |
 
 ### Responses that return bare IDs (extra requests to show names)

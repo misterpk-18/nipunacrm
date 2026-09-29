@@ -2,18 +2,9 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { ArrowRight, BadgeCheck, FileText, IndianRupee, Search, Send, ShieldAlert, Signature } from "lucide-react";
+import { ArrowRight, BadgeCheck, FileText, IndianRupee, Search, Send, ShieldAlert } from "lucide-react";
 import { ApiError } from "@/api/client";
-import {
-  CLOSED_MILESTONES,
-  DELIVERY_MODES,
-  SEAT_TYPES,
-  feeKeys,
-  feesApi,
-  type FeeDiscussion,
-  type FeeVersion,
-  type PaymentPlan,
-} from "@/api/fees";
+import { CLOSED_MILESTONES, feeKeys, feesApi, type FeeDiscussion, type FeeVersion, type Offer } from "@/api/fees";
 import { leadKeys, leadsApi, useLead } from "@/api/leads";
 import { LEAD_OWNER_ROLES } from "@/api/reference";
 import { useAuth, useBranchFilter } from "@/auth/auth";
@@ -24,6 +15,7 @@ import { CourseSelect, Field, NativeSelect, StaffSelect, applyServerErrors } fro
 import { DataTable, Empty, ErrorPanel, Facts, LoadingRows, PageHead, QueryView, Section, Status, Warning } from "@/components/crm/ui";
 import { date, dateTime, money, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
+import { CreateInvoiceDialog } from "@/features/finance/create-invoice";
 import { FormDialog, SALES_SIDE } from "./shared";
 
 const INVALIDATE = [feeKeys.all, feeKeys.scr, leadKeys.all, ["pipeline"], ["invoices"], ["dashboard"]];
@@ -42,8 +34,8 @@ function LeadPicker() {
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const results = useQuery({
-    queryKey: leadKeys.list({ q, branch_id: branchId, per_page: 10 }),
-    queryFn: () => leadsApi.list({ q, branch_id: branchId, per_page: 10 }),
+    queryKey: leadKeys.list({ q, branch_id: branchId, per_page: 10, lead_status: "All" }),
+    queryFn: () => leadsApi.list({ q, branch_id: branchId, per_page: 10, lead_status: "All" }),
     enabled: q.length > 0,
   });
   const inFee = useQuery({
@@ -77,7 +69,7 @@ function LeadPicker() {
   ];
   return (
     <>
-      <PageHead title="Fee Discussion & Invoice" description="Pick a lead to price its course, get approvals, record the accepted plan and issue the invoice." />
+      <PageHead title="Fee Discussion & Invoice" description="Pick a deal to price its course, get approvals and create the invoice." />
       <Section title="Find a lead">
         <form
           className="relative mb-3"
@@ -208,10 +200,8 @@ function LeadDiscussions({ leadId }: { leadId: number }) {
 
 function DiscussionView({ discussionId }: { discussionId: number }) {
   const q = useQuery({ queryKey: feeKeys.detail(discussionId), queryFn: () => feesApi.get(discussionId) });
-  const plans = useQuery({ queryKey: feeKeys.paymentPlans, queryFn: feesApi.paymentPlans, staleTime: 10 * 60_000 });
   const { hasRole } = useAuth();
-  const navigate = useNavigate();
-  const [dialog, setDialog] = useState<null | "scr" | "accept" | "invoice">(null);
+  const [dialog, setDialog] = useState<null | "scr" | "invoice">(null);
 
   const approve = useApiMutation((versionId: number) => feesApi.approveVersion(versionId), { success: (v) => `Version ${v.version_no} approved`, invalidate: INVALIDATE });
   const share = useApiMutation(() => feesApi.share(discussionId), { success: "Approved fee marked as shared", invalidate: INVALIDATE });
@@ -224,7 +214,6 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
   const canInvoice = hasRole(...SALES_SIDE, "ACCOUNTS");
   const closed = CLOSED_MILESTONES.includes(d.milestone);
   const workable = salesSide && !closed;
-  const plan = plans.data?.find((p) => p.payment_plan_id === v?.payment_plan.payment_plan_id);
   const pendingScr = v?.special_closing_requests.find((s) => s.status === "Pending");
 
   return (
@@ -265,14 +254,13 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
                 ["Extra concession", money(v.extra_concession)],
                 ["Final payable amount", <b key="fp">{money(v.final_payable)}</b>],
                 ["Minimum payable floor (70%)", money(v.minimum_floor)],
-                ["Payment plan", v.payment_plan.plan_name],
                 ["Validity", date(v.valid_until)],
                 ["Counsellor", d.counsellor?.full_name ?? "—"],
                 ["Fee shared", d.fee_shared_at ? dateTime(d.fee_shared_at) : "Not yet"],
               ]}
             />
           ) : (
-            <Empty title="No version yet">Save the first version below — standard fee, offer and payment plan.</Empty>
+            <Empty title="No version yet">Save the first version below — standard fee, offer and any extra concession.</Empty>
           )}
           <div className="mt-4 flex flex-wrap gap-2">
             <Status>{`${d.milestone} · milestone`}</Status>
@@ -311,23 +299,20 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
                   Share approved fee
                 </Button>
               )}
-              {v.status === "Approved" && !d.accepted_plan && (
-                <Button variant="outline" onClick={() => setDialog("accept")}>
-                  <Signature />
-                  Accept plan
-                </Button>
-              )}
             </div>
           )}
-          {v && v.status === "Approved" && canInvoice && !closed && ["Approved", "Fee Shared", "Invoice Issued"].includes(d.milestone) && (
-            <div className="mt-2 flex flex-wrap gap-2">
+          {v && v.status === "Approved" && canInvoice && !closed && ["Approved", "Fee Shared"].includes(d.milestone) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button onClick={() => setDialog("invoice")}>
                 <FileText />
-                {d.milestone === "Invoice Issued" ? "Re-issue invoice" : "Issue invoice"}
+                Create invoice
               </Button>
               <Button variant="outline" asChild>
-                <Link to="/invoices">Invoice Register</Link>
+                <Link to="/leads/$leadId" params={{ leadId: String(d.lead.lead_id) }}>
+                  Delivery plan on the deal
+                </Link>
               </Button>
+              <span className="text-xs text-muted-foreground">The course needs an accepted delivery plan; the payment schedule is set on the invoice.</span>
             </div>
           )}
         </Section>
@@ -345,25 +330,10 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
           ) : (
             <Empty title="No versions yet" />
           )}
-          {d.accepted_plan && (
-            <div className="mt-4 border-t pt-4">
-              <h3 className="mb-2 text-sm font-semibold">Accepted delivery plan</h3>
-              <Facts
-                columns={1}
-                items={[
-                  ["Version", `v${d.versions.find((x) => x.version_id === d.accepted_plan!.accepted_version_id)?.version_no ?? "?"}`],
-                  ["Delivery mode", d.accepted_plan.delivery_mode],
-                  ["Seat type", d.accepted_plan.seat_type],
-                  ["Planned start", date(d.accepted_plan.planned_start_date)],
-                  ["Accepted", dateTime(d.accepted_plan.plan_accepted_at)],
-                ]}
-              />
-            </div>
-          )}
         </Section>
-        {workable && !d.accepted_plan && (
+        {workable && d.milestone !== "Invoice Issued" && (
           <Section title={v ? "New version / counteroffer" : "First version"} subtitle="Amounts are frozen once saved; a new version supersedes the open one." className="min-w-0 lg:col-span-2">
-            <VersionForm discussion={d} plans={plans.data ?? []} />
+            <VersionForm discussion={d} />
           </Section>
         )}
         <Section title="Invoices for this lead" className="min-w-0">
@@ -374,41 +344,44 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
         <Warning>After the first verified payment, fee changes require Founder / CEO or Super Admin approval plus an Accounts correction. No self-approval.</Warning>
       </div>
       {dialog === "scr" && v && <SpecialClosingDialog version={v} onClose={() => setDialog(null)} />}
-      {dialog === "accept" && v && <AcceptPlanDialog discussion={d} version={v} onClose={() => setDialog(null)} />}
-      {dialog === "invoice" && v && (
-        <InvoiceDialog
-          version={v}
-          plan={plan}
-          onClose={() => setDialog(null)}
-          onIssued={(invoiceId) => void navigate({ to: "/invoices/$invoiceId", params: { invoiceId: String(invoiceId) } })}
-        />
-      )}
+      {dialog === "invoice" && <CreateInvoiceDialog leadId={d.lead.lead_id} onClose={() => setDialog(null)} />}
     </>
   );
 }
 
-type VersionValues = { offer_id: string; extra_concession: string; payment_plan_id: string; valid_until: string; notes: string };
+type VersionValues = { offer_id: string; extra_concession: string; valid_until: string; notes: string };
 
-function VersionForm({ discussion, plans }: { discussion: FeeDiscussion; plans: PaymentPlan[] }) {
+function offerDiscount(offer: Offer, standard: number) {
+  if (offer.benefit_type === "Discount Amount") return Math.min(Number(offer.discount_amount ?? 0), standard);
+  if (offer.benefit_type === "Discount Percent") return Math.round(standard * Number(offer.discount_percent ?? 0)) / 100;
+  return 0;
+}
+
+/** A version is the price only (standard fee − offer − extra concession); the 1–3 instalments are set on the invoice. */
+function VersionForm({ discussion }: { discussion: FeeDiscussion }) {
   const current = discussion.current_version;
-  const form = useForm<VersionValues>({
-    defaultValues: { offer_id: "", extra_concession: "0", payment_plan_id: "", valid_until: "", notes: "" },
-  });
+  const form = useForm<VersionValues>({ defaultValues: { offer_id: "", extra_concession: "0", valid_until: "", notes: "" } });
+  const offers = discussion.applicable_offers ?? [];
+  const used = discussion.used_offers ?? [];
+  const standard = Number(current?.standard_fee ?? discussion.course.standard_fee);
+  const [offerId, extra] = form.watch(["offer_id", "extra_concession"]);
+  const offer = offers.find((o) => String(o.offer_id) === offerId);
+  const finalPayable = Math.max(standard - (offer ? offerDiscount(offer, standard) : 0) - Number(extra || 0), 0);
+
   useEffect(() => {
     form.reset({
       offer_id: current?.offer ? String(current.offer.offer_id) : "",
       extra_concession: current ? String(Number(current.extra_concession)) : "0",
-      payment_plan_id: String(current?.payment_plan.payment_plan_id ?? plans.find((p) => p.plan_code === "FULL")?.payment_plan_id ?? ""),
       valid_until: "",
       notes: "",
     });
-  }, [current, plans, form]);
+  }, [current, form]);
+
   const save = useApiMutation(
     (v: VersionValues) =>
       feesApi.addVersion(discussion.fee_discussion_id, {
         offer_id: v.offer_id ? Number(v.offer_id) : null,
         extra_concession: v.extra_concession || "0",
-        ...(v.payment_plan_id ? { payment_plan_id: Number(v.payment_plan_id) } : {}),
         valid_until: v.valid_until || null,
         notes: v.notes || null,
       }),
@@ -419,8 +392,6 @@ function VersionForm({ discussion, plans }: { discussion: FeeDiscussion; plans: 
       onError: (e) => applyServerErrors(form, e),
     },
   );
-  const offers = discussion.applicable_offers ?? [];
-  const used = discussion.used_offers ?? [];
   const e = form.formState.errors;
   const offerHint = [
     offers.length ? null : "No active offer for this course and branch today",
@@ -442,18 +413,16 @@ function VersionForm({ discussion, plans }: { discussion: FeeDiscussion; plans: 
       <Field label="Extra concession (₹)" htmlFor="v-extra" hint="Any extra concession needs a special closing approval" error={e.extra_concession?.message}>
         <Input id="v-extra" type="number" min={0} step="1" inputMode="numeric" {...form.register("extra_concession")} />
       </Field>
-      <Field label="Payment plan" htmlFor="v-plan" error={e.payment_plan_id?.message}>
-        <NativeSelect id="v-plan" options={plans.map((p) => ({ value: p.payment_plan_id, label: p.plan_name }))} {...form.register("payment_plan_id")} />
-      </Field>
       <Field label="Valid until (optional)" htmlFor="v-valid" hint="Defaults to 7 days or the offer's end" error={e.valid_until?.message}>
         <Input id="v-valid" type="date" min={todayIST()} {...form.register("valid_until")} />
       </Field>
-      <Field label="Notes" htmlFor="v-notes" className="sm:col-span-2">
-        <Textarea id="v-notes" {...form.register("notes")} />
+      <Field label="Notes" htmlFor="v-notes">
+        <Textarea id="v-notes" rows={2} {...form.register("notes")} />
       </Field>
       <div className="sm:col-span-2">
         <p className="mb-2 text-xs text-muted-foreground">
-          Standard fee {money(current?.standard_fee ?? null)} {current ? "" : "(from the course)"} — final payable, 70% floor and validity are computed when saved.
+          Standard fee {money(standard)} · final payable about {money(finalPayable)} — the final payable, 70% floor and validity are confirmed when saved. The
+          payment schedule (1–3 instalments) is agreed when the invoice is created.
         </p>
         <Button type="submit" variant="outline" disabled={save.isPending}>
           Save discussion
@@ -489,115 +458,10 @@ function SpecialClosingDialog({ version, onClose }: { version: FeeVersion; onClo
   );
 }
 
-function AcceptPlanDialog({ discussion, version, onClose }: { discussion: FeeDiscussion; version: FeeVersion; onClose: () => void }) {
-  const form = useForm({ defaultValues: { delivery_mode: "Classroom", seat_type: "Confirmed Seat", planned_start_date: "" } });
-  const go = useApiMutation(
-    (v: { delivery_mode: string; seat_type: string; planned_start_date: string }) =>
-      feesApi.acceptPlan(discussion.fee_discussion_id, {
-        version_id: version.version_id,
-        delivery_mode: v.delivery_mode,
-        seat_type: v.seat_type,
-        planned_start_date: v.seat_type === "Future Plan" ? v.planned_start_date || null : null,
-      }),
-    { success: "Accepted plan recorded", invalidate: INVALIDATE, onSuccess: onClose, silentValidation: true, onError: (e) => applyServerErrors(form, e) },
-  );
-  const future = form.watch("seat_type") === "Future Plan";
-  return (
-    <FormDialog
-      title="Record the accepted plan"
-      description={`The student accepts version ${version.version_no} at ${money(version.final_payable)} (${version.payment_plan.plan_name}). This is admission prerequisite 1.`}
-      onClose={onClose}
-      busy={go.isPending}
-      submitLabel="Accept plan"
-      onSubmit={form.handleSubmit((v) => go.mutate(v))}
-    >
-      <Field label="Delivery mode" htmlFor="ap-mode">
-        <NativeSelect id="ap-mode" options={DELIVERY_MODES.map((m) => ({ value: m, label: m }))} {...form.register("delivery_mode")} />
-      </Field>
-      <Field label="Seat type" htmlFor="ap-seat">
-        <NativeSelect id="ap-seat" options={SEAT_TYPES.map((m) => ({ value: m, label: m }))} {...form.register("seat_type")} />
-      </Field>
-      {future && (
-        <Field label="Planned start date" htmlFor="ap-start" error={form.formState.errors.planned_start_date?.message}>
-          <Input id="ap-start" type="date" min={todayIST()} {...form.register("planned_start_date", { required: future ? "Required for a future plan" : false })} />
-        </Field>
-      )}
-    </FormDialog>
-  );
-}
-
-function InvoiceDialog({ version, plan, onClose, onIssued }: { version: FeeVersion; plan: PaymentPlan | undefined; onClose: () => void; onIssued: (invoiceId: number) => void }) {
-  const installments = plan?.installments ?? [];
-  const multi = installments.length > 1;
-  const form = useForm({
-    defaultValues: {
-      day0_date: todayIST(),
-      terms: "",
-      days: installments.map((i) => String(i.due_days_after_admission)),
-    },
-  });
-  const go = useApiMutation(
-    (v: { day0_date: string; terms: string; days: string[] }) =>
-      feesApi.issueInvoice(version.version_id, {
-        day0_date: v.day0_date || null,
-        agreed_due_days: multi ? v.days.map((x) => Number(x)) : null,
-        terms: v.terms || null,
-      }),
-    {
-      success: (inv) => `Invoice ${inv.invoice_number} issued`,
-      invalidate: INVALIDATE,
-      onSuccess: (inv) => {
-        onClose();
-        onIssued(inv.invoice_id);
-      },
-      silentValidation: true,
-      onError: (e) => applyServerErrors(form, e),
-    },
-  );
-  return (
-    <FormDialog
-      title="Issue invoice"
-      description={`From approved version ${version.version_no}: ${money(version.final_payable)} · ${version.payment_plan.plan_name}. A previous invoice for this discussion is superseded.`}
-      onClose={onClose}
-      busy={go.isPending}
-      submitLabel="Issue invoice"
-      onSubmit={form.handleSubmit((v) => go.mutate(v))}
-    >
-      <Field label="Day 0 (admission / first payment date)" htmlFor="inv-day0" error={form.formState.errors.day0_date?.message}>
-        <Input id="inv-day0" type="date" {...form.register("day0_date")} />
-      </Field>
-      {multi &&
-        installments.map((i, idx) => (
-          <Field
-            key={i.installment_no}
-            label={`Instalment ${i.installment_no} · ${Number(i.percent_of_fee)}% · due day`}
-            htmlFor={`inv-day-${idx}`}
-            hint={i.due_days_min === i.due_days_max ? `Fixed: day ${i.due_days_min}` : `Agree an exact day between ${i.due_days_min} and ${i.due_days_max}`}
-          >
-            <Input
-              id={`inv-day-${idx}`}
-              type="number"
-              min={i.due_days_min}
-              max={i.due_days_max}
-              readOnly={i.due_days_min === i.due_days_max}
-              {...form.register(`days.${idx}` as const)}
-            />
-          </Field>
-        ))}
-      {(form.formState.errors as Record<string, { message?: string }>)["agreed_due_days"]?.message && (
-        <p className="text-xs text-destructive">{(form.formState.errors as Record<string, { message?: string }>)["agreed_due_days"]?.message}</p>
-      )}
-      <Field label="Terms (optional)" htmlFor="inv-terms">
-        <Textarea id="inv-terms" {...form.register("terms")} />
-      </Field>
-    </FormDialog>
-  );
-}
-
 function LeadInvoices({ leadId }: { leadId: number }) {
   const q = useQuery({ queryKey: feeKeys.invoicesForLead(leadId), queryFn: () => feesApi.invoicesForLead(leadId) });
   return (
-    <QueryView query={q} empty={<Empty title="No invoice yet">Issue one from an approved version.</Empty>} rows={2}>
+    <QueryView query={q} empty={<Empty title="No invoice yet">Create one once the fee is approved and the delivery plan accepted.</Empty>} rows={2}>
       {(rows) => (
         <ul className="space-y-2 text-sm">
           {rows.map((i) => (
@@ -608,7 +472,7 @@ function LeadInvoices({ leadId }: { leadId: number }) {
               <span>{money(i.billed_amount)}</span>
               <Status>{i.status}</Status>
               <span className="w-full text-xs text-muted-foreground">
-                {i.course.course_title} · issued {date(i.issued_on)}
+                {i.courses.map((c) => c.course.course_title).join(", ")} · issued {date(i.issued_on)}
               </span>
             </li>
           ))}

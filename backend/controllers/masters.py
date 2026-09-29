@@ -1,4 +1,6 @@
 """Lookups, branches (details, shifts, holidays), concession limits and settings."""
+import re
+
 from flask import request
 
 from controllers.common import Validator, created, json_body, no_content, ok
@@ -67,7 +69,12 @@ def update_branch(branch_id: int):
     v.string("address", nullable=True)
     v.string("phone", nullable=True, max_length=20)
     v.email("email", nullable=True)
-    return ok(branches_service.update_branch(branch_id, _require_changes(v.validate())).to_dict())
+    v.string("legal_name", min_length=1, max_length=150)          # invoice issuer name (db 021)
+    v.string("invoice_accent", nullable=True, max_length=7)       # e.g. #6251DA
+    data = _require_changes(v.validate())
+    if data.get("invoice_accent") and not re.fullmatch(r"#[0-9A-Fa-f]{6}", data["invoice_accent"]):
+        raise ValidationError("Invalid colour", {"invoice_accent": ["Use a hex colour like #6251DA"]})
+    return ok(branches_service.update_branch(branch_id, data).to_dict())
 
 
 def list_shifts(branch_id: int):

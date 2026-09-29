@@ -2,12 +2,15 @@
 from flask import request
 
 from controllers.common import Validator, created, get_page_params, json_body, no_content, ok, paginated
-from models.enums import ACTIVITY_DIRECTIONS, INTAKE_STATUSES, LANGUAGES, LEAD_PRIORITIES, LEAD_STAGES
+from models.enums import (
+    ACTIVITY_DIRECTIONS, INTAKE_STATUSES, LANGUAGES, LEAD_PRIORITIES, LEAD_STAGES, LEAD_STATUSES, QUALIFICATION_CHECKS,
+)
 from repositories.leads import QUEUES
 from services import enquiries as enquiries_service
 from services import lead_imports as imports_service
 from services import leads as leads_service
 from services import persons as persons_service
+from services import qualification as qualification_service
 from services import saved_views as saved_views_service
 from services.context import current_user
 from services.errors import ValidationError
@@ -57,6 +60,19 @@ def search_persons():
     params = v.validate()
     results = persons_service.search(params.get("phone"), params.get("email"), params.get("name"))
     return ok([_person_with_leads(person, leads) for person, leads in results])
+
+
+def list_persons():
+    v = Validator(request.args.to_dict())
+    v.string("q", max_length=100)
+    v.integer("branch_id", min_value=1)
+    page, per_page = get_page_params()
+    rows, meta = persons_service.list_persons(v.validate(), page, per_page)
+    return paginated(rows, meta)
+
+
+def person_overview(person_id: int):
+    return ok(persons_service.overview(person_id))
 
 
 def create_person():
@@ -171,7 +187,12 @@ def list_leads():
     v.choice("priority", LEAD_PRIORITIES)
     v.choice("queue", tuple(QUEUES))
     v.string("q", max_length=100)
+    # Leads = Active enquiries (New Enquiry) by default; a stage or queue filter searches all of them
+    v.choice("lead_status", LEAD_STATUSES + ("All",),
+             default="All" if args.get("stage") or args.get("queue") else "Active")
     filters = v.validate()
+    if filters["lead_status"] == "All":
+        del filters["lead_status"]
 
     if assigned == "me":
         filters["assigned_to"] = current_user().user_id
@@ -262,6 +283,35 @@ def reactivate(lead_id: int):
     v.datetime("next_follow_up_at", nullable=True, default=None)
     data = v.validate()
     return ok(leads_service.reactivate(lead_id, data["stage"], data["next_follow_up_at"]).to_dict())
+
+
+# ---------------------------------------------------------------- qualification / convert (db 019)
+
+def get_qualification(lead_id: int):
+    return ok(qualification_service.checklist(lead_id))
+
+
+def set_qualification_check(lead_id: int):
+    v = Validator(json_body())
+    v.choice("check", QUALIFICATION_CHECKS, required=True)
+    v.boolean("reviewed", required=True)
+    v.string("notes", nullable=True, max_length=1000)
+    data = v.validate()
+    return ok(qualification_service.set_check(lead_id, data["check"], data["reviewed"], data.get("notes")))
+
+
+def qualify_lead(lead_id: int):
+    return ok(qualification_service.qualify(lead_id))
+
+
+def convert_lead(lead_id: int):
+    v = Validator(json_body())
+    v.id_list("course_ids", required=True, min_items=1)
+    v.integer("branch_id", min_value=1)
+    v.integer("assigned_to", nullable=True, min_value=1)
+    v.date("expected_close_date", nullable=True)
+    result = qualification_service.convert(lead_id, v.validate())
+    return ok({**result, "pipeline_entry": result["pipeline_entry"].to_dict()})
 
 
 def list_activities(lead_id: int):

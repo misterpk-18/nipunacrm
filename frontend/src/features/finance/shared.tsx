@@ -6,6 +6,7 @@ import { CheckCircle2, Printer, ReceiptText, RotateCcw, XCircle } from "lucide-r
 import { paymentKeys, paymentsApi, type CorrectionRequest, type PaymentRow } from "@/api/payments";
 import { useAuth } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmAction, DataTable, Empty, QueryView, Status, type Column } from "@/components/crm/ui";
 import { date, dateTime, money } from "@/lib/format";
@@ -53,45 +54,93 @@ export function isVerifiable(p: Pick<PaymentRow, "entry_type" | "amount" | "veri
   return p.entry_type === "Payment" && Number(p.amount) > 0 && p.verification_status === "Pending Verification";
 }
 
-/** Verify / Fail buttons for a pending positive receipt (Accounts and admins only). */
+/** Verify (evidence reviewed + independent cash check for cash) / Fail for a pending payment claim. The receipt number
+ *  is issued on verification; courses whose verified money reaches ₹1,000 get their admission then. */
 export function VerifyActions({ payment }: { payment: PaymentRow }) {
   const { canVerify } = useFinanceRoles();
-  const verify = useApiMutation(paymentsApi.verify, { success: (p) => `${p.receipt_number} verified`, invalidate: FINANCE_INVALIDATE });
+  const [open, setOpen] = useState(false);
   const fail = useApiMutation((v: { id: number; reason: string }) => paymentsApi.fail(v.id, v.reason), {
-    success: (p) => `${p.receipt_number} marked Failed`,
+    success: (p) => `${p.transaction_number} marked Failed`,
     invalidate: FINANCE_INVALIDATE,
   });
   if (!canVerify || !isVerifiable(payment)) return null;
   return (
     <>
+      <Button size="sm" aria-label={`Verify ${payment.transaction_number}`} onClick={() => setOpen(true)}>
+        <CheckCircle2 />
+        Verify
+      </Button>
       <ConfirmAction
         trigger={
-          <Button size="sm" aria-label={`Verify ${payment.receipt_number}`}>
-            <CheckCircle2 />
-            Verify
-          </Button>
-        }
-        title={`Verify ${payment.receipt_number}?`}
-        description={`${money(payment.amount)} from ${payment.person.full_name} via ${payment.mode ?? "—"}${payment.reference ? ` (ref ${payment.reference})` : ""}. Verified money counts towards the invoice and can qualify the admission.`}
-        action="Verify payment"
-        onConfirm={() => verify.mutateAsync(payment.payment_id)}
-      />
-      <ConfirmAction
-        trigger={
-          <Button size="sm" variant="outline" aria-label={`Fail ${payment.receipt_number}`}>
+          <Button size="sm" variant="outline" aria-label={`Fail ${payment.transaction_number}`}>
             <XCircle />
             Fail
           </Button>
         }
-        title={`Mark ${payment.receipt_number} as Failed?`}
-        description="The money was not received (bounced, not in the bank statement…). The receipt stays in the ledger as Failed."
+        title={`Mark ${payment.transaction_number} as Failed?`}
+        description="The money was not received (bounced, not in the bank statement…). The claim stays in the ledger as Failed and never gets a receipt."
         action="Mark failed"
         destructive
         reason
         reasonLabel="Failure reason"
         onConfirm={(reason) => fail.mutateAsync({ id: payment.payment_id, reason })}
       />
+      {open && <VerifyDialog payment={payment} onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+function VerifyDialog({ payment, onClose }: { payment: PaymentRow; onClose: () => void }) {
+  const cash = (payment.mode ?? "").toLowerCase() === "cash";
+  const [evidence, setEvidence] = useState(false);
+  const [cashChecked, setCashChecked] = useState(false);
+  const verify = useApiMutation(() => paymentsApi.verify(payment.payment_id, { evidence_reviewed: evidence, cash_checked: cashChecked }), {
+    success: (p) =>
+      `${p.receipt_number} issued` + (p.admissions_created.length ? ` · admitted: ${p.admissions_created.map((a) => a.admission_code).join(", ")}` : ""),
+    invalidate: [...FINANCE_INVALIDATE, ["pipeline"], ["deals"]],
+    onSuccess: onClose,
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="w-[calc(100vw-1.5rem)] max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Review before verifying {payment.transaction_number}</DialogTitle>
+          <DialogDescription>
+            {money(payment.amount)} from {payment.person.full_name} via {payment.mode ?? "—"}
+            {payment.reference ? ` (ref ${payment.reference})` : ""}. Verification issues the receipt and counts the money towards each course on the invoice.
+          </DialogDescription>
+        </DialogHeader>
+        {payment.allocations.length > 0 && (
+          <ul className="grid gap-1 text-sm">
+            {payment.allocations.map((a) => (
+              <li key={a.invoice_line_id} className="flex justify-between gap-2">
+                <span>{a.course.course_title}</span>
+                <b>{money(a.amount)}</b>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label className="check-tile">
+          <Checkbox aria-label="Evidence reviewed" checked={evidence} onCheckedChange={(v) => setEvidence(v === true)} />
+          <span className="text-sm">Payment evidence reviewed (bank statement / UTR / proof)</span>
+        </label>
+        {cash && (
+          <label className="check-tile">
+            <Checkbox aria-label="Independent cash check completed" checked={cashChecked} onCheckedChange={(v) => setCashChecked(v === true)} />
+            <span className="text-sm">Independent cash check completed</span>
+          </label>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!evidence || (cash && !cashChecked) || verify.isPending} onClick={() => verify.mutate(undefined)}>
+            <CheckCircle2 />
+            Verify payment
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -105,7 +154,7 @@ export function RequestCorrection({ payment }: { payment: PaymentRow }) {
   return (
     <ConfirmAction
       trigger={
-        <Button size="sm" variant="ghost" aria-label={`Request correction for ${payment.receipt_number}`}>
+        <Button size="sm" variant="ghost" aria-label={`Request correction for ${payment.receipt_number ?? payment.transaction_number}`}>
           <RotateCcw />
           Request correction
         </Button>
@@ -144,11 +193,13 @@ export function LedgerTable({
   const [receiptFor, setReceiptFor] = useState<number | null>(null);
   const columns: Column<PaymentRow>[] = [
     {
-      header: "Receipt / event",
+      header: "Transaction / receipt",
       cell: (p) => (
         <span className="font-medium">
-          {p.receipt_number}
-          <small className="block text-muted-foreground">{date(p.payment_date)}</small>
+          {p.transaction_number}
+          <small className="block text-muted-foreground">
+            {p.receipt_number ? `Receipt ${p.receipt_number}` : p.verification_status === "Failed" ? "Failed — no receipt" : "No receipt until verified"} · {date(p.payment_date)}
+          </small>
         </span>
       ),
     },
@@ -166,7 +217,22 @@ export function LedgerTable({
           <Status kind="warn">Unallocated advance</Status>
         ),
     });
-  if (showPerson) columns.push({ header: "Person", cell: (p) => p.person.full_name }, { header: "Branch", cell: (p) => p.collecting_branch.branch_name });
+  if (showPerson) columns.push({ header: "Payer / branch", cell: (p) => `${p.person.full_name} · ${p.collecting_branch.branch_name}` });
+  columns.push({
+    header: "Allocation",
+    cell: (p) =>
+      p.allocations.length ? (
+        <span className="block max-w-64 text-xs">
+          {p.allocations.map((a) => (
+            <span key={a.invoice_line_id} className="block truncate">
+              {a.course.course_title} · {money(a.amount)}
+            </span>
+          ))}
+        </span>
+      ) : (
+        "—"
+      ),
+  });
   columns.push(
     { header: "Amount", cell: (p) => <span className={Number(p.amount) < 0 ? "text-destructive" : undefined}>{money(p.amount)}</span>, className: "text-right" },
     { header: "Method", cell: (p) => p.mode ?? "—" },
@@ -178,9 +244,9 @@ export function LedgerTable({
       header: "Actions",
       cell: (p) => (
         <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="outline" onClick={() => setReceiptFor(p.payment_id)} aria-label={`Receipt ${p.receipt_number}`}>
+          <Button size="sm" variant="outline" onClick={() => setReceiptFor(p.payment_id)} aria-label={`${p.receipt_number ? "Receipt" : "Claim"} ${p.transaction_number}`}>
             <ReceiptText />
-            Receipt
+            {p.receipt_number ? "Receipt" : "Claim"}
           </Button>
           <VerifyActions payment={p} />
           {!pendingCorrectionFor.includes(p.payment_id) && <RequestCorrection payment={p} />}
@@ -196,7 +262,7 @@ export function LedgerTable({
   );
 }
 
-/** Payment receipt / acknowledgement from GET /payments/{id}/receipt, as a printable sheet. */
+/** Receipt (verified) or payment claim (pending / failed — no receipt number) from GET /payments/{id}/receipt. */
 export function ReceiptDialog({ paymentId, onClose }: { paymentId: number | null; onClose: () => void }) {
   const receipt = useQuery({
     queryKey: paymentKeys.receipt(paymentId ?? 0),
@@ -206,64 +272,85 @@ export function ReceiptDialog({ paymentId, onClose }: { paymentId: number | null
   return (
     <Dialog open={paymentId !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] w-[calc(100vw-1.5rem)] max-w-2xl overflow-y-auto">
-        <DialogHeader>
+        <DialogHeader className="no-print">
           <DialogTitle>{receipt.data?.document ?? "Receipt"}</DialogTitle>
-          <DialogDescription>Printable copy from the payment ledger.</DialogDescription>
+          <DialogDescription>{receipt.data?.note ?? "Printable copy from the payment ledger."}</DialogDescription>
         </DialogHeader>
         <QueryView query={receipt}>
           {(r) => (
-            <div className="print-sheet" data-testid="receipt-sheet">
-              {r.verification_status !== "Verified" && (
-                <div className="print-watermark" aria-hidden>
-                  NOT VERIFIED
-                </div>
-              )}
-              <div className="flex flex-wrap justify-between gap-2 text-sm">
-                <div>
-                  <b>Nipuna Technologies · {r.branch.name}</b>
-                  <div className="text-muted-foreground">{[r.branch.address, r.branch.phone].filter(Boolean).join(" · ") || "—"}</div>
+            <div className="invoice-doc" data-testid="receipt-sheet" style={{ ["--doc-accent" as string]: r.issuer.accent ?? "#6251DA" }}>
+              <header>
+                <div className="flex items-center gap-3">
+                  <div className="doc-mark">N</div>
+                  <div>
+                    <div className="text-base font-bold">{r.issuer.legal_name}</div>
+                    <div className="text-xs text-[#70788c]">
+                      {r.issuer.branch_code} · {r.issuer.branch_name}
+                    </div>
+                  </div>
                 </div>
                 <div className="text-right">
-                  <b>{r.receipt_number}</b>
-                  <div>{date(r.payment_date)}</div>
+                  <div className="doc-accent text-lg font-bold">{r.document}</div>
+                  <div className="text-xs">{r.is_receipt ? r.receipt_number : `Transaction ${r.transaction_number}`}</div>
                 </div>
-              </div>
-              <div className="mt-3 text-sm">
-                Received from: <b>{r.received_from.full_name}</b> · {r.received_from.person_code} {r.received_from.email ? `· ${r.received_from.email}` : ""}
-              </div>
-              <div className="table-wrap mt-3">
-                <table className="w-full text-left text-sm">
+              </header>
+              <div className="doc-body">
+                {!r.is_receipt && (
+                  <div className="doc-box font-semibold" role="note">
+                    {r.note}
+                    {r.failure_reason ? ` · ${r.failure_reason}` : ""}
+                  </div>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="doc-label">Received from</div>
+                    <div className="font-semibold">{r.received_from.full_name}</div>
+                    <div className="text-xs text-[#70788c]">{r.received_from.person_code}</div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="doc-label">Issued by</div>
+                    <div className="whitespace-pre-line text-xs">{[r.issuer.address, r.issuer.phone, r.issuer.email].filter(Boolean).join("\n") || "—"}</div>
+                  </div>
+                </div>
+                <table className="doc-stack">
                   <thead>
                     <tr>
-                      <th>Invoice</th>
+                      <th>Invoice / course</th>
                       <th>Method</th>
                       <th>Reference</th>
-                      <th className="text-right">Amount</th>
-                      <th>Verification</th>
+                      <th className="num">Amount</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <td>{r.invoice_number ?? "Unallocated advance"}</td>
-                      <td>{r.mode ?? "—"}</td>
-                      <td>{r.reference ?? "—"}</td>
-                      <td className="text-right">{money(r.amount)}</td>
-                      <td>
-                        {r.verification_status}
-                        {r.verified_at && <small className="block text-muted-foreground">{dateTime(r.verified_at)}</small>}
-                      </td>
-                    </tr>
+                    {(r.allocations.length ? r.allocations : [null]).map((a, i) => (
+                      <tr key={a?.invoice_line_id ?? i}>
+                        <td>
+                          {r.invoice_number ?? "Unallocated advance"}
+                          {a && <small className="block text-[#70788c]">{a.course.course_title}</small>}
+                        </td>
+                        <td>{r.mode ?? "—"}</td>
+                        <td>{r.reference ?? "—"}</td>
+                        <td className="num">{money(a ? a.amount : r.amount)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
+                <div className="flex flex-wrap justify-between gap-2 text-sm">
+                  <span>
+                    Paid on {date(r.payment_date)}
+                    {r.verified_at ? ` · verified ${dateTime(r.verified_at)}` : ""}
+                  </span>
+                  <b>Total {money(r.amount)}</b>
+                </div>
               </div>
-              {r.verification_status !== "Verified" && <p className="mt-3 text-sm font-semibold">{r.document}</p>}
+              <footer>{r.is_receipt ? "Receipt issued after payment verification." : "Not a receipt. This payment is not counted until it is verified."}</footer>
             </div>
           )}
         </QueryView>
-        <DialogFooter>
+        <DialogFooter className="no-print">
           <Button onClick={() => window.print()} disabled={!receipt.data}>
             <Printer />
-            Print
+            Print / Save PDF
           </Button>
         </DialogFooter>
       </DialogContent>

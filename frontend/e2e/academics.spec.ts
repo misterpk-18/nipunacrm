@@ -1,5 +1,5 @@
 import { expect, request as pwRequest, test, type APIRequestContext, type Page } from "@playwright/test";
-import { PASSWORD, USERS, login, uniquePhone } from "./helpers";
+import { PASSWORD, USERS, login, qualifyAndConvert, uniquePhone } from "./helpers";
 
 const SHOTS = "/private/tmp/claude-501/-Users-manojtungala-nipuna-crm/3aa0633b-0a9a-4dca-89e8-f5788c3e5648/scratchpad/shots";
 const BASE = process.env["E2E_BASE_URL"] ?? "http://localhost:5173";
@@ -8,7 +8,7 @@ const AWS = { id: 4, label: "AWS with DevOps (NIT-CRS-007)" };
 
 // ---------------------------------------------------------------- API helpers (seed data for UI tests)
 
-type Api = { ctx: APIRequestContext; call: <T = Record<string, unknown>>(method: string, path: string, body?: unknown) => Promise<T> };
+type Api = { ctx: APIRequestContext; headers: Record<string, string>; call: <T = Record<string, unknown>>(method: string, path: string, body?: unknown) => Promise<T> };
 
 async function api(email: string): Promise<Api> {
   const ctx = await pwRequest.newContext({ baseURL: BASE });
@@ -21,18 +21,18 @@ async function api(email: string): Promise<Api> {
     expect(r.ok(), `${method} ${path}: ${text}`).toBeTruthy();
     return (text ? JSON.parse(text).data : null) as T;
   };
-  return { ctx, call };
+  return { ctx, call, headers: { Authorization: `Bearer ${token}` } };
 }
 
 type Lookup = { id: number; code: string };
 
-/** Lead → fee discussion → version → approve → accept plan → invoice → payment → verified (as accounts.gnt). */
+/** Lead → qualify & convert → fee version → approve → delivery plan → invoice → payment → verified (as accounts.gnt),
+ *  which creates the admission (the ₹1,000 token is reached). */
 async function paidInvoice(name: string, courseId = AWS.id) {
   const sales = await api(USERS.salesGnt);
   const accounts = await api(USERS.accountsGnt);
   const lk = await sales.call<Record<string, Lookup[]>>("GET", "/lookups");
   const id = (list: string, code: string) => lk[list]!.find((x) => x.code === code)!.id;
-  const plans = await sales.call<{ payment_plan_id: number; plan_code: string }[]>("GET", "/payment-plans");
   const lead = await sales.call<{ lead_id: number; person: { person_id: number } }>("POST", "/leads", {
     branch_id: 1,
     person: { full_name: name, phone: uniquePhone() },
@@ -41,23 +41,23 @@ async function paidInvoice(name: string, courseId = AWS.id) {
     contact_channel_id: id("contact_channels", "WEB_FORM"),
     entry_method_id: id("entry_methods", "GOOGLE_ADS_FORM"),
   });
+  await qualifyAndConvert(sales.ctx, sales.headers, lead.lead_id);
   const discussion = await sales.call<{ fee_discussion_id: number }>("POST", `/leads/${lead.lead_id}/fee-discussions`, {});
-  const version = await sales.call<{ version_id: number }>("POST", `/fee-discussions/${discussion.fee_discussion_id}/versions`, {
-    payment_plan_id: plans.find((p) => p.plan_code === "FULL")!.payment_plan_id,
-  });
+  const version = await sales.call<{ version_id: number }>("POST", `/fee-discussions/${discussion.fee_discussion_id}/versions`, {});
   await sales.call("POST", `/fee-discussion-versions/${version.version_id}/approve`);
-  await sales.call("POST", `/fee-discussions/${discussion.fee_discussion_id}/accept-plan`, { version_id: version.version_id, delivery_mode: "Classroom", seat_type: "Confirmed Seat" });
-  const invoice = await sales.call<{ invoice_id: number; invoice_number: string; billed_amount: string }>("POST", `/fee-discussion-versions/${version.version_id}/invoice`, {});
+  await sales.call("POST", `/leads/${lead.lead_id}/delivery-plan/accept`, { delivery_mode: "Classroom", seat_type: "Confirmed Seat", capacity_review: "Checked", student_accepted: true });
+  const invoice = await sales.call<{ invoice_id: number; invoice_number: string; billed_amount: string }>("POST", "/invoices", { lead_ids: [lead.lead_id] });
   const payment = await sales.call<{ payment: { payment_id: number } }>("POST", "/payments", {
     invoice_id: invoice.invoice_id,
     amount: invoice.billed_amount,
     payment_mode_id: id("payment_modes", "UPI_BANK"),
     reference: `UTR${Date.now()}`,
   });
-  await accounts.call("POST", `/payments/${payment.payment.payment_id}/verify`);
+  const verified = await accounts.call<{ admissions_created: { admission_id: number; admission_code: string }[] }>(
+    "POST", `/payments/${payment.payment.payment_id}/verify`, { evidence_reviewed: true });
   await sales.ctx.dispose();
   await accounts.ctx.dispose();
-  return { lead, invoice, personId: lead.person.person_id };
+  return { lead, invoice, personId: lead.person.person_id, admission: verified.admissions_created[0]! };
 }
 
 async function confirmFreshAuth(page: Page) {
@@ -133,7 +133,10 @@ test("person without an admission opens from Lead 360 with basics and opportunit
   await sales.ctx.dispose();
   await login(page, USERS.salesGnt);
   await page.goto(`/leads/${lead.lead_id}`);
-  await page.getByRole("link", { name: "Open person" }).click();
+  await page.getByRole("link", { name: "Open person" }).click(); // Person 360
+  await expect(page.getByRole("heading", { name: "Prospect NoAdmission" })).toBeVisible();
+  await expect(page.getByRole("link", { name: lead.lead_code })).toBeVisible();
+  await page.goto(`/students/${lead.person.person_id}`);
   await expect(page.getByRole("heading", { name: "Prospect NoAdmission" })).toBeVisible();
   await expect(page.getByText("no admission yet")).toBeVisible();
   await expect(page.getByRole("link", { name: lead.lead_code })).toBeVisible();
@@ -210,30 +213,18 @@ test("course master: admin creates a course, sets branches, adds and publishes a
 test("admission lifecycle: create from a paid invoice, map, batch, allocate, join, documents, certificate, fee change, case", async ({ page }) => {
   test.setTimeout(180_000);
   const name = `E2E Learner ${String(Date.now()).slice(-6)}`;
-  const { invoice, personId } = await paidInvoice(name);
+  const flow = await paidInvoice(name);
 
-  // 1. Counsellor creates the admission from the invoice
+  // 1. Verification created the admission; the eligibility review no longer lists the course
+  const { invoice, personId, admission } = flow;
   await login(page, USERS.salesGnt);
-  await page.goto("/admissions/new");
-  await expect(page.getByRole("heading", { name: "Create Admission" })).toBeVisible();
-  await page.getByLabel("Search invoices").fill(invoice.invoice_number);
-  await page.getByLabel("Search invoices").press("Enter");
-  await page.getByRole("row", { name: new RegExp(invoice.invoice_number) }).getByRole("link", { name: "Select" }).click();
-  await expect(page).toHaveURL(new RegExp(`invoiceId=${invoice.invoice_id}`));
-  const checks = page.getByRole("list", { name: "Admission prerequisites" });
-  await expect(checks.getByText("Accepted confirmed delivery plan", { exact: true })).toBeVisible();
-  await expect(checks.getByText("First qualifying allocated payment Verified", { exact: true })).toBeVisible();
-  await expect(checks.getByText("missing")).toHaveCount(0);
-  await shot(page, "new-admission");
-  await page.getByRole("button", { name: "Create Admission" }).click();
-  await expect(page.getByRole("heading", { name: "Admission created" })).toBeVisible();
-  await expect(page.getByText("Awaiting Batch Allocation")).toBeVisible();
-  const code = (await page.getByText(/^NIT-GNT-2026-\d+$/).first().textContent())!.trim();
-
-  // Readiness now reports it as admitted
   await page.goto(`/admissions/new?invoiceId=${invoice.invoice_id}`);
-  await expect(page.getByText(`Already admitted as ${code}`)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create Admission" })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "Admission eligibility" })).toBeVisible();
+  await expect(page.getByText("Every invoiced course is admitted")).toBeVisible();
+  await shot(page, "new-admission");
+  const code = admission.admission_code;
+  await page.goto(`/admissions?q=${encodeURIComponent(code)}`);
+  await expect(page.getByText("Awaiting Batch Allocation").first()).toBeVisible();
 
   // 2. Counsellor uploads an identity document and requests a fee change
   await page.goto(`/students/${personId}`);
@@ -383,17 +374,14 @@ test("admission lifecycle: create from a paid invoice, map, batch, allocate, joi
 
 test("branch manager cancels an admission with a reason; coordinator can't cancel or create", async ({ page }) => {
   test.setTimeout(90_000);
-  const { invoice } = await paidInvoice(`E2E Cancel ${String(Date.now()).slice(-6)}`);
-  const sales = await api(USERS.salesGnt);
-  const admission = await sales.call<{ admission_id: number; admission_code: string }>("POST", "/admissions", { invoice_id: invoice.invoice_id });
-  await sales.ctx.dispose();
+  const { admission } = await paidInvoice(`E2E Cancel ${String(Date.now()).slice(-6)}`);
 
   await login(page, USERS.coordGnt);
   await page.goto(`/admissions?admission=${admission.admission_id}`);
   let sheet = page.getByRole("dialog", { name: "Admission detail" });
   await expect(sheet.getByText(admission.admission_code).first()).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Cancel admission" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Create Admission" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Create Admission" })).toHaveCount(0); // the eligibility review is for sales / accounts
 
   await logout(page);
   await login(page, USERS.bmGnt);

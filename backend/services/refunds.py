@@ -44,7 +44,10 @@ def get_case(case_id: int) -> RefundCase:
 def _set_receipts(case: RefundCase, payment_ids: list[int]) -> None:
     for payment_id in payment_ids:
         payment = db.session.get(Payment, payment_id)
-        if payment is None or payment.admission_id != case.admission_id:
+        line_id = case.admission.invoice_line_id
+        on_line = payment is not None and line_id is not None and any(
+            a.invoice_line_id == line_id for a in payment.allocations)
+        if payment is None or not (payment.admission_id == case.admission_id or on_line):
             raise ValidationError("Receipts must belong to this admission", {"payment_ids": [f"{payment_id} not found"]})
     case.receipts = [RefundCaseReceipt(payment_id=pid) for pid in payment_ids]
 

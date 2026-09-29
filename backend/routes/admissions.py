@@ -18,7 +18,7 @@ def route(rule: str, method: str, roles, fresh=False):
 
 # ---------------------------------------------------------------- admissions
 
-@route("/admissions", "post", LEAD_ROLES)
+@route("/admissions", "post", LEAD_ROLES + ("ACCOUNTS",))
 def create_admission():
     return admissions_controller.create_admission()
 
@@ -26,6 +26,11 @@ def create_admission():
 @route("/admissions", "get", ADMISSION_READERS)
 def list_admissions():
     return admissions_controller.list_admissions()
+
+
+@route("/admissions/eligibility", "get", ADMISSION_READERS)
+def admission_eligibility():
+    return admissions_controller.admission_eligibility()
 
 
 @route("/admissions/<int:admission_id>", "get", ADMISSION_READERS)

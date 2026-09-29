@@ -9,8 +9,8 @@ from sqlalchemy import and_, func, or_, select
 
 from config.database import db
 from models import (
-    Admission, Branch, CommunicationInbox, Demo, Enquiry, InstallmentDue, Lead, LeadActivity, Payment, RefundCase,
-    TaskBoard, User,
+    Admission, Branch, CommunicationInbox, Demo, Enquiry, InstallmentDue, Lead, LeadActivity, Payment, PaymentAllocation,
+    PaymentGap, RefundCase, TaskBoard, User,
 )
 from models.enums import LEAD_STAGES
 
@@ -47,10 +47,12 @@ def collections_by_branch(start: date, end: date, branch_ids) -> dict[int, dict]
 
 
 def dues_recovery_by_branch(start: date, end: date, branch_ids) -> dict[int, object]:
-    """Verified collections in the period on admissions whose first paid date was before the period."""
+    """Verified collections in the period on admitted courses whose first paid date was before the period
+    (per course line, db 021)."""
     rows = db.session.execute(
-        select(Payment.collecting_branch_id, func.coalesce(func.sum(Payment.amount), 0))
-        .join(Admission, Admission.admission_id == Payment.admission_id)
+        select(Payment.collecting_branch_id, func.coalesce(func.sum(PaymentAllocation.amount), 0))
+        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.payment_id)
+        .join(Admission, Admission.invoice_line_id == PaymentAllocation.invoice_line_id)
         .where(Payment.entry_type == "Payment", Payment.verification_status == "Verified",
                Payment.payment_date.between(start, end), local_date(Admission.first_verified_payment_at) < start,
                _in(Payment.collecting_branch_id, branch_ids))
@@ -87,6 +89,16 @@ def overdue_dues(branch_ids) -> dict[int, object]:
         .group_by(InstallmentDue.collecting_branch_id)
     ).all()
     return dict(rows)
+
+
+def long_gap_plans(branch_ids) -> dict[int, dict]:
+    """Open invoices whose next instalment is due long after the last verified payment (view payment_gaps)."""
+    rows = db.session.execute(
+        select(PaymentGap.collecting_branch_id, func.count(), func.coalesce(func.sum(PaymentGap.outstanding), 0))
+        .where(_in(PaymentGap.collecting_branch_id, branch_ids))
+        .group_by(PaymentGap.collecting_branch_id)
+    ).all()
+    return {branch: {"count": count, "outstanding": outstanding} for branch, count, outstanding in rows}
 
 
 # ---------------------------------------------------------------- funnel / performance

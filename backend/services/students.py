@@ -72,7 +72,7 @@ def tab(person_id: int, name: str) -> dict:
 def _timeline(person_id: int, admissions: list[Admission]) -> list[dict]:
     events = [{"at": a.occurred_at, "kind": "lead_activity", "title": a.activity_type, "detail": a.summary}
               for a in students_repo.lead_activities_of(person_id)]
-    events += [{"at": p.created_at, "kind": "payment", "title": f"{p.entry_type} {p.receipt_number}",
+    events += [{"at": p.created_at, "kind": "payment", "title": f"{p.entry_type} {p.receipt_number or p.transaction_number}",
                 "detail": f"₹{p.amount} · {p.verification_status}"} for p in students_repo.payments_of(person_id)]
     events += [{"at": a.created_at, "kind": "admission", "title": f"Admission {a.admission_code}",
                 "detail": a.course.course_title} for a in admissions]

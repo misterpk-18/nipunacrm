@@ -67,7 +67,8 @@ export function CounsellorWorkspace({ search, onSearch }: { search: WorkspaceSea
 
   const dashboard = useQuery({ queryKey: ["dashboard", "counsellor"], queryFn: () => get<CounsellorDashboard>("/dashboard/counsellor") });
 
-  const filters: LeadFilters = { queue, q: search.q, page: search.page, per_page: 25, branch_id: branchId, ...(mine ? { assigned_to: "me" } : {}) };
+  // The workspace works every open course (in the pipeline or not), so it searches all leads
+  const filters: LeadFilters = { queue, q: search.q, page: search.page, per_page: 25, branch_id: branchId, lead_status: "All", ...(mine ? { assigned_to: "me" } : {}) };
   const leads = useQuery({ queryKey: leadKeys.list(filters), queryFn: () => leadsApi.list(filters), placeholderData: (prev) => prev });
   const rows = leads.data?.data;
 

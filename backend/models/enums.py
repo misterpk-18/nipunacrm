@@ -15,6 +15,11 @@ LEAD_STAGES = (
 )
 INTAKE_STATUSES = ("New", "Incomplete", "Duplicate Review", "Outreach Prospect", "Invalid-Spam", "Test")
 LEAD_PRIORITIES = ("Hot", "Warm", "Cold", "Waiting for Batch / Future Joining")
+LEAD_STATUSES = ("Active", "Inactive")  # Active = at New Enquiry; Inactive = in the pipeline or closed
+QUALIFICATION_CHECKS = (  # db 019: all six must be reviewed before Mark Qualified
+    "Genuine intent confirmed", "Reachable contact confirmed", "Intended course(s) understood",
+    "Branch and delivery mode discussed", "Exact next action agreed", "Possible identity match reviewed",
+)
 ACTIVITY_TYPES = (
     "Call", "WhatsApp", "Email", "SMS", "Meeting", "Note", "Stage Change", "Assignment Change", "Follow-up Scheduled",
 )
@@ -38,6 +43,7 @@ FEE_VERSION_STATUSES = ("Discussion Saved", "Counteroffered", "Pending Approval"
 SCR_STATUSES = ("Pending", "Approved", "Counteroffered", "Rejected", "Withdrawn", "Expired")
 DELIVERY_MODES = ("Classroom", "Online", "Hybrid")
 SEAT_TYPES = ("Confirmed Seat", "Future Plan")
+CAPACITY_REVIEWS = ("Checked", "Waiting")  # db 020 delivery plan
 INVOICE_STATUSES = ("Issued", "Superseded", "Cancelled")
 # money
 PAYMENT_ENTRY_TYPES = ("Payment", "Reversal")
@@ -96,6 +102,8 @@ OfferBenefitType = _pg_enum("offer_benefit_type", OFFER_BENEFIT_TYPES)
 LeadStage = _pg_enum("lead_stage", LEAD_STAGES)
 IntakeStatus = _pg_enum("lead_intake_status", INTAKE_STATUSES)
 LeadPriority = _pg_enum("lead_priority", LEAD_PRIORITIES)
+LeadStatus = _pg_enum("lead_status", LEAD_STATUSES)
+QualificationCheck = _pg_enum("qualification_check", QUALIFICATION_CHECKS)
 ActivityType = _pg_enum("activity_type", ACTIVITY_TYPES)
 ActivityDirection = _pg_enum("activity_direction", ACTIVITY_DIRECTIONS)
 AppLanguage = _pg_enum("app_language", LANGUAGES)
@@ -115,6 +123,7 @@ FeeVersionStatus = _pg_enum("fee_version_status", FEE_VERSION_STATUSES)
 ScrStatus = _pg_enum("scr_status", SCR_STATUSES)
 DeliveryMode = _pg_enum("delivery_mode", DELIVERY_MODES)
 SeatType = _pg_enum("seat_type", SEAT_TYPES)
+CapacityReview = _pg_enum("capacity_review", CAPACITY_REVIEWS)
 InvoiceStatus = _pg_enum("invoice_status", INVOICE_STATUSES)
 PaymentEntryType = _pg_enum("payment_entry_type", PAYMENT_ENTRY_TYPES)
 PaymentVerification = _pg_enum("payment_verification", PAYMENT_VERIFICATIONS)

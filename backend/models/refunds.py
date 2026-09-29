@@ -14,7 +14,8 @@ class PaymentPromise(db.Model):
     __tablename__ = "payment_promises"
 
     promise_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    admission_id: Mapped[int] = mapped_column(Integer, ForeignKey("admissions.admission_id"))
+    invoice_id: Mapped[int] = mapped_column(Integer, ForeignKey("invoices.invoice_id"))  # db 021: per invoice
+    admission_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("admissions.admission_id"))
     promised_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     promised_date: Mapped[date] = mapped_column(Date)
     status: Mapped[str] = mapped_column(PromiseStatus, default="Pending")
@@ -23,11 +24,14 @@ class PaymentPromise(db.Model):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    admission: Mapped[Admission] = relationship(lazy="joined")
+    admission: Mapped[Admission | None] = relationship(lazy="joined")
+    invoice = relationship("Invoice", lazy="joined")
 
     def to_dict(self) -> dict:
-        return {"promise_id": self.promise_id, "admission_id": self.admission_id,
-                "admission_code": self.admission.admission_code, "promised_amount": self.promised_amount,
+        return {"promise_id": self.promise_id, "invoice_id": self.invoice_id,
+                "invoice_number": self.invoice.invoice_number, "admission_id": self.admission_id,
+                "admission_code": self.admission.admission_code if self.admission else None,
+                "promised_amount": self.promised_amount,
                 "promised_date": self.promised_date, "status": self.status, "notes": self.notes,
                 "recorded_by": self.recorded_by, "recorded_at": self.recorded_at, "resolved_at": self.resolved_at}
 

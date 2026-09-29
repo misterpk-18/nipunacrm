@@ -428,12 +428,6 @@ Content-Type: application/json
 
 {}
 
-### fees.issue_invoice
-POST {{base}}/api/v1/fee-discussion-versions/1/invoice
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{}
 
 ### fees.request_special_closing
 POST {{base}}/api/v1/fee-discussion-versions/1/special-closing-requests
@@ -446,12 +440,6 @@ Content-Type: application/json
 GET {{base}}/api/v1/fee-discussions/1
 Authorization: Bearer {{token}}
 
-### fees.accept_plan
-POST {{base}}/api/v1/fee-discussions/1/accept-plan
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{}
 
 ### fees.share
 POST {{base}}/api/v1/fee-discussions/1/share
@@ -1180,7 +1168,7 @@ POST {{base}}/api/v1/payments
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
-{}
+{"invoice_id": 1, "allocations": [{"invoice_line_id": 1, "amount": "5000"}], "tenders": [{"amount": "5000", "payment_mode_id": 1, "reference": null}]}
 
 ### payments.get_payment
 GET {{base}}/api/v1/payments/1
@@ -1216,7 +1204,7 @@ POST {{base}}/api/v1/payments/1/verify
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
-{}
+{"evidence_reviewed": true, "cash_checked": false}
 
 ### payments.list_unallocated
 GET {{base}}/api/v1/payments/unallocated
@@ -1446,4 +1434,82 @@ Content-Type: application/json
 
 ### users.revoke_scope
 DELETE {{base}}/api/v1/users/1/scopes/1
+Authorization: Bearer {{token}}
+
+# ================================================================ V4: qualify / convert, delivery plan, invoices (db 019–022)
+### leads.get_qualification
+GET {{base}}/api/v1/leads/1/qualification
+Authorization: Bearer {{token}}
+
+### leads.set_qualification_check
+PUT {{base}}/api/v1/leads/1/qualification/checks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"check": "Genuine intent confirmed", "reviewed": true}
+
+### leads.qualify_lead
+POST {{base}}/api/v1/leads/1/qualify
+Authorization: Bearer {{token}}
+
+### leads.convert_lead
+POST {{base}}/api/v1/leads/1/convert
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"course_ids": [1], "branch_id": 1, "assigned_to": null, "expected_close_date": null}
+
+### pipeline.get_next_actions
+GET {{base}}/api/v1/pipeline/next-actions?branch_id=1
+Authorization: Bearer {{token}}
+
+### fees.get_delivery_plan
+GET {{base}}/api/v1/leads/1/delivery-plan
+Authorization: Bearer {{token}}
+
+### fees.save_delivery_plan
+PUT {{base}}/api/v1/leads/1/delivery-plan
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"service_branch_id": 1, "delivery_mode": "Classroom", "seat_type": "Confirmed Seat", "capacity_review": "Waiting"}
+
+### fees.accept_delivery_plan
+POST {{base}}/api/v1/leads/1/delivery-plan/accept
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"capacity_review": "Checked", "student_accepted": true}
+
+### fees.reopen_delivery_plan
+POST {{base}}/api/v1/leads/1/delivery-plan/reopen
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"reason": "Student prefers weekends"}
+
+### fees.invoice_options
+GET {{base}}/api/v1/invoices/options?lead_id=1
+Authorization: Bearer {{token}}
+
+### fees.create_invoice
+POST {{base}}/api/v1/invoices
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"lead_ids": [1, 2], "installments": [{"due_date": "2026-10-01", "amount": "26000"}, {"due_date": "2026-10-13", "amount": "26000"}]}
+
+### students.list_invoice_promises
+GET {{base}}/api/v1/invoices/1/promises
+Authorization: Bearer {{token}}
+
+### students.add_invoice_promise
+POST {{base}}/api/v1/invoices/1/promises
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"promised_amount": "5000", "promised_date": "2026-10-05"}
+
+### admissions.admission_eligibility
+GET {{base}}/api/v1/admissions/eligibility
 Authorization: Bearer {{token}}

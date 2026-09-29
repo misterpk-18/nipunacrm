@@ -132,6 +132,26 @@ export type Readiness = {
 };
 
 /** Invoice rows as returned by GET /invoices (only the fields this module reads). */
+/** An invoiced course with no admission yet (New Admission review). */
+export type EligibleCourse = {
+  invoice_line_id: number;
+  line_code: string;
+  lead: { lead_id: number; lead_code: string; stage: string };
+  course: CourseRef;
+  billed_amount: Money;
+  verified_paid: Money;
+  pending_verification: Money;
+  outstanding: Money;
+  invoice: { invoice_id: number; invoice_number: string; status: string; billed_amount: Money };
+  person: PersonRef;
+  branch: BranchRef;
+  delivery_plan: { plan_code: string; status: string; delivery_mode: string; seat_type: string; planned_start_date: DateOnly | null; service_branch: BranchRef } | null;
+  token: Money;
+  verified_total: Money;
+  eligible: boolean;
+  waiting_for: string[];
+};
+
 export type InvoicePick = {
   invoice_id: number;
   invoice_number: string;
@@ -187,8 +207,10 @@ export type AdmissionUpdate = {
 export const admissionsApi = {
   list: (filters: AdmissionFilters) => list<AdmissionRow>("/admissions", filters as Query),
   get: (id: number) => get<AdmissionDetail>(`/admissions/${id}`),
-  create: (body: { invoice_id: number; service_branch_id?: number | null; admission_date?: DateOnly | null }) =>
+  create: (body: { invoice_line_id?: number; invoice_id?: number; service_branch_id?: number | null; admission_date?: DateOnly | null }) =>
     post<AdmissionDetail>("/admissions", body),
+  eligibility: (query: { branch_id?: number; invoice_id?: number; q?: string; page?: number }) =>
+    list<EligibleCourse>("/admissions/eligibility", { per_page: 50, ...query } as Query),
   update: (id: number, body: AdmissionUpdate) => patch<AdmissionDetail>(`/admissions/${id}`, body),
   cancel: (id: number, reason: string) => post<Admission>(`/admissions/${id}/cancel`, { reason }),
   transfer: (id: number, body: { to_branch_id: number; reason: string; effective_date?: DateOnly | null }) =>

@@ -152,7 +152,8 @@ def test_notification_rules(client, people):
     rule_id = db.session.execute(select(NotificationRule.rule_id).where(NotificationRule.rule_code == "SCR_PENDING")).scalar()
     admin = people["admin"]["h"]
     rules = call(client, "get", "/notification-rules", admin)
-    assert {r["rule_code"] for r in rules} == {"SCR_PENDING", "PAYMENT_PENDING_VERIFICATION"}
+    assert {r["rule_code"] for r in rules} == {"SCR_PENDING", "PAYMENT_PENDING_VERIFICATION", "INSTALMENT_DUE_SOON",
+                                               "PAYMENT_GAP_LONG"}
     bad = client.patch(f"{API}/notification-rules/{rule_id}", json={"warn_after_minutes": 10}, headers=admin)
     assert bad.status_code == 422  # escalate (5) must be after warn
     ok = call(client, "patch", f"/notification-rules/{rule_id}", admin, json={"warn_after_minutes": 3, "escalate_to_role": "super_admin"})

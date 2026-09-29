@@ -151,3 +151,12 @@ def dashboard():
 def counsellor_dashboard():
     data = dashboard_service.counsellor()
     return ok({**data, "demos_today": [d.to_row() for d in data["demos_today"]]})
+
+
+def dashboard_overview():
+    v = Validator(request.args.to_dict())
+    v.choice("period", reports_service.PERIODS, default="This Month")
+    v.date("from")
+    v.date("to")
+    v.integer("branch_id", min_value=1)
+    return ok(dashboard_service.overview(v.validate()))

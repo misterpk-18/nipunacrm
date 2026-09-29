@@ -1,5 +1,5 @@
 """Background jobs (run by `flask jobs run`, scheduled with cron): escalations, demo reminders, collections
-follow-ups, broken promises, batch-allocation escalation, scheduled reports and clean-up.
+follow-ups, instalments due soon, broken promises, batch-allocation escalation, scheduled reports and clean-up.
 
 Every job is idempotent: system tasks use dedupe keys and notifications deduplicate, so running a job twice in a
 row changes nothing. Jobs never commit; the CLI commits each job on its own.
@@ -12,13 +12,13 @@ from sqlalchemy.dialects.postgresql import insert
 
 from config.database import db
 from models import (
-    Admission, BatchAllocationQueue, Demo, DemoReminder, FeeDiscussionVersion, InstallmentDue, Invoice, Notification,
+    BatchAllocationQueue, Demo, DemoReminder, FeeDiscussionVersion, InstallmentDue, Invoice, Notification,
     Offer, PaymentPromise, ReportRun, ScheduledReport, SpecialClosingRequest, UserSession,
 )
 from repositories import settings as settings_repo
 from repositories import users as users_repo
 from services import reports as reports_service
-from services import sla, tasks
+from services import payment_alerts, sla, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +102,8 @@ def collections_reminders() -> int:
         offset = (today - due.due_date).days
         escalate = COLLECTION_STEPS[offset]
         invoice = db.session.get(Invoice, due.invoice_id)
-        admission = db.session.get(Admission, due.admission_id) if due.admission_id else None
-        owner = (admission.finance_owner_id or admission.counsellor_id) if admission else invoice.lead.assigned_to
+        owners = sorted(payment_alerts.invoice_owners(invoice))
+        owner = owners[0] if owners else None
         label = f"Day {offset:+d}" if offset else "due today"
         title = (f"Collections {label}: {invoice.invoice_number} instalment {due.installment_no} · "
                  f"{due.person.full_name} · ₹{due.balance}")
@@ -121,11 +121,11 @@ def broken_promises() -> int:
         PaymentPromise.status == "Pending", PaymentPromise.promised_date < _today())).scalars().all()
     for promise in promises:
         promise.status, promise.resolved_at = "Broken", _now()
-        admission = promise.admission
-        tasks.create_system_task("COLLECTIONS", f"Broken promise: {admission.admission_code} · ₹{promise.promised_amount} "
-                                 f"due {promise.promised_date}", admission.service_branch_id, _now(),
-                                 team_role_code="BRANCH_MANAGER", dedupe_key=f"promise-broken:{promise.promise_id}",
-                                 admission_id=admission.admission_id)
+        invoice = promise.invoice
+        tasks.create_system_task("COLLECTIONS", f"Broken promise: {invoice.invoice_number} · {invoice.person.full_name} "
+                                 f"· ₹{promise.promised_amount} due {promise.promised_date}",
+                                 invoice.collecting_branch_id, _now(), team_role_code="BRANCH_MANAGER",
+                                 dedupe_key=f"promise-broken:{promise.promise_id}", invoice_id=invoice.invoice_id)
     db.session.flush()
     return len(promises)
 
@@ -198,6 +198,7 @@ JOBS = {
     "escalations": escalate_notifications,
     "demo-reminders": demo_reminders,
     "collections": collections_reminders,
+    "dues-due-soon": payment_alerts.due_soon,
     "broken-promises": broken_promises,
     "batch-allocation": batch_allocation_escalation,
     "scheduled-reports": scheduled_reports,

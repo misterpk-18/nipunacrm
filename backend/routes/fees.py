@@ -42,19 +42,34 @@ def share(discussion_id: int):
     return fees_controller.share(discussion_id)
 
 
-@route("/fee-discussions/<int:discussion_id>/accept-plan", "post")
-def accept_plan(discussion_id: int):
-    return fees_controller.accept_plan(discussion_id)
+# ---------------------------------------------------------------- delivery plan (per course deal)
+
+PLAN_ROLES = LEAD_ROLES + ("ACADEMIC_COORDINATOR", "ACCOUNTS")
+
+
+@route("/leads/<int:lead_id>/delivery-plan", "get", PLAN_ROLES)
+def get_delivery_plan(lead_id: int):
+    return fees_controller.get_delivery_plan(lead_id)
+
+
+@route("/leads/<int:lead_id>/delivery-plan", "put", LEAD_ROLES + ("ACADEMIC_COORDINATOR",))
+def save_delivery_plan(lead_id: int):
+    return fees_controller.save_delivery_plan(lead_id)
+
+
+@route("/leads/<int:lead_id>/delivery-plan/accept", "post", LEAD_ROLES + ("ACADEMIC_COORDINATOR",))
+def accept_delivery_plan(lead_id: int):
+    return fees_controller.accept_delivery_plan(lead_id)
+
+
+@route("/leads/<int:lead_id>/delivery-plan/reopen", "post", LEAD_ROLES + ("ACADEMIC_COORDINATOR",))
+def reopen_delivery_plan(lead_id: int):
+    return fees_controller.reopen_delivery_plan(lead_id)
 
 
 @route("/fee-discussion-versions/<int:version_id>/approve", "post")
 def approve_version(version_id: int):
     return fees_controller.approve_version(version_id)
-
-
-@route("/fee-discussion-versions/<int:version_id>/invoice", "post", FINANCE_ROLES)
-def issue_invoice(version_id: int):
-    return fees_controller.issue_invoice(version_id)
 
 
 # ---------------------------------------------------------------- special closing
@@ -94,6 +109,16 @@ def reject_special_closing(scr_id: int):
 @route("/invoices", "get", FINANCE_ROLES)
 def list_invoices():
     return fees_controller.list_invoices()
+
+
+@route("/invoices", "post", FINANCE_ROLES)
+def create_invoice():
+    return fees_controller.create_invoice()
+
+
+@route("/invoices/options", "get", FINANCE_ROLES)
+def invoice_options():
+    return fees_controller.invoice_options()
 
 
 @route("/invoices/<int:invoice_id>", "get", FINANCE_ROLES)

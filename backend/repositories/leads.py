@@ -59,12 +59,47 @@ def person_visible(person_id: int, branch_ids: set[int] | None) -> bool:
     return db.session.execute(stmt).first() is not None
 
 
+def persons_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
+    """Persons list: registered at, or with a lead at, the user's branches (or the chosen branch); newest first."""
+    stmt = select(Person)
+    scope = {filters["branch_id"]} if filters.get("branch_id") else branch_ids
+    if scope is not None:
+        stmt = stmt.where(or_(Person.registered_branch_id.in_(scope),
+                              exists().where(Lead.person_id == Person.person_id, Lead.branch_id.in_(scope))))
+    if filters.get("q"):
+        pattern = f"%{filters['q']}%"
+        digits = "".join(ch for ch in filters["q"] if ch.isdigit())
+        conditions = [Person.full_name.ilike(pattern), Person.email.ilike(pattern), Person.person_code.ilike(pattern)]
+        if len(digits) >= 4:
+            conditions += [Person.phone.like(f"%{digits}%"), Person.alternate_phone.like(f"%{digits}%")]
+        stmt = stmt.where(or_(*conditions))
+    return stmt.order_by(Person.created_at.desc(), Person.person_id.desc())
+
+
+def leads_for_persons(person_ids: list[int], branch_ids: set[int] | None) -> list[Lead]:
+    """Every lead (open or closed) of these persons at the given branches, oldest first."""
+    if not person_ids:
+        return []
+    stmt = select(Lead).where(Lead.person_id.in_(person_ids)).order_by(Lead.lead_id)
+    if branch_ids is not None:
+        stmt = stmt.where(Lead.branch_id.in_(branch_ids))
+    return list(db.session.execute(stmt).scalars())
+
+
 def open_leads_for_persons(person_ids: list[int], branch_id: int | None = None) -> list[Lead]:
     if not person_ids:
         return []
     stmt = select(Lead).where(Lead.person_id.in_(person_ids), _open()).order_by(Lead.lead_id)
     if branch_id is not None:
         stmt = stmt.where(Lead.branch_id == branch_id)
+    return list(db.session.execute(stmt).scalars())
+
+
+def open_leads_on_card(lead: Lead) -> list[Lead]:
+    """The other open courses on the lead's pipeline card."""
+    if lead.pipeline_entry_id is None:
+        return []
+    stmt = select(Lead).where(Lead.pipeline_entry_id == lead.pipeline_entry_id, _open(), Lead.lead_id != lead.lead_id)
     return list(db.session.execute(stmt).scalars())
 
 
@@ -115,7 +150,7 @@ def leads_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
         stmt = stmt.where(Lead.branch_id.in_(branch_ids))
     for field, column in (("branch_id", Lead.branch_id), ("stage", Lead.stage), ("course_id", Lead.course_id),
                           ("source_id", Lead.original_source_id), ("intake_status", Lead.intake_status),
-                          ("priority", Lead.ai_priority)):
+                          ("priority", Lead.ai_priority), ("lead_status", Lead.lead_status)):
         if filters.get(field) is not None:
             stmt = stmt.where(column == filters[field])
     if "assigned_to" in filters:

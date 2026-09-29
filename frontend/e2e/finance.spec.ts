@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-import { PASSWORD, USERS, login, uniquePhone } from "./helpers";
+import { PASSWORD, USERS, apiToken, login, qualifyAndConvert, todayIST, uniquePhone } from "./helpers";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -29,12 +29,11 @@ function freshPhone() {
   return `${uniquePhone().slice(0, 8)}${String(counter).padStart(2, "0")}`;
 }
 
-/** Lead → fee discussion → version → approve → accept plan → invoice (Guntur, as Counsellor A). */
+/** Lead → qualify & convert → fee version → approve → accept delivery plan → invoice (Guntur, as Counsellor A). */
 async function issuedInvoice(request: APIRequestContext, name: string, plan: "FULL" | "TWO_INSTALMENTS" = "FULL") {
   const sales = await api(request, USERS.salesGnt);
   const lookups = await sales.call("GET", "/lookups");
   const id = (list: { id: number; code: string }[], code: string) => list.find((x) => x.code === code)!.id;
-  const plans = await sales.call<{ payment_plan_id: number; plan_code: string }[]>("GET", "/payment-plans");
   const lead = await sales.call("POST", "/leads", {
     branch_id: 1,
     person: { full_name: name, phone: freshPhone() },
@@ -43,28 +42,36 @@ async function issuedInvoice(request: APIRequestContext, name: string, plan: "FU
     contact_channel_id: id(lookups.contact_channels, "WEB_FORM"),
     entry_method_id: id(lookups.entry_methods, "WEBSITE"),
   });
+  await qualifyAndConvert(request, await apiToken(request, USERS.salesGnt), lead.lead_id);
   const discussion = await sales.call("POST", `/leads/${lead.lead_id}/fee-discussions`, {});
-  const version = await sales.call("POST", `/fee-discussions/${discussion.fee_discussion_id}/versions`, {
-    payment_plan_id: plans.find((p) => p.plan_code === plan)!.payment_plan_id,
-  });
+  const version = await sales.call("POST", `/fee-discussions/${discussion.fee_discussion_id}/versions`, {});
   await sales.call("POST", `/fee-discussion-versions/${version.version_id}/approve`);
-  await sales.call("POST", `/fee-discussions/${discussion.fee_discussion_id}/accept-plan`, { version_id: version.version_id, delivery_mode: "Classroom", seat_type: "Confirmed Seat" });
-  const invoice = await sales.call("POST", `/fee-discussion-versions/${version.version_id}/invoice`, {});
+  await sales.call("POST", `/leads/${lead.lead_id}/delivery-plan/accept`, { delivery_mode: "Classroom", seat_type: "Confirmed Seat", capacity_review: "Checked", student_accepted: true });
+  const total = Math.round(Number(version.final_payable) * 100);
+  const day = (n: number) => new Date(Date.parse(`${todayIST()}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  const installments =
+    plan === "FULL"
+      ? [{ due_date: todayIST(), amount: (total / 100).toFixed(2) }]
+      : [
+          { due_date: todayIST(), amount: (Math.floor(total / 2) / 100).toFixed(2) },
+          { due_date: day(12), amount: ((total - Math.floor(total / 2)) / 100).toFixed(2) },
+        ];
+  const invoice = await sales.call("POST", "/invoices", { lead_ids: [lead.lead_id], installments });
   return { sales, lead, invoice, upi: id(lookups.payment_modes, "UPI_BANK") };
 }
 
 async function verifiedPayment(request: APIRequestContext, flow: Awaited<ReturnType<typeof issuedInvoice>>, amount: string) {
   const { payment } = await flow.sales.call("POST", "/payments", { invoice_id: flow.invoice.invoice_id, amount, payment_mode_id: flow.upi, reference: `UTR${freshPhone()}` });
   const accounts = await api(request, USERS.accountsGnt);
-  await accounts.call("POST", `/payments/${payment.payment_id}/verify`);
-  return payment as { payment_id: number; receipt_number: string };
+  const verified = await accounts.call("POST", `/payments/${payment.payment_id}/verify`, { evidence_reviewed: true });
+  return verified as { payment_id: number; receipt_number: string; transaction_number: string; admissions_created: { admission_id: number }[] };
 }
 
 async function admitted(request: APIRequestContext, name: string, plan: "FULL" | "TWO_INSTALMENTS", amount?: string) {
   const flow = await issuedInvoice(request, name, plan);
   const half = (Math.round(Number(flow.invoice.billed_amount) * 50) / 100).toFixed(2); // test data only
   const payment = await verifiedPayment(request, flow, amount === "half" ? half : (amount ?? flow.invoice.billed_amount));
-  const admission = await flow.sales.call("POST", "/admissions", { invoice_id: flow.invoice.invoice_id });
+  const admission = payment.admissions_created[0]!; // created on verification (₹1,000 token reached)
   return { ...flow, payment, admission };
 }
 
@@ -79,11 +86,11 @@ async function logout(page: Page) {
 
 // ---------------------------------------------------------------- invoices
 
-test("invoice register shows real totals and opens an invoice with schedule, ledger and readiness", async ({ page }) => {
+test("invoices show real totals and open the branch invoice with schedule, courses, ledger and print", async ({ page }) => {
   await login(page, USERS.accountsGnt);
   await page.goto("/invoices");
-  await expect(page.getByRole("heading", { name: "Invoice Register" })).toBeVisible();
-  await expect(page.getByText("Pending verification (excluded)")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Invoices" })).toBeVisible();
+  await expect(page.getByText("Never counted as paid")).toBeVisible();
   await expect(page.getByRole("link", { name: /INV-GNT-/ }).first()).toBeVisible();
   await expect(page.getByText("INV-VIJ-", { exact: false })).toHaveCount(0); // accounts.gnt sees Guntur only
   await shot(page, "invoices");
@@ -95,73 +102,83 @@ test("invoice register shows real totals and opens an invoice with schedule, led
   await page.getByRole("link", { name: /INV-GNT-2627-0002/ }).click();
   await expect(page.getByRole("heading", { name: "INV-GNT-2627-0002" })).toBeVisible();
   await expect(page.getByText("Instalment schedule")).toBeVisible();
-  await expect(page.getByRole("cell", { name: "GNT-R-2627-00002", exact: false }).first()).toBeVisible();
-  await expect(page.getByText(/Already admitted as NIT-GNT-2026-000002/)).toBeVisible();
+  await expect(page.getByRole("cell", { name: /Receipt GNT-R-2627-00002/ }).first()).toBeVisible();
+  await expect(page.getByRole("cell", { name: /NIT-GNT-2026-000002/ })).toBeVisible(); // the course's admission
+
+  // The branch invoice document: Guntur issuer snapshot, bill-to, course line, verified receipts
+  const sheet = page.getByTestId("invoice-sheet");
+  await expect(sheet.getByText("Course invoice")).toBeVisible();
+  await expect(sheet.getByText("Divya Sree")).toBeVisible();
+  await expect(sheet.getByText(/Door No\. 6-4-35/)).toBeVisible();
+  await expect(sheet.getByText("GNT-R-2627-00002")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Print / Save PDF" })).toBeEnabled();
   await shot(page, "invoice-detail");
 
-  await page.getByRole("button", { name: "Print invoice" }).click();
-  const sheet = page.getByTestId("invoice-sheet");
-  await expect(sheet.getByText("Tax invoice")).toBeVisible();
-  await expect(sheet.getByText("Divya Sree")).toBeVisible();
-  await page.keyboard.press("Escape");
-
-  await page.getByRole("button", { name: "Receipt GNT-R-2627-00002" }).click();
+  const receiptRow = page.getByRole("row", { name: /Receipt GNT-R-2627-00002/ });
+  await receiptRow.getByRole("button", { name: /^Receipt TXN-/ }).click();
   await expect(page.getByTestId("receipt-sheet").getByText("GNT-R-2627-00002")).toBeVisible();
-  await expect(page.getByRole("dialog").getByText("Payment receipt")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("heading", { name: "Payment receipt" })).toBeVisible();
 });
 
-test("counsellor records a payment with proof; Accounts verifies it; the invoice becomes ready for admission", async ({ page, request }) => {
+test("counsellor records a payment claim with proof; Accounts verifies it; the course is admitted", async ({ page, request }) => {
   const name = `Fin Pay ${Date.now()}`;
   const { invoice } = await issuedInvoice(request, name);
 
   await login(page, USERS.salesGnt);
   await page.goto(`/invoices/${invoice.invoice_id}`);
   await expect(page.getByRole("heading", { name: invoice.invoice_number })).toBeVisible();
-  await expect(page.getByText("Not ready for admission")).toBeVisible();
-  await page.getByRole("button", { name: "Record payment" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Amount (₹)").fill("5000");
-  await dialog.getByLabel("Payment mode").selectOption({ label: "UPI / Bank Transfer" });
-  await dialog.getByRole("button", { name: "Record payment" }).click();
-  await expect(dialog.getByText("UPI / Bank Transfer needs a reference")).toBeVisible(); // client-side rule mirrors the mode master
-  await dialog.getByLabel(/^Reference/).fill(`UTR${Date.now()}`);
-  await dialog.getByLabel("Proof (optional)").setInputFiles({ name: "proof.png", mimeType: "image/png", buffer: Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000000020001e221bc330000000049454e44ae426082", "hex") });
-  await dialog.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.getByText(/recorded as Pending Verification/)).toBeVisible();
-  const row = page.getByRole("row", { name: /Pending Verification/ });
+  await expect(page.getByText(/must reach ₹1000/)).toBeVisible();
+  await page.getByRole("link", { name: "Record payment" }).click();
+  await expect(page).toHaveURL(new RegExp(`/payments\\?.*invoice=${invoice.invoice_id}`));
+  await expect(page.getByLabel("Starting invoice / payer")).toHaveValue(String(invoice.invoice_id)); // preselected
+  const allocate = page.getByRole("textbox", { name: /^Allocate to / });
+  await allocate.fill("5000");
+  await page.getByLabel("Tender 1 mode").selectOption({ label: "UPI / Bank Transfer" });
+  await expect(page.getByRole("button", { name: "Record payment" }).last()).toBeDisabled(); // needs a reference
+  await page.getByLabel("Tender 1 reference").fill(`UTR${Date.now()}`);
+  await page.getByLabel("Proof (optional)").setInputFiles({ name: "proof.png", mimeType: "image/png", buffer: Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000000020001e221bc330000000049454e44ae426082", "hex") });
+  await page.getByRole("button", { name: "Record payment" }).last().click();
+  await expect(page.getByText(/TXN-GNT-\d+ recorded · pending verification \(no receipt yet\)/)).toBeVisible();
+
+  // The claim shows on the invoice: nothing counted yet, no receipt number
+  await page.goto(`/invoices/${invoice.invoice_id}`);
+  const row = page.getByRole("row", { name: /No receipt until verified/ });
   await expect(row).toBeVisible();
-  const receipt = (await row.getByRole("cell").first().innerText()).split("\n")[0]!.trim();
-  // Counsellors can't verify
-  await expect(page.getByRole("button", { name: `Verify ${receipt}` })).toHaveCount(0);
-  await row.getByRole("button", { name: `Receipt ${receipt}` }).click();
-  await expect(page.getByRole("dialog").getByText(/Acknowledgement of proof only/).first()).toBeVisible();
+  const txn = (await row.getByRole("cell").first().innerText()).split("\n")[0]!.trim();
+  await expect(page.getByRole("button", { name: `Verify ${txn}` })).toHaveCount(0); // counsellors can't verify
+  await row.getByRole("button", { name: `Claim ${txn}` }).click();
+  await expect(page.getByRole("dialog").getByRole("heading", { name: "Payment claim" })).toBeVisible();
+  await expect(page.getByTestId("receipt-sheet").getByText(/Not a receipt/).first()).toBeVisible();
   await page.keyboard.press("Escape");
 
   await logout(page);
   await login(page, USERS.accountsGnt);
-  await page.goto(`/payments?status=Pending+Verification&q=${receipt}`);
-  await expect(page.getByRole("cell", { name: receipt, exact: false }).first()).toBeVisible();
+  await page.goto(`/payments?status=Pending+Verification&q=${encodeURIComponent(name)}`);
+  await expect(page.getByRole("cell", { name: txn, exact: false }).first()).toBeVisible();
   await shot(page, "payments-pending");
-  await page.getByRole("button", { name: `Verify ${receipt}` }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Verify payment" }).click();
-  await expect(page.getByText(`${receipt} verified`)).toBeVisible();
+  await page.getByRole("button", { name: `Verify ${txn}` }).click();
+  const verify = page.getByRole("dialog");
+  await expect(verify.getByRole("button", { name: "Verify payment" })).toBeDisabled();
+  await verify.getByRole("checkbox", { name: "Evidence reviewed" }).click();
+  await verify.getByRole("button", { name: "Verify payment" }).click();
+  await expect(page.getByText(/GNT-R-2627-\d+ issued · admitted: NIT-GNT-/)).toBeVisible();
 
   await page.goto(`/invoices/${invoice.invoice_id}`);
-  await expect(page.getByRole("link", { name: "Create admission" })).toHaveAttribute("href", new RegExp(`/admissions/new\\?invoiceId=${invoice.invoice_id}`));
-  await expect(page.getByRole("button", { name: `Verify ${receipt}` })).toHaveCount(0); // verify only pending receipts
+  await expect(page.getByRole("cell", { name: /NIT-GNT-\d{4}-\d+/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: `Verify ${txn}` })).toHaveCount(0); // verify only pending claims
 });
 
-test("Accounts fails a pending receipt with a reason", async ({ page, request }) => {
+test("Accounts fails a pending claim with a reason", async ({ page, request }) => {
   const flow = await issuedInvoice(request, `Fin Fail ${Date.now()}`);
   const { payment } = await flow.sales.call("POST", "/payments", { invoice_id: flow.invoice.invoice_id, amount: "2000", payment_mode_id: flow.upi, reference: `UTR${freshPhone()}` });
   await login(page, USERS.accountsGnt);
   await page.goto(`/invoices/${flow.invoice.invoice_id}`);
-  await page.getByRole("button", { name: `Fail ${payment.receipt_number}` }).click();
+  await page.getByRole("button", { name: `Fail ${payment.transaction_number}` }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Failure reason").fill("Not in bank statement");
   await dialog.getByRole("button", { name: "Mark failed" }).click();
-  await expect(page.getByText(`${payment.receipt_number} marked Failed`)).toBeVisible();
-  await expect(page.getByRole("row", { name: new RegExp(payment.receipt_number) }).getByText("Failed", { exact: true })).toBeVisible();
+  await expect(page.getByText(`${payment.transaction_number} marked Failed`)).toBeVisible();
+  await expect(page.getByRole("row", { name: new RegExp(payment.transaction_number) }).getByText("Failed — no receipt")).toBeVisible();
 });
 
 // ---------------------------------------------------------------- corrections
@@ -295,7 +312,7 @@ test("support cases list on the refunds screen", async ({ page }) => {
 test("counsellor sees the ledger without verification or correction tools", async ({ page }) => {
   await login(page, USERS.salesGnt);
   await page.goto("/payments?q=GNT-R-2627-00001");
-  await expect(page.getByRole("heading", { name: "Payments & Receipts" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Payments & receipts" })).toBeVisible();
   await expect(page.getByRole("row", { name: /GNT-R-2627-00001/ })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Correction requests" })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Unallocated advances" })).toHaveCount(0);

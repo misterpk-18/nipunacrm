@@ -17,7 +17,7 @@ from sqlalchemy.engine import make_url
 
 from config.database import db
 from models import (
-    ContactChannel, Course, CourseBranch, EntryMethod, LeadSource, LostReason, PaymentMode, PaymentPlan, Role,
+    ContactChannel, Course, CourseBranch, EntryMethod, LeadSource, LostReason, PaymentMode, Role,
     SupportCaseType, TaskType, User, UserRoleScope,
 )
 from services.security import hash_password
@@ -76,16 +76,19 @@ LEADS = [
     ("Keerthi Priya", "NIT-CRS-018", GNT, "sales_gnt", "REFERRAL", "PHONE_CALL", "STAFF_ENTERED", "New", "demo_attended"),
     ("Naveen Chandra", "NIT-CRS-019", GNT, "fo_gnt", "WALK_IN", "IN_PERSON", "WALK_IN_DESK", "New", "admitted_refund"),
     ("Bhavana Sri", "NIT-CRS-028", GNT, None, "ORGANIC_SOCIAL", "WHATSAPP", "STAFF_ENTERED", "New", "new"),
-    ("Karthik Reddy", "NIT-CRS-047", VIJ, "sales_vij", "GOOGLE_ADS", "PHONE_CALL", "GOOGLE_ADS_FORM", "New", "fee_discussion"),
+    ("Karthik Reddy", "NIT-CRS-047", VIJ, "sales_vij", "GOOGLE_ADS", "PHONE_CALL", "GOOGLE_ADS_FORM", "New", "plan_accepted"),
     ("Sai Teja", "NIT-CRS-007", VIJ, "fo_vij", "REFERRAL", "PHONE_CALL", "STAFF_ENTERED", "New", "demo_attended"),
     ("Vamsi Krishna", "NIT-CRS-052", VIJ, "sales_vij", "COLLEGE_DATA", "OUTBOUND_CALL", "BULK_OUTREACH_IMPORT",
      "Outreach Prospect", "payment_pending"),
     ("Lakshmi Prasanna", "NIT-CRS-018", VIJ, "sales_vij", "WEBSITE", "WEB_FORM", "WEBSITE", "New", "admitted"),
     ("Charan Teja", "NIT-CRS-019", VIJ, "sales_vij", "META_ADS", "WHATSAPP", "STAFF_ENTERED", "New", "admitted_three"),
     ("Swathi Kiran", "NIT-CRS-025", VIJ, "fo_vij", "WALK_IN", "IN_PERSON", "WALK_IN_DESK", "New", "counselling"),
-    ("Ravi Teja", "NIT-CRS-026", VIJ, "fo_vij", "ORGANIC_SOCIAL", "WHATSAPP", "STAFF_ENTERED", "New", "new"),
+    ("Ravi Teja", "NIT-CRS-026", VIJ, "fo_vij", "ORGANIC_SOCIAL", "WHATSAPP", "STAFF_ENTERED", "New", "qualified"),
     ("Mahesh Babu", "NIT-CRS-028", VIJ, "sales_vij", "GOOGLE_ADS", "WEB_FORM", "GOOGLE_ADS_FORM", "New", "demo_scheduled"),
     ("Anusha Devi", "NIT-CRS-047", VIJ, "sales_vij", "REFERRAL", "PHONE_CALL", "STAFF_ENTERED", "New", "lost"),
+    # V4 scenarios: two courses on one invoice (one admission each, one person); the ₹22,000 sample claim
+    ("Meera Joshi", "NIT-CRS-018", GNT, "sales_gnt", "REFERRAL", "PHONE_CALL", "STAFF_ENTERED", "New", "two_courses"),
+    ("Sana Begum", "NIT-CRS-019", VIJ, "sales_vij", "WEBSITE", "WEB_FORM", "WEBSITE", "New", "sample_claim"),
 ]
 
 TRAINER = {GNT: "trainer_g1", VIJ: "trainer_v1"}
@@ -100,6 +103,10 @@ def _id(model, code, column="code"):
 
 def _future(hours):
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+
+
+def _date_in(days):
+    return (date.today() + timedelta(days=days)).isoformat()
 
 
 class Seeder:
@@ -203,36 +210,83 @@ class Seeder:
                       outcome="Interested — fee discussion", next_action="Fee discussion", next_follow_up_at=_future(20))
         return demo
 
-    def invoice(self, lead, who, plan="FULL"):
-        discussion = self.call("post", f"/leads/{lead['lead_id']}/fee-discussions", who, 201)
-        plan_id = _id(PaymentPlan, plan, "plan_code").payment_plan_id
-        version = self.call("post", f"/fee-discussions/{discussion['fee_discussion_id']}/versions", who, 201,
-                            payment_plan_id=plan_id)
+    CHECKS = ("Genuine intent confirmed", "Reachable contact confirmed", "Intended course(s) understood",
+              "Branch and delivery mode discussed", "Exact next action agreed", "Possible identity match reviewed")
+
+    def qualify(self, lead, who):
+        for check in self.CHECKS:
+            self.call("put", f"/leads/{lead['lead_id']}/qualification/checks", who, check=check, reviewed=True)
+        self.call("post", f"/leads/{lead['lead_id']}/qualify", who)
+
+    def convert(self, lead, who, extra_courses=()):
+        """Qualification review + Convert to deal (the only way into the pipeline, db 019)."""
+        self.qualify(lead, who)
+        course_ids = [lead["course"]["course_id"], *[self.courses[c] for c in extra_courses]]
+        return self.call("post", f"/leads/{lead['lead_id']}/convert", who, course_ids=course_ids,
+                         expected_close_date=_date_in(10))
+
+    def price(self, lead_id, who):
+        discussion = self.call("post", f"/leads/{lead_id}/fee-discussions", who, 201)
+        version = self.call("post", f"/fee-discussions/{discussion['fee_discussion_id']}/versions", who, 201)
         self.call("post", f"/fee-discussion-versions/{version['version_id']}/approve", who)
-        self.call("post", f"/fee-discussions/{discussion['fee_discussion_id']}/accept-plan", who,
-                  version_id=version["version_id"], delivery_mode="Classroom", seat_type="Confirmed Seat")
-        return self.call("post", f"/fee-discussion-versions/{version['version_id']}/invoice", who, 201)
+        return version
 
-    def pay(self, invoice, who, amount, mode="UPI_BANK"):
-        result = self.call("post", "/payments", who, 201, invoice_id=invoice["invoice_id"], amount=str(amount),
-                           payment_mode_id=_id(PaymentMode, mode).id, reference=f"UTR{self.phone}")
-        return result["payment"]
+    def plan(self, lead_id, who):
+        self.call("post", f"/leads/{lead_id}/delivery-plan/accept", who, delivery_mode="Classroom",
+                  seat_type="Confirmed Seat", capacity_review="Checked", student_accepted=True)
 
-    def admit(self, lead, branch, who, plan="FULL", share="1"):
+    @staticmethod
+    def schedule(total, plan):
         from decimal import Decimal
 
-        invoice = self.invoice(lead, who, plan)
-        amount = (Decimal(invoice["billed_amount"]) * Decimal(share)).quantize(Decimal("1"))
-        payment = self.pay(invoice, who, amount)
-        self.call("post", f"/payments/{payment['payment_id']}/verify", ACCOUNTS[branch])
-        admission = self.call("post", "/admissions", who, 201, invoice_id=invoice["invoice_id"])
-        code = lead["course"]["course_code"]
+        total = Decimal(str(total))
+        splits = {"FULL": [(0, 100)], "TWO_INSTALMENTS": [(0, 50), (12, 50)],
+                  "THREE_INSTALMENTS": [(0, 50), (10, 25), (15, 25)]}[plan]
+        rows = [[_date_in(days), (total * pct / 100).quantize(Decimal("1"))] for days, pct in splits]
+        rows[-1][1] = total - sum(r[1] for r in rows[:-1])
+        return [{"due_date": d, "amount": str(a)} for d, a in rows]
+
+    def invoice(self, lead, who, plan="FULL", installments=None, lead_ids=None):
+        """Price (approved), accept the delivery plan and create the invoice with its 1–3 instalments."""
+        lead_ids = lead_ids or [lead["lead_id"]]
+        total = 0
+        for lead_id in lead_ids:
+            total += float(self.price(lead_id, who)["final_payable"])
+            self.plan(lead_id, who)
+        return self.call("post", "/invoices", who, 201, lead_ids=lead_ids,
+                         installments=installments or self.schedule(int(total), plan))
+
+    @staticmethod
+    def fee(lead) -> int:
+        return int(db.session.get(Course, lead["course"]["course_id"]).standard_fee)
+
+    def pay(self, invoice, who, amount, mode="UPI_BANK"):
+        reference = None if mode == "CASH" else f"UTR{self.phone}"
+        result = self.call("post", "/payments", who, 201, invoice_id=invoice["invoice_id"], amount=str(amount),
+                           payment_mode_id=_id(PaymentMode, mode).id, reference=reference)
+        return result["payment"]
+
+    def verify(self, payment, branch):
+        return self.call("post", f"/payments/{payment['payment_id']}/verify", ACCOUNTS[branch],
+                         evidence_reviewed=True, cash_checked=True)["admissions_created"]
+
+    def enrol(self, admission, branch, code):
         self.call("post", f"/admissions/{admission['admission_id']}/curricula", COORDINATOR[branch],
                   curriculum_version_id=self.curricula[code])
         batch = self.batches.get((branch, code))
         if batch:
             self.call("post", f"/admissions/{admission['admission_id']}/allocations", COORDINATOR[branch], 201,
                       batch_id=batch)
+
+    def admit(self, lead, branch, who, plan="FULL", share="1", installments=None, amount=None):
+        """Invoice → payment claim → verification, which creates the admission (₹1,000 token reached)."""
+        from decimal import Decimal
+
+        invoice = self.invoice(lead, who, plan, installments)
+        amount = amount or (Decimal(invoice["billed_amount"]) * Decimal(share)).quantize(Decimal("1"))
+        payment = self.pay(invoice, who, amount)
+        admission = self.verify(payment, branch)[0]
+        self.enrol(admission, branch, lead["course"]["course_code"])
         return invoice, payment, admission
 
     def sales(self):
@@ -242,37 +296,67 @@ class Seeder:
             lid = lead["lead_id"]
             if outcome == "new":
                 continue
+            if outcome == "qualified":  # ready to convert
+                self.qualify(lead, who)
+                continue
+            if outcome == "lost":
+                reason = "FEE_TOO_HIGH" if branch == GNT else "JOINED_COMPETITOR"
+                self.call("post", f"/leads/{lid}/lost", who, lost_reason_id=_id(LostReason, reason).id,
+                          lost_competitor="Other Institute", reactivation_date=(date.today() + timedelta(days=60)).isoformat())
+                continue
+            converted = self.convert(lead, who, extra_courses=("NIT-CRS-019",) if outcome == "two_courses" else ())
             if outcome == "counselling":
-                self.call("post", f"/leads/{lid}/stage", who, stage="Counselling", note="Discussed course outcomes")
                 self.call("post", f"/leads/{lid}/follow-up", who, next_follow_up_at=_future(26),
                           note="Call after college exams")
             elif outcome == "demo_scheduled":
                 self.demo(lead, branch, who)
             elif outcome == "demo_attended":
                 self.demo(lead, branch, who, attended=True)
-            elif outcome == "fee_discussion":
+            elif outcome == "fee_discussion":  # approved fee, delivery plan still to confirm
                 self.demo(lead, branch, who, attended=True)
-                self.invoice(lead, who)
+                self.price(lid, who)
+            elif outcome == "plan_accepted":  # approved fee and accepted plan: ready to invoice
+                self.demo(lead, branch, who, attended=True)
+                self.price(lid, who)
+                self.plan(lid, who)
             elif outcome == "payment_pending":
                 invoice = self.invoice(lead, who)
                 self.pay(invoice, who, invoice["billed_amount"], mode="CASH")
-            elif outcome == "lost":
-                reason = "FEE_TOO_HIGH" if branch == GNT else "JOINED_COMPETITOR"
-                self.call("post", f"/leads/{lid}/lost", who, lost_reason_id=_id(LostReason, reason).id,
-                          lost_competitor="Other Institute", reactivation_date=(date.today() + timedelta(days=60)).isoformat())
+            elif outcome == "sample_claim":  # V4 sample: ₹22,000 invoice, ₹5,000 claim awaiting verification
+                invoice = self.invoice(lead, who, "TWO_INSTALMENTS")
+                self.pay(invoice, who, 5000, mode="CASH")
+            elif outcome == "two_courses":  # one invoice, two courses, one person → two admissions
+                lead_ids = [c["lead"]["lead_id"] for c in converted["courses"]]
+                invoice = self.invoice(lead, who, "TWO_INSTALMENTS", lead_ids=lead_ids)
+                detail = self.call("get", f"/invoices/{invoice['invoice_id']}", who)
+                allocations = [{"invoice_line_id": line["invoice_line_id"], "amount": "10000"} for line in detail["lines"]]
+                payment = self.call("post", "/payments", who, 201, invoice_id=invoice["invoice_id"],
+                                    allocations=allocations, tenders=[
+                                        {"amount": "15000", "payment_mode_id": _id(PaymentMode, "UPI_BANK").id,
+                                         "reference": f"UTR{self.phone}"},
+                                        {"amount": "5000", "payment_mode_id": _id(PaymentMode, "CASH").id}])
+                admissions = [a for p in payment["payments"] for a in self.verify(p, branch)]
+                for admission, line in zip(admissions, detail["lines"]):
+                    self.enrol(admission, branch, line["course"]["course_code"])
             elif outcome == "admitted":
                 self.admitted.append((lead, branch, *self.admit(lead, branch, who)))
             elif outcome == "admitted_overdue":
                 invoice, payment, admission = self.admit(lead, branch, who, "TWO_INSTALMENTS", "0.5")
                 self.sql("ALTER TABLE installments DISABLE TRIGGER trg_installments_guard")
-                self.sql("UPDATE installments SET due_date = current_date - 5 WHERE invoice_id = :i AND installment_no = 2",
+                self.sql("UPDATE installments SET due_date = current_date - 5 - (2 - installment_no) WHERE invoice_id = :i",
                          i=invoice["invoice_id"])
                 self.sql("ALTER TABLE installments ENABLE TRIGGER trg_installments_guard")
-                self.call("post", f"/admissions/{admission['admission_id']}/promises", ACCOUNTS[branch], 201,
+                self.call("post", f"/invoices/{invoice['invoice_id']}/promises", ACCOUNTS[branch], 201,
                           promised_amount=str(int(float(invoice["billed_amount"]) / 2)),
                           promised_date=(date.today() + timedelta(days=3)).isoformat())
             elif outcome == "admitted_three":
-                self.admitted.append((lead, branch, *self.admit(lead, branch, who, "THREE_INSTALMENTS", "0.5")))
+                # ₹1,000 token today, the rest over two instalments 40 and 70 days out: a long payment gap
+                fee = self.fee(lead)
+                schedule = [{"due_date": _date_in(0), "amount": "1000"},
+                            {"due_date": _date_in(40), "amount": str(round((fee - 1000) / 2))},
+                            {"due_date": _date_in(70), "amount": str(fee - 1000 - round((fee - 1000) / 2))}]
+                self.admitted.append((lead, branch, *self.admit(lead, branch, who, "THREE_INSTALMENTS",
+                                                                installments=schedule, amount="1000")))
             elif outcome == "admitted_refund":
                 invoice, payment, admission = self.admit(lead, branch, who)
                 self.call("post", "/refund-cases", MANAGER[branch], 201, admission_id=admission["admission_id"],
@@ -282,7 +366,7 @@ class Seeder:
 
     def operations(self):
         task_type = lambda code: _id(TaskType, code).id  # noqa: E731
-        lead_ids = [r["lead_id"] for r in self.call("get", "/leads?per_page=100", "admin")]
+        lead_ids = [r["lead_id"] for r in self.call("get", "/leads?per_page=100&lead_status=All", "admin")]
         self.call("post", "/tasks", "bm_gnt", 201, task_type_id=task_type("FOLLOW_UP"), title="Call parents about fee plan",
                   branch_id=GNT, owner_user_id=self.users["sales_gnt"], due_at=_future(4), link={"lead_id": lead_ids[0]})
         self.call("post", "/tasks", "bm_vij", 201, task_type_id=task_type("GENERAL"), title="Prepare weekend walk-in desk",

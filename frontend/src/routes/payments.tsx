@@ -3,7 +3,7 @@ import { PaymentsPage, type PaymentSearch } from "@/features/finance/payments-pa
 
 const num = (v: unknown) => (v === undefined || v === "" || Number.isNaN(Number(v)) ? undefined : Number(v));
 const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
-const TABS = ["ledger", "unallocated", "corrections"] as const;
+const TABS = ["ledger", "record", "unallocated", "corrections"] as const;
 
 export const Route = createFileRoute("/payments")({
   validateSearch: (s: Record<string, unknown>): PaymentSearch => {
@@ -18,6 +18,7 @@ export const Route = createFileRoute("/payments")({
       to: str(s["to"]),
       tab: TABS.includes(tab as (typeof TABS)[number]) ? (tab as PaymentSearch["tab"]) : undefined,
       cstatus: str(s["cstatus"]),
+      invoice: num(s["invoice"]),
     };
     return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as PaymentSearch;
   },

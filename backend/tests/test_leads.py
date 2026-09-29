@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from config.database import db
 from models import LeadActivity, LostReason, Task
-from tests.helpers import API, create_lead, future, lead_body, lookup_id
+from tests.helpers import API, convert_lead, create_lead, future, lead_body, lookup_id
 
 
 # ---------------------------------------------------------------- access
@@ -189,16 +189,16 @@ def test_stage_changes_are_logged_and_guarded(client, people, course):
     lead = create_lead(client, owner["h"])
     url = f"{API}/leads/{lead['lead_id']}/stage"
 
-    moved = client.post(url, json={"stage": "Counselling", "note": "Discussed outcomes"}, headers=owner["h"])
-    assert moved.get_json()["data"]["stage"] == "Counselling"
+    unconverted = client.post(url, json={"stage": "Counselling"}, headers=owner["h"])  # db 019: Convert first
+    assert unconverted.status_code == 422
+    assert unconverted.get_json()["error"]["details"] == {"missing_fields": ["qualified_at"]}
+
+    convert_lead(client, owner["h"], lead["lead_id"], course_ids=[course])
     change = db.session.execute(select(LeadActivity).where(LeadActivity.activity_type == "Stage Change")).scalar_one()
     assert (change.from_stage, change.to_stage, change.performed_by) == ("New Enquiry", "Counselling", owner["id"])
+    moved = client.post(url, json={"stage": "Demo Scheduled", "note": "Booked"}, headers=owner["h"])
+    assert moved.get_json()["data"]["stage"] == "Demo Scheduled"
 
-    missing_course = client.post(url, json={"stage": "Payment Pending Verification"}, headers=owner["h"])
-    assert missing_course.status_code == 422
-    assert missing_course.get_json()["error"]["details"] == {"missing_fields": ["course_id"]}
-
-    client.patch(f"{API}/leads/{lead['lead_id']}", json={"course_id": course}, headers=owner["h"])
     assert client.post(url, json={"stage": "Payment Pending Verification"}, headers=owner["h"]).status_code == 200
     backwards = client.post(url, json={"stage": "Counselling"}, headers=owner["h"])
     assert backwards.status_code == 422 and "cannot move back" in backwards.get_json()["error"]["message"]
@@ -227,8 +227,10 @@ def test_follow_up_lost_and_reactivate(client, people):
     assert client.post(f"{base}/follow-up", json={"next_follow_up_at": future()}, headers=owner).status_code == 422
 
     assert client.post(f"{base}/reactivate", json={}, headers=owner).status_code == 403
-    reactivated = client.post(f"{base}/reactivate", json={"stage": "Counselling"}, headers=people["bm"]["h"]).get_json()["data"]
-    assert reactivated["stage"] == "Counselling" and reactivated["lost"] is None
+    # Lost straight from New Enquiry was never a deal: it comes back as a lead, not into the pipeline
+    assert client.post(f"{base}/reactivate", json={"stage": "Counselling"}, headers=people["bm"]["h"]).status_code == 422
+    reactivated = client.post(f"{base}/reactivate", json={"stage": "New Enquiry"}, headers=people["bm"]["h"]).get_json()["data"]
+    assert reactivated["stage"] == "New Enquiry" and reactivated["lost"] is None and reactivated["lead_status"] == "Active"
 
 
 # ---------------------------------------------------------------- activities

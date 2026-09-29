@@ -66,7 +66,7 @@ export function applyServerErrors<T extends FieldValues>(form: UseFormReturn<T>,
 }
 
 export const selectClass =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
+  "flex h-10 w-full rounded-[8px] border border-input bg-card px-3 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50";
 
 type NativeSelectProps = SelectHTMLAttributes<HTMLSelectElement> & { placeholder?: string };
 

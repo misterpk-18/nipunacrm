@@ -130,7 +130,9 @@ export function CollectionsPage({ search, onSearch }: { search: CollectionSearch
                   cell: (d) => (
                     <Link to="/invoices/$invoiceId" params={{ invoiceId: String(d.invoice.invoice_id) }} className="text-primary">
                       {d.invoice.invoice_number}
-                      <small className="block text-muted-foreground">{d.admission_id ? `Admission #${d.admission_id}` : "Pre-admission"}</small>
+                      <small className="block text-muted-foreground">
+                        {d.courses.map((c) => c.course_title).join(", ")} · {d.admission_ids.length ? `${d.admission_ids.length} admitted` : "Pre-admission"}
+                      </small>
                     </Link>
                   ),
                 },
@@ -154,15 +156,12 @@ export function CollectionsPage({ search, onSearch }: { search: CollectionSearch
                 { header: "Contact hold", cell: (d) => (d.contact_hold ? <Status kind="warn">Paused · pending verification</Status> : "None") },
                 {
                   header: "Actions",
-                  cell: (d) =>
-                    d.admission_id ? (
-                      <Button size="sm" variant="outline" onClick={() => setPromisesFor(d)} aria-label={`Promises for ${d.person.full_name}`}>
-                        <HandCoins />
-                        Promises
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Promises after admission</span>
-                    ),
+                  cell: (d) => (
+                    <Button size="sm" variant="outline" onClick={() => setPromisesFor(d)} aria-label={`Promises for ${d.person.full_name}`}>
+                      <HandCoins />
+                      Promises
+                    </Button>
+                  ),
                 },
               ]}
             />
@@ -203,12 +202,12 @@ export function CollectionsPage({ search, onSearch }: { search: CollectionSearch
 function PromisesDialog({ plan, onClose }: { plan: DuePlan | null; onClose: () => void }) {
   const { hasRole } = useAuth();
   const canCollect = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "SALES", "FRONT_OFFICE", "ACCOUNTS");
-  const admissionId = plan?.admission_id ?? 0;
-  const promises = useQuery({ queryKey: collectionKeys.promises(admissionId), queryFn: () => collectionsApi.promises(admissionId), enabled: admissionId > 0 });
+  const invoiceId = plan?.invoice.invoice_id ?? 0;
+  const promises = useQuery({ queryKey: collectionKeys.promises(invoiceId), queryFn: () => collectionsApi.promises(invoiceId), enabled: invoiceId > 0 });
   const [amount, setAmount] = useState("");
   const [when, setWhen] = useState("");
   const [notes, setNotes] = useState("");
-  const add = useApiMutation((v: { amount: string; date: string; notes: string }) => collectionsApi.addPromise(admissionId, { promised_amount: v.amount, promised_date: v.date, notes: v.notes || null }), {
+  const add = useApiMutation((v: { amount: string; date: string; notes: string }) => collectionsApi.addPromise(invoiceId, { promised_amount: v.amount, promised_date: v.date, notes: v.notes || null }), {
     success: (p) => `Promise of ${money(p.promised_amount)} on ${date(p.promised_date)} recorded`,
     invalidate: [collectionKeys.all, ["students"], ["admissions"]],
     onSuccess: () => {

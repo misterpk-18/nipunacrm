@@ -22,9 +22,15 @@ import {
   QueryView,
   Section,
 } from "@/components/crm/ui";
-import { money } from "@/lib/format";
+import { date, money, todayIST } from "@/lib/format";
+import { CalendarDays, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { NewLeadDialog } from "@/features/leads/new-lead-dialog";
+import { OverviewTab } from "./overview";
 import { CollectionsChart, FunnelChart, Meter } from "./charts";
 import { ManagementBrief } from "./ai-parts";
+import { LongGapMetric } from "./payment-gaps";
 import {
   LinkedMetric,
   PeriodBar,
@@ -35,7 +41,66 @@ import {
   type PeriodValue,
 } from "./shared";
 
-export function DashboardPage({ manager = false }: { manager?: boolean }) {
+export type DashboardTab = "overview" | "performance";
+
+/**
+ * /dashboard: V4 "Workspace overview" with Overview (new KPI cards, charts, attention queues) and Performance
+ * (the period KPIs, Long-gap plans, funnel, branch comparison, targets, approvals, AI brief).
+ * /branch-manager renders the performance view on its own.
+ */
+export function DashboardPage({
+  manager = false,
+  tab = "overview",
+  onTab,
+}: {
+  manager?: boolean;
+  tab?: DashboardTab;
+  onTab?: (tab: DashboardTab) => void;
+}) {
+  const { hasRole } = useAuth();
+  const [newLead, setNewLead] = useState(false);
+  if (manager) return <PerformanceView manager />;
+  const canAddLead = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "SALES", "FRONT_OFFICE");
+  return (
+    <>
+      <PageHead
+        eyebrow="Your workspace at a glance"
+        title="Workspace overview"
+        description="Sales, admissions and collections. Your next actions, in one place."
+        actions={
+          <>
+            <span className="hidden items-center gap-2 rounded-[8px] border bg-card px-3 py-2.5 text-xs text-muted-foreground xl:inline-flex">
+              <CalendarDays className="size-4" aria-hidden />
+              {date(todayIST())}
+            </span>
+            {canAddLead && (
+              <Button onClick={() => setNewLead(true)}>
+                <Plus />
+                Add lead
+              </Button>
+            )}
+          </>
+        }
+      />
+      <Tabs value={tab} onValueChange={(v) => onTab?.(v as DashboardTab)}>
+        <TabsList aria-label="Dashboard views" className="mb-5 w-full gap-7">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="mt-0">
+          <OverviewTab />
+        </TabsContent>
+        <TabsContent value="performance" className="mt-0">
+          <PerformanceView />
+        </TabsContent>
+      </Tabs>
+      {canAddLead && <NewLeadDialog open={newLead} onOpenChange={setNewLead} />}
+    </>
+  );
+}
+
+/** The period dashboard (all existing KPIs); standalone with a page title for /branch-manager. */
+function PerformanceView({ manager = false }: { manager?: boolean }) {
   const branchId = useBranchFilter();
   const { hasRole } = useAuth();
   const [period, setPeriod] = useState<PeriodValue>({ period: "This Month" });
@@ -54,15 +119,18 @@ export function DashboardPage({ manager = false }: { manager?: boolean }) {
       : d?.view === "branch_manager"
         ? "Branch Manager Dashboard"
         : "Dashboard";
+  const periodText = d ? periodLabel(d.period, d.from, d.to) : "Loading period…";
 
   return (
     <>
-      <PageHead
-        title={title}
-        description={
-          d ? periodLabel(d.period, d.from, d.to) : "Loading period…"
-        }
-      />
+      {manager ? (
+        <PageHead title={title} description={periodText} />
+      ) : (
+        <div className="section-head mb-4">
+          <h2>{title}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{periodText}</p>
+        </div>
+      )}
       <div className="mb-4">
         <PeriodBar value={period} onChange={setPeriod} idPrefix="dash" />
       </div>
@@ -128,7 +196,7 @@ function KpiGrid({ data }: { data: Dashboard }) {
       <LinkedMetric
         label="Paid Admissions"
         value={t.paid_admissions}
-        hint="First qualifying payment verified"
+        hint="₹1,000 admission token verified"
         to="/admissions"
       />
       <LinkedMetric
@@ -149,6 +217,7 @@ function KpiGrid({ data }: { data: Dashboard }) {
         hint="Current position"
         to="/collections"
       />
+      <LongGapMetric tiles={t} />
       {queues ? (
         <LinkedMetric
           label="Approvals I can decide"
@@ -453,7 +522,7 @@ function TeamQueues({
             hint="Open leads with no owner"
             count={unassigned}
             to="/leads"
-            search={{ assigned_to: "unassigned" }}
+            search={{ assigned_to: "unassigned", lead_status: "All" }}
           />
         )}
         <QueueRow

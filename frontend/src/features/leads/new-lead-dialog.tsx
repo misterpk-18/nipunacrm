@@ -67,7 +67,7 @@ export function NewLeadDialog({ open, onOpenChange, person }: { open: boolean; o
 
   const create = useApiMutation(leadsApi.create, {
     success: (lead) => `${lead.lead_code} created for ${lead.person.person_code}`,
-    invalidate: [leadKeys.all],
+    invalidate: [leadKeys.all, ["persons"], ["pipeline"]],
     silentValidation: true,
     onSuccess: (lead) => {
       onOpenChange(false);

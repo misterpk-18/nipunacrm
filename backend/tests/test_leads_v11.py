@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from config.database import db
 from models import Lead, LeadActivity, Task
-from tests.helpers import API, create_lead, future, lead_body
+from tests.helpers import API, convert_lead, create_lead, future, lead_body
 
 
 def test_campaign_remarks_and_whatsapp(client, people, course):
@@ -73,8 +73,7 @@ def test_follow_up_log_blocked_for_others_and_closed_leads(client, people, make_
     url = f"{API}/leads/{lead['lead_id']}/follow-up-log"
 
     assert client.post(url, json=body, headers=other_sales).status_code == 403
-    db.session.get(Lead, lead["lead_id"]).stage = "Counselling"
-    db.session.commit()
+    convert_lead(client, people["bm"]["h"], lead["lead_id"])  # into the pipeline (Counselling)
     assert client.post(url, json=body, headers=people["bm"]["h"]).status_code == 201
 
 
@@ -139,7 +138,8 @@ def test_csv_import_validates_then_imports(client, people, course):
     lokesh = db.session.get(Lead, rows["Lokesh Babu"]["lead_id"])
     dup = db.session.get(Lead, rows["Ananya Again"]["lead_id"])
     assert lokesh.entry_method.code == "CSV_IMPORT" and lokesh.intake_status == "New" and lokesh.last_contacted_at is None
-    assert dup.intake_status == "Duplicate Review" and dup.person_id != results["Ananya Again"]["matched_lead_id"]
+    matched = db.session.get(Lead, results["Ananya Again"]["matched_lead_id"])
+    assert dup.intake_status == "Duplicate Review" and dup.person_id != matched.person_id  # never auto-merged
     assert rows["Test Row"]["lead_id"] is None
     assert client.post(f"{API}/lead-imports/{batch['import_id']}/import", headers=headers).status_code == 422
 

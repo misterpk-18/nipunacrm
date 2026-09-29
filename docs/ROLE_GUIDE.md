@@ -83,9 +83,13 @@ flowchart TD
 
 | Screen | Admin | BM | Sales / FO | Accounts | Acad. Coord. | Trainer | Placement | HR |
 |---|---|---|---|---|---|---|---|---|
-| Dashboard | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Dashboard (Overview) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| My work (V4) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| LMS access (V4, read-only) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Workflow guide (V4) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Persons · Person 360 | ✅ | ✅ | ✅ | | | | | |
 | Leads · Lead 360 | ✅ | ✅ | ✅ | | | | | |
-| Pipeline | ✅ | ✅ | ✅ | | | | | |
+| Deal pipeline | ✅ | ✅ | ✅ | | | | | |
 | Demos | ✅ | ✅ | ✅ | | ✅ | ✅ | | |
 | Admissions | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Batches | ✅ | ✅ | | | ✅ | ✅ | | |
@@ -122,8 +126,14 @@ mindmap
       Create lead · Add another course
       CSV import
       Log follow-up · set next follow-up
+      Qualification checklist · Mark Qualified
+      Convert to deal
       Move stage · Mark lost
       Link / convert enquiries
+    Pipeline and Persons
+      Move a person's card · Mark card lost
+      Set the card's next follow-up
+      Search persons · Person 360
       Saved views
     Demos
       Book · confirm · reschedule · cancel
@@ -132,14 +142,16 @@ mindmap
       Open fee discussion
       Build fee versions
       Raise special closing request
-      Share · accept plan
-      Issue invoice · change instalment due dates
+      Approve own standard-price version
+      Share approved fee
+      Confirm delivery plan
+      Create invoice · change instalment due dates
     Money
-      Record payment
+      Record payment claim (split across courses / tenders)
       View payments at own branch
       Promises to pay
     Admission
-      Create admission
+      Eligibility review · manual fallback
       Add complimentary course
       Request fee change
     Everyday
@@ -150,6 +162,8 @@ mindmap
 
 **Rules that apply to them**
 - A counsellor who creates a lead **owns** it. Stage, follow-up, lost and edit need the owner (or a manager); while a lead is unassigned, any counsellor at the branch can work it.
+- The same rule applies to a pipeline card: its owner (or a manager) moves it, marks it lost and sets its follow-up. Only a branch manager or admin changes the card's owner.
+- Demos, fee discussions and stage moves need a **converted** lead: tick all six qualification checks, Mark Qualified, then Convert to deal (courses, branch, owner, expected close). Conversion reuses the person and never duplicates an open course.
 - They **cannot** assign / bulk-assign / reactivate leads, approve discounts, verify payments, cancel admissions or touch settings.
 - Front Office can also log follow-ups and record payments, same as Sales.
 
@@ -157,16 +171,18 @@ mindmap
 
 ```mermaid
 flowchart LR
-    A["Create lead"] --> B["Follow-ups"]
-    B --> C["Book demo"]
+    A["Create lead"] --> Q["Qualification<br/>(6 checks)"]
+    Q --> K["Convert to deal"]
+    K --> C["Book demo"]
     C --> D["Record outcome"]
     D --> E["Fee discussion<br/>+ fee version"]
     E -->|"extra concession"| F["Special closing request"]
     F -->|"approved"| G
-    E -->|"no concession"| G["Accept plan"]
-    G --> H["Issue invoice"]
-    H --> I["Record payment"]
-    I -.->|"waits for Accounts"| J["Create admission"]
+    E -->|"no concession"| G["Approved fee"]
+    G --> P["Confirm delivery plan"]
+    P --> H["Create invoice<br/>(1+ courses, 1–3 instalments)"]
+    H --> I["Record payment claim"]
+    I -.->|"Accounts verifies → receipt"| J["Admission per course<br/>(automatic at ₹1,000)"]
 ```
 
 ### 4.2 Branch Manager
@@ -209,12 +225,12 @@ mindmap
 mindmap
   root(("Accounts"))
     Payments
-      Record payment
-      Verify or fail with reason
-      Allocate advance to invoice
+      Record payment claim
+      Verify (evidence reviewed · cash check) or fail with reason
+      Allocate advance to invoice courses
       Request correction
     Invoices
-      Issue invoice
+      Create invoice
       Cancel invoice
       Change instalment due date
     Collections
@@ -232,7 +248,9 @@ mindmap
 
 **Rules**
 - Verification is **once and final** (Verified or Failed). Target: **30 minutes**, warning at 25, then escalates to the Branch Manager.
-- Only verified payments count as collected or unlock admission.
+- Verifying needs two confirmations: **evidence reviewed** and, for cash, an **independent cash check**. The receipt number is issued only then; a pending claim has only its transaction number (`TXN-…`).
+- Only verified payments count as collected or unlock admission — each course is admitted automatically on the verification that brings ₹1,000 (the token) onto it. Accounts may also create an admission from the eligibility review if an automatic one was refused.
+- They get the "instalment due in 2 days" and "long payment gap" notifications for their branch, and can open the dashboard's Long-gap plans list.
 - Accounts **pays out** refunds but never decides them; the decider can never be the one who pays out.
 
 ### 4.4 Academic Coordinator
@@ -454,7 +472,7 @@ stateDiagram-v2
 | What | Requested by | Approved by | Notes |
 |---|---|---|---|
 | 3rd demo (after 2 attended) | Counsellor | Academic Coordinator or BM | Setting `demo_max_attended` = 2 |
-| Fee version | Counsellor | BM or Admin | Needed before invoicing |
+| Fee version | Counsellor | **Counsellor or BM** if no extra concession and at / above floor (offers count as pre-approved); otherwise only via an approved special closing request | Must be Approved before accept plan / invoice |
 | Offer activation | Admin | Admin (fresh auth) | Needs approver + dates; activating deactivates the other active version of the same code. The creator can activate their own offer today |
 | Target version | Admin drafts | Admin (fresh auth) | Approved version supersedes the overlapping one |
 | Deletion request | Admin | A *different* Admin (fresh auth), then execute | |
@@ -543,6 +561,9 @@ mindmap
 | `alumni_support_months` | 6 | Support after course completion | Placement, Admins |
 | `report_cutoff_time` | 20:00 | Daily report cutoff (IST) | Managers, Accounts |
 | `business_timezone` | Asia/Kolkata | Staffed-time and report periods | Everyone |
+| `admission_token_amount` | 1000 | Verified payments (₹) needed on the invoice before the admission can be created | Counsellors, Accounts |
+| `installment_due_soon_days` | 2 | "Due soon" alert to the owner, Accounts and BM this many days before an instalment | Counsellors, Accounts, BM |
+| `payment_gap_alert_days` | 30 | Alert (owner, Accounts, BM, admins) and dashboard "Long-gap plans" when the next instalment is due this long after a verified payment | Counsellors, Accounts, BM, Admins |
 
 ### 7.2 Concession limits (Admin / Settings → Concession limits)
 
@@ -607,24 +628,31 @@ Grouped by module. "Owner" = the lead's assigned counsellor. All of these are al
 |---|---|---|
 | **Leads** | Create lead / person / enquiry, CSV import | Sales, Front Office, BM, Admins |
 | | Edit, move stage, set follow-up, mark lost | Owner, BM, Admins (any branch counsellor while unassigned) |
+| | Qualification checks, Mark Qualified, Convert to deal | Owner, BM, Admins (any branch counsellor while unassigned) |
 | | Log follow-up | Owner, Front Office, BM, Admins |
 | | Assign, bulk assign, reactivate | BM, Admins |
 | | Log activity, saved views | All lead roles |
+| **Pipeline** | Move a card, mark it lost, set its follow-up | Card owner, BM, Admins (any branch counsellor while unassigned) |
+| | Change a card's owner | BM, Admins |
+| | Set a card's expected close | Card owner, BM, Admins |
+| **Persons** | List / search persons, Person 360 | All lead roles (own branches) |
 | **Demos** | Book, edit, confirm, reschedule, cancel | Sales, Front Office, BM, Admins |
 | | Record outcome | Trainer, Sales, Front Office, BM, Admins |
 | | Approve 3rd demo | Academic Coordinator, BM |
 | **Fees** | Open discussion | Counsellors, BM |
-| | New version, share, accept plan, raise special closing | Counsellors |
-| | Approve version, decide special closing | BM (within limit), Admins |
-| **Invoices** | Issue | Counsellors, Accounts |
+| | New version, share, raise special closing | Counsellors |
+| **Delivery plan** | Save, accept, reopen (until invoiced) | Deal owner, counsellors, BM, Academic Coordinator, Admins |
+| | Approve standard-price version (no extra concession) | Counsellors, BM, Admins |
+| | Decide special closing (approves the version too) | BM (within limit), Admins |
+| **Invoices** | Create (one or more compatible courses) | Counsellors, Accounts, BM |
 | | Change instalment due date | Counsellors, Accounts |
-| | Cancel | Accounts, Admins |
+| | Cancel (unpaid only) | Accounts, BM, Admins |
 | **Payments** | Record | Sales, Front Office, Accounts |
-| | Verify / fail | Accounts, Admins |
+| | Verify (with evidence / cash checks) / fail | Accounts, Admins |
 | | Allocate advance | Accounts |
 | | Request correction | Accounts, Admins |
 | | Approve correction | Founder / CEO, Super Admin |
-| **Admissions** | Create | Sales, Front Office, BM |
+| **Admissions** | Created automatically on verification; manual fallback from the eligibility review | Sales, Front Office, BM, Accounts |
 | | Complimentary course | Counsellors, BM |
 | | Cancel, transfer | BM |
 | | Request fee change | Counsellors, BM |
@@ -669,4 +697,6 @@ Things that behave differently from what the rules above might suggest. Tracked 
 - **Curriculum mapping at branches without an Academic Coordinator:** Branch Managers can allocate batches but can't map curricula, so only an admin can clear *Mapping Pending*.
 - **Complimentary course list can include the main course:** an offer can list the student's own course as complimentary.
 - **Counsellors adding a complimentary course** type the numeric offer ID, because they can't list offers.
-- **Manual stage moves:** a lead can be moved to *Demo Attended* by hand without an attended demo; only backward moves after *Payment Pending Verification* are blocked.
+- **Manual stage moves:** a deal can be moved to *Demo Attended* by hand without an attended demo; only backward moves after *Payment Pending Verification* are blocked.
+- **Deal owner at conversion:** converting onto a person's existing card keeps that card's owner; the owner picked in the dialog applies to a new card only.
+- **Verifier independence for cash:** the "independent cash check" is a tick recorded on the payment; the system doesn't yet require the verifier to be a different person from the collector.

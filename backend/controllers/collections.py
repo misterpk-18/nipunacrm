@@ -26,6 +26,14 @@ def list_dues():
     return paginated(plans, meta)
 
 
+def payment_gaps():
+    v = Validator(request.args.to_dict())
+    v.integer("branch_id", min_value=1)
+    page, per_page = get_page_params()
+    rows, meta = collections_service.payment_gaps(v.validate(), page, per_page)
+    return paginated([row.to_dict() for row in rows], meta)
+
+
 def ageing():
     filters = _dues_filters()
     filters.pop("position", None)
@@ -33,15 +41,27 @@ def ageing():
 
 
 def list_promises(admission_id: int):
-    return ok([p.to_dict() for p in collections_service.list_promises(admission_id)])
+    return ok([p.to_dict() for p in collections_service.list_promises_for_admission(admission_id)])
 
 
-def add_promise(admission_id: int):
+def list_invoice_promises(invoice_id: int):
+    return ok([p.to_dict() for p in collections_service.list_promises(invoice_id)])
+
+
+def _promise_body() -> dict:
     v = Validator(json_body())
     v.decimal("promised_amount", required=True, min_value=1)
     v.date("promised_date", required=True)
     v.string("notes", nullable=True)
-    return created(collections_service.add_promise(admission_id, v.validate()).to_dict())
+    return v.validate()
+
+
+def add_invoice_promise(invoice_id: int):
+    return created(collections_service.add_promise(invoice_id, _promise_body()).to_dict())
+
+
+def add_promise(admission_id: int):
+    return created(collections_service.add_promise_for_admission(admission_id, _promise_body()).to_dict())
 
 
 def resolve_promise(promise_id: int, status: str):

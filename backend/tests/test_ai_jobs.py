@@ -10,7 +10,7 @@ from config.database import db
 from models import DemoReminder, Notification, Offer, PaymentPromise, ReportRun, Task, UserSession
 from services import jobs
 from tests.helpers import (
-    API, admitted, backdate_installment, call, create_lead, future, issued_invoice, priced_lead, record_payment,
+    API, admitted, backdate_installment, call, create_deal, create_lead, future, issued_invoice, priced_lead, record_payment,
 )
 
 
@@ -128,7 +128,7 @@ def test_escalation_job(app, client, people, course, run_sql):
 
 
 def test_demo_reminder_job_creates_tasks(client, people, course, run_sql):
-    lead = create_lead(client, people["sravani"]["h"], course_id=course)
+    lead = create_deal(client, people["sravani"]["h"], course_id=course)
     demo = call(client, "post", f"/leads/{lead['lead_id']}/demos", people["sravani"]["h"], 201,
                 json={"scheduled_at": future(48)})
     assert jobs.demo_reminders() == 1  # only the booking confirmation is due

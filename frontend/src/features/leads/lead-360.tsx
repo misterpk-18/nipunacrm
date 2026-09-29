@@ -2,9 +2,10 @@ import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { CalendarDays, CalendarPlus, IndianRupee, Mail, MessageCircle, Pencil, Phone, PlusCircle, RotateCcw, Sparkles, UserCog, XCircle } from "lucide-react";
+import { CalendarDays, CalendarPlus, Handshake, IndianRupee, Mail, Pencil, Phone, PlusCircle, RotateCcw, Sparkles, UserCog, XCircle } from "lucide-react";
 import { get, list, post } from "@/api/client";
 import { FOLLOW_UP_PURPOSES, FOLLOW_UP_RESPONSES, MANUAL_INTAKE, REACTIVATE_STAGES, leadKeys, leadsApi, useLead, type Lead } from "@/api/leads";
+import { pipelineApi, pipelineKeys } from "@/api/pipeline";
 import { useLookups } from "@/api/reference";
 import type { BranchRef, CourseRef, Money, UserRef } from "@/api/types";
 import { useAuth } from "@/auth/auth";
@@ -14,7 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { CourseSelect, Field, LookupSelect, NativeSelect, StaffSelect, applyServerErrors } from "@/components/crm/forms";
-import { AiNote, DataTable, Empty, ErrorPanel, Facts, LoadingRows, PageHead, QueryView, Section, Status, Warning } from "@/components/crm/ui";
+import { AiNote, DataTable, Empty, ErrorPanel, Facts, LeadChip, LoadingRows, PageHead, PriorityChip, QueryView, Section, Status, Warning, WhatsAppButton } from "@/components/crm/ui";
+import { CommercialPanel, DeliveryPlanPanel } from "@/features/sales/deal-panels";
+import { SALES_SIDE } from "@/features/sales/shared";
+import { ConvertDialog, QualificationPanel } from "./qualification";
 import { date, dateTime, fromLocalInput, money, phone, relative, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { NewLeadDialog } from "./new-lead-dialog";
@@ -32,7 +36,7 @@ const workable = (lead: Lead) => lead.is_open && lead.stage !== "Admitted";
 export function Lead360({ leadId }: { leadId: number }) {
   const lead = useLead(leadId);
   const [tab, setTab] = useState("timeline");
-  const [dialog, setDialog] = useState<null | "edit" | "assign" | "stage" | "lost" | "reactivate" | "demo" | "another" | "activity">(null);
+  const [dialog, setDialog] = useState<null | "convert" | "edit" | "assign" | "stage" | "lost" | "reactivate" | "demo" | "another" | "activity">(null);
   const { hasRole } = useAuth();
 
   if (lead.isLoading) return <LoadingRows rows={8} />;
@@ -41,43 +45,63 @@ export function Lead360({ leadId }: { leadId: number }) {
   const p = l.person;
   const digits = p.phone.replace(/\D/g, "");
   const close = () => setDialog(null);
+  const converted = l.converted_at !== null;
 
   return (
     <>
       <PageHead
         title={l.name}
         description={`${l.lead_code} · ${p.person_code} · ${l.branch.branch_name} · ${l.course?.course_title ?? "No course yet"} · ${l.original_source} · Owner: ${l.owner?.full_name ?? "Unassigned"}`}
-        actions={
-          <>
-            <Button asChild>
-              <a href={`tel:+${digits}`}>
-                <Phone />
-                Call
-              </a>
-            </Button>
-            <Button variant="outline" asChild>
-              <a href={`https://wa.me/${(p.whatsapp_number ?? p.phone).replace(/\D/g, "")}`} target="_blank" rel="noreferrer">
-                <MessageCircle />
-                WhatsApp
-              </a>
-            </Button>
-            {p.email && (
-              <Button variant="outline" asChild>
-                <a href={`mailto:${p.email}`}>
-                  <Mail />
-                  Email
-                </a>
-              </Button>
-            )}
-          </>
-        }
       />
+      <div className="lead-actions mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 pr-2 sm:border-r">
+          <Phone className="size-4 text-muted-foreground" />
+          <div className="leading-tight">
+            <div className="text-[11px] text-muted-foreground">Phone number</div>
+            <div className="text-sm font-semibold">{phone(p.phone)}</div>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <a href={`tel:+${digits}`}>
+            <Phone />
+            Call
+          </a>
+        </Button>
+        <WhatsAppButton phone={p.whatsapp_number ?? p.phone} />
+        {p.email && (
+          <Button variant="outline" size="sm" asChild>
+            <a href={`mailto:${p.email}`}>
+              <Mail />
+              Email
+            </a>
+          </Button>
+        )}
+        {converted ? (
+          l.pipeline_entry_id !== null && (
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/pipeline" search={{ q: l.lead_code }}>
+                <Handshake />
+                Deal in pipeline
+              </Link>
+            </Button>
+          )
+        ) : (
+          workable(l) &&
+          hasRole(...SALES_SIDE) && (
+            <Button size="sm" disabled={!l.qualified_at} title={l.qualified_at ? "Convert to deal" : "Complete the qualification review first"} onClick={() => setDialog("convert")}>
+              <Handshake />
+              Convert to deal
+            </Button>
+          )
+        )}
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Status>{l.stage}</Status>
-        {l.ai_priority && <Status>{`${l.ai_priority}${l.ai_score !== null ? ` · ${l.ai_score}` : ""}`}</Status>}
-        <Status>{l.intake_status}</Status>
+        {l.ai_priority && <PriorityChip priority={l.ai_priority} score={l.ai_score} />}
+        <LeadChip value={l.intake_status} />
+        <Status kind={converted ? "info" : "neutral"}>{converted ? "Deal" : l.qualified_at ? "Qualified lead" : "Lead"}</Status>
         <span className="break-all text-sm text-muted-foreground">
-          {phone(p.phone)} · {p.email ?? "no email"} · WhatsApp: {p.whatsapp_number ? phone(p.whatsapp_number) : "same as mobile"}
+          {p.email ?? "no email"} · WhatsApp: {p.whatsapp_number ? phone(p.whatsapp_number) : "same as mobile"}
         </span>
       </div>
       {l.lost && (
@@ -93,19 +117,23 @@ export function Lead360({ leadId }: { leadId: number }) {
       <div className="mb-4 flex flex-wrap gap-2">
         {workable(l) && (
           <>
-            <Button size="sm" variant="outline" onClick={() => setDialog("stage")}>
-              Move stage
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDialog("demo")}>
-              <CalendarPlus />
-              Schedule demo
-            </Button>
-            <Button size="sm" variant="outline" asChild>
-              <Link to="/fee-quote" search={{ leadId: l.lead_id }}>
-                <IndianRupee />
-                Fee discussion
-              </Link>
-            </Button>
+            {converted && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setDialog("stage")}>
+                  Move stage
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDialog("demo")}>
+                  <CalendarPlus />
+                  Schedule demo
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link to="/fee-quote" search={{ leadId: l.lead_id }}>
+                    <IndianRupee />
+                    Fee discussion
+                  </Link>
+                </Button>
+              </>
+            )}
             <Button size="sm" variant="outline" onClick={() => setDialog("activity")}>
               <PlusCircle />
               Log call / note
@@ -173,6 +201,9 @@ export function Lead360({ leadId }: { leadId: number }) {
           </div>
         </div>
         <div className="min-w-0 space-y-4">
+          {!converted && <QualificationPanel lead={l} />}
+          {converted && l.is_open && <DeliveryPlanPanel lead={l} />}
+          {converted && <CommercialPanel lead={l} />}
           <Section title="Sales summary">
             <Facts
               columns={1}
@@ -182,18 +213,20 @@ export function Lead360({ leadId }: { leadId: number }) {
                 ["In stage since", dateTime(l.stage_changed_at)],
                 ["Contact channel · entry", `${l.contact_channel} · ${l.entry_method}`],
                 ["Campaign / referral", l.campaign ?? "—"],
+                ["Qualified · converted", `${l.qualified_at ? dateTime(l.qualified_at) : "Not yet"} · ${l.converted_at ? dateTime(l.converted_at) : "Not yet"}`],
                 ["Remarks", l.remarks ?? "—"],
                 ["Created", dateTime(l.created_at)],
               ]}
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <Button asChild size="sm" variant="outline">
-                <Link to="/students/$personId" params={{ personId: String(p.person_id) }}>
+                <Link to="/persons/$personId" params={{ personId: String(p.person_id) }}>
                   Open person
                 </Link>
               </Button>
             </div>
           </Section>
+          {l.pipeline_entry_id !== null && <CardSummary entryId={l.pipeline_entry_id} leadId={l.lead_id} />}
           {workable(l) && (
             <Section title="Log follow-up" subtitle="Adds to the timeline and sets the next follow-up task">
               <FollowUpForm leadId={l.lead_id} />
@@ -202,6 +235,7 @@ export function Lead360({ leadId }: { leadId: number }) {
         </div>
       </div>
 
+      {dialog === "convert" && <ConvertDialog lead={l} onClose={close} />}
       {dialog === "edit" && <EditDialog lead={l} onClose={close} />}
       {dialog === "assign" && <AssignDialog lead={l} onClose={close} />}
       {dialog === "stage" && <StageDialog lead={l} onClose={close} />}
@@ -215,6 +249,47 @@ export function Lead360({ leadId }: { leadId: number }) {
 }
 
 // ---------------------------------------------------------------- tabs
+
+/** The person's pipeline card this lead is on: shared stage, owner and the other courses. */
+function CardSummary({ entryId, leadId }: { entryId: number; leadId: number }) {
+  const card = useQuery({ queryKey: pipelineKeys.entry(entryId), queryFn: () => pipelineApi.get(entryId) });
+  if (!card.data) return null;
+  const c = card.data;
+  const others = c.courses.filter((course) => course.lead_id !== leadId);
+  return (
+    <Section title="Pipeline card" subtitle={c.is_open ? "All open courses on the card share its stage" : `Closed ${dateTime(c.closed_at)}`}>
+      <Facts
+        columns={1}
+        items={[
+          ["Card", `${c.entry_code} · ${c.branch.branch_name}`],
+          ["Card stage", <Status key="stage">{c.stage}</Status>],
+          ["Card owner", c.owner?.full_name ?? "Unassigned"],
+          [
+            "Other courses on the card",
+            others.length ? (
+              <span key="others" className="flex flex-col">
+                {others.map((o) => (
+                  <Link key={o.lead_id} to="/leads/$leadId" params={{ leadId: String(o.lead_id) }} className="text-primary">
+                    {o.course?.course_title ?? o.lead_code}
+                  </Link>
+                ))}
+              </span>
+            ) : (
+              "None"
+            ),
+          ],
+        ]}
+      />
+      {c.is_open && (
+        <Button asChild size="sm" variant="outline" className="mt-3">
+          <Link to="/pipeline" search={{ q: c.entry_code }}>
+            Open in pipeline
+          </Link>
+        </Button>
+      )}
+    </Section>
+  );
+}
 
 function Timeline({ leadId }: { leadId: number }) {
   const q = useQuery({ queryKey: leadKeys.activities(leadId), queryFn: () => leadsApi.activities(leadId) });
@@ -463,7 +538,7 @@ function FormDialog({
   );
 }
 
-const invalidateLead = (id: number) => [leadKeys.detail(id), leadKeys.activities(id), ["leads", "list"]];
+const invalidateLead = (id: number) => [leadKeys.detail(id), leadKeys.activities(id), ["leads", "list"], ["persons"], ["pipeline"]];
 
 function EditDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const form = useForm({
@@ -518,14 +593,16 @@ function AssignDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
 
 function StageDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const lookups = useLookups();
-  const manual = (lookups.data?.enums["lead_stages"] ?? []).filter((s) => !["Payment Pending Verification", "Admitted", "Lost - closed", lead.stage].includes(s));
+  // A lead in the pipeline never moves back to New Enquiry
+  const excluded = ["Payment Pending Verification", "Admitted", "Lost - closed", lead.stage, ...(lead.lead_status === "Active" ? [] : ["New Enquiry"])];
+  const manual = (lookups.data?.enums["lead_stages"] ?? []).filter((s) => !excluded.includes(s));
   const [stage, setStage] = useState(manual[0] ?? "");
   const [note, setNote] = useState("");
   const change = useApiMutation(() => leadsApi.changeStage(lead.lead_id, stage, note || undefined), { success: "Stage updated", invalidate: invalidateLead(lead.lead_id), onSuccess: onClose });
   return (
     <FormDialog
       title="Move stage"
-      description="Payment Pending Verification and Admitted are set by payments and admissions; use Mark lost to close."
+      description="Moves the person's pipeline card, and every open course on it. Payment Pending Verification and Admitted are set by payments and admissions; use Mark lost to close."
       onClose={onClose}
       busy={change.isPending || !stage}
       submitLabel="Move"

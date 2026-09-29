@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config.database import db
@@ -18,7 +18,8 @@ class Payment(db.Model):
     __tablename__ = "payments"
 
     payment_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    receipt_number: Mapped[str] = mapped_column(String(30), unique=True)  # GNT-R-2627-00001 / REV-GNT-2627-00001
+    transaction_number: Mapped[str] = mapped_column(String(30), unique=True)  # TXN-GNT-00001, on record (db 022)
+    receipt_number: Mapped[str | None] = mapped_column(String(30), unique=True)  # GNT-R-2627-00001 once verified
     entry_type: Mapped[str] = mapped_column(PaymentEntryType, default="Payment")
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     payment_mode_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("payment_modes.payment_mode_id"))
@@ -40,6 +41,8 @@ class Payment(db.Model):
     exception_approved_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     correction_request_id: Mapped[int | None] = mapped_column(Integer)
     proof_file_path: Mapped[str | None] = mapped_column(String(500))
+    evidence_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)  # confirmed at verification (db 022)
+    cash_checked: Mapped[bool] = mapped_column(Boolean, default=False)       # independent cash check (cash only)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
 
@@ -49,6 +52,8 @@ class Payment(db.Model):
     collector: Mapped[User | None] = relationship(foreign_keys=[collected_by], lazy="joined")
     verifier: Mapped[User | None] = relationship(foreign_keys=[verified_by], lazy="joined")
     invoice = relationship("Invoice", lazy="joined")
+    allocations: Mapped[list["PaymentAllocation"]] = relationship(lazy="selectin",
+                                                                  order_by="PaymentAllocation.payment_allocation_id")
     reversed_by: Mapped["Payment | None"] = relationship(
         primaryjoin="Payment.payment_id == foreign(Payment.reverses_payment_id)", uselist=False, viewonly=True,
         lazy="select",
@@ -58,10 +63,19 @@ class Payment(db.Model):
     def is_reversed(self) -> bool:
         return self.entry_type == "Payment" and self.reversed_by is not None
 
+    @property
+    def document_kind(self) -> str:
+        """Receipt only once verified; a pending payment is a claim (db 022)."""
+        if self.entry_type == "Reversal":
+            return "Reversal"
+        return {"Verified": "Receipt", "Failed": "Failed claim"}.get(self.verification_status, "Payment claim")
+
     def to_row(self) -> dict:
         return {
             "payment_id": self.payment_id,
+            "transaction_number": self.transaction_number,
             "receipt_number": self.receipt_number,
+            "document_kind": self.document_kind,
             "entry_type": self.entry_type,
             "amount": self.amount,
             "payment_date": self.payment_date,
@@ -71,6 +85,7 @@ class Payment(db.Model):
             "invoice": {"invoice_id": self.invoice_id, "invoice_number": self.invoice.invoice_number}
             if self.invoice_id else None,
             "admission_id": self.admission_id,
+            "allocations": [a.to_dict() for a in self.allocations],
             "collecting_branch": self.collecting_branch.to_summary(),
             "verification_status": self.verification_status,
             "recorded_by": user_summary(self.collector),
@@ -90,8 +105,28 @@ class Payment(db.Model):
             "exception_approved_by": self.exception_approved_by,
             "correction_request_id": self.correction_request_id,
             "proof_file_path": self.proof_file_path,
+            "evidence_reviewed": self.evidence_reviewed,
+            "cash_checked": self.cash_checked,
             "notes": self.notes,
         }
+
+
+class PaymentAllocation(db.Model):
+    """How much of a payment went to each course line of its invoice (db 021). Immutable; reversals negate it."""
+
+    __tablename__ = "payment_allocations"
+
+    payment_allocation_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payment_id: Mapped[int] = mapped_column(Integer, ForeignKey("payments.payment_id"))
+    invoice_line_id: Mapped[int] = mapped_column(Integer, ForeignKey("invoice_lines.invoice_line_id"))
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
+
+    line = relationship("InvoiceLine", lazy="joined")
+
+    def to_dict(self) -> dict:
+        return {"invoice_line_id": self.invoice_line_id, "line_code": self.line.line_code,
+                "course": self.line.course.to_summary(), "amount": self.amount}
 
 
 class PaymentCorrectionRequest(db.Model):
@@ -122,6 +157,7 @@ class PaymentCorrectionRequest(db.Model):
             "correction_request_id": self.correction_request_id,
             "request_code": self.request_code,
             "payment_id": self.payment_id,
+            "transaction_number": self.payment.transaction_number,
             "receipt_number": self.payment.receipt_number,
             "invoice_id": self.payment.invoice_id,
             "collecting_branch_id": self.payment.collecting_branch_id,
@@ -144,17 +180,19 @@ class UnallocatedAdvance(db.Model):
     __tablename__ = "unallocated_advances"
 
     payment_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    receipt_number: Mapped[str] = mapped_column(String(30))
+    receipt_number: Mapped[str | None] = mapped_column(String(30))
     person_id: Mapped[int] = mapped_column(Integer, ForeignKey("persons.person_id"))
     lead_id: Mapped[int | None] = mapped_column(Integer)
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     payment_date: Mapped[date] = mapped_column(Date)
     collecting_branch_id: Mapped[int] = mapped_column(Integer)
     verification_status: Mapped[str] = mapped_column(PaymentVerification)
+    transaction_number: Mapped[str] = mapped_column(String(30))
 
     person: Mapped[Person] = relationship(lazy="joined", viewonly=True)
 
     def to_dict(self) -> dict:
-        return {"payment_id": self.payment_id, "receipt_number": self.receipt_number, "person": self.person.to_summary(),
+        return {"payment_id": self.payment_id, "transaction_number": self.transaction_number,
+                "receipt_number": self.receipt_number, "person": self.person.to_summary(),
                 "lead_id": self.lead_id, "amount": self.amount, "payment_date": self.payment_date,
                 "collecting_branch_id": self.collecting_branch_id, "verification_status": self.verification_status}

@@ -1,10 +1,10 @@
 """Admissions, batches, allocations and curriculum queries."""
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, exists, or_, select
 
 from config.database import db
 from models import (
     Admission, AdmissionBalance, AdmissionCurriculum, AdmissionFeeChange, Batch, BatchAllocation,
-    BatchAllocationQueue, CurriculumVersion, Person,
+    BatchAllocationQueue, CurriculumVersion, Invoice, InvoiceLine, Person,
 )
 
 
@@ -33,8 +33,27 @@ def admissions_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
     return stmt
 
 
-def admission_for_invoice(invoice_id: int) -> Admission | None:
-    return db.session.execute(select(Admission).where(Admission.invoice_id == invoice_id)).scalar_one_or_none()
+def admission_for_line(invoice_line_id: int) -> Admission | None:
+    return db.session.execute(select(Admission).where(Admission.invoice_line_id == invoice_line_id)).scalar_one_or_none()
+
+
+def unadmitted_lines_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
+    """Courses on Issued invoices with no admission yet (the New Admission review)."""
+    stmt = (select(InvoiceLine).join(Invoice, Invoice.invoice_id == InvoiceLine.invoice_id)
+            .join(Person, Person.person_id == Invoice.person_id)
+            .where(Invoice.status == "Issued",
+                   ~exists().where(Admission.invoice_line_id == InvoiceLine.invoice_line_id))
+            .order_by(Invoice.issued_on.desc(), InvoiceLine.invoice_line_id.desc()))
+    if branch_ids is not None:
+        stmt = stmt.where(Invoice.collecting_branch_id.in_(branch_ids))
+    if filters.get("branch_id"):
+        stmt = stmt.where(Invoice.collecting_branch_id == filters["branch_id"])
+    if filters.get("invoice_id"):
+        stmt = stmt.where(Invoice.invoice_id == filters["invoice_id"])
+    if filters.get("q"):
+        pattern = f"%{filters['q']}%"
+        stmt = stmt.where(or_(Invoice.invoice_number.ilike(pattern), Person.full_name.ilike(pattern)))
+    return stmt
 
 
 def active_allocations(admission_id: int) -> list[BatchAllocation]:

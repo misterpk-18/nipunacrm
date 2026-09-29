@@ -98,6 +98,11 @@ def counsellor_dashboard():
     return management_controller.counsellor_dashboard()
 
 
+@route("/dashboard/overview", "get", STAFF_ROLES)
+def dashboard_overview():
+    return management_controller.dashboard_overview()
+
+
 # ---------------------------------------------------------------- admin
 
 @route("/integrations", "get", ADMIN_ROLES)

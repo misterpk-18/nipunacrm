@@ -71,6 +71,14 @@ def test_branch_details(client, admin, sales):
     assert client.patch(f"{API}/branches/1", json={"address": "x"}, headers=sales).status_code == 403
     assert client.get(f"{API}/branches/99", headers=sales).status_code == 404
 
+    # Invoice issuer details (db 021): seeded from the V4 handoff, admin-editable
+    branch = client.get(f"{API}/branches/2", headers=sales).get_json()["data"]
+    assert branch["legal_name"] == "Nipuna Technologies" and branch["invoice_accent"] == "#137E89"
+    assert branch["email"] == "vijayawada@nipunacareers.com" and branch["address"].startswith("Door No. 40-27-88/1")
+    accent = client.patch(f"{API}/branches/2", json={"invoice_accent": "#0F6E77"}, headers=admin)
+    assert accent.status_code == 200 and accent.get_json()["data"]["invoice_accent"] == "#0F6E77"
+    assert client.patch(f"{API}/branches/2", json={"invoice_accent": "teal"}, headers=admin).status_code == 400
+
 
 def test_replace_shifts_changes_staffed_deadlines(client, admin):
     url = f"{API}/branches/1/shifts"

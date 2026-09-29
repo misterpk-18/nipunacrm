@@ -18,6 +18,8 @@ class Branch(db.Model):
     address: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(String(20))
     email: Mapped[str | None] = mapped_column(String(255))
+    legal_name: Mapped[str] = mapped_column(String(150), default="Nipuna Technologies")  # invoice issuer (db 021)
+    invoice_accent: Mapped[str | None] = mapped_column(String(7))                        # e.g. #6251DA
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -32,6 +34,8 @@ class Branch(db.Model):
             "address": self.address,
             "phone": self.phone,
             "email": self.email,
+            "legal_name": self.legal_name,
+            "invoice_accent": self.invoice_accent,
             "is_active": self.is_active,
         }
 

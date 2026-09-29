@@ -47,11 +47,11 @@ export type InvoiceRow = {
   invoice_number: string;
   status: string;
   billed_amount: Money;
-  course: CourseRef;
+  courses: { invoice_line_id: number; course: CourseRef; billed_amount: Money }[];
   collecting_branch: BranchRef;
   payment_plan: { plan_code: string; plan_name: string } | null;
   issued_on: DateOnly;
-  admission_id: number | null;
+  admitted_lines: number;
   verified_paid: Money;
   pending_verification: Money;
   outstanding: Money;
@@ -61,7 +61,8 @@ export type InvoiceRow = {
 
 export type PaymentRow = {
   payment_id: number;
-  receipt_number: string;
+  transaction_number: string;
+  receipt_number: string | null;
   entry_type: string;
   amount: Money;
   payment_date: DateOnly;
@@ -180,7 +181,7 @@ export const studentsApi = {
   get: (personId: number) => get<Student>(`/students/${personId}`),
   tab: <K extends StudentTab>(personId: number, tab: K) => get<StudentTabs[K]>(`/students/${personId}/${tab}`),
   person: (personId: number) => get<PersonDetail>(`/persons/${personId}`),
-  leadsByPhone: (phone: string) => list<PersonLead>("/leads", { q: phone.replace(/\D/g, "").slice(-10), per_page: 50 }),
+  leadsByPhone: (phone: string) => list<PersonLead>("/leads", { q: phone.replace(/\D/g, "").slice(-10), per_page: 50, lead_status: "All" }),
   uploadDocument: (personId: number, body: { document_type_id: number; admission_id?: number | null; file: File }) => {
     const form = new FormData();
     form.append("document_type_id", String(body.document_type_id));

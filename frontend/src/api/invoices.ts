@@ -2,8 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { get, list, post, put, type Query } from "./client";
 import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef } from "./types";
 import type { CorrectionRequest, PaymentRow } from "./payments";
+import type { Issuer } from "./deals";
 
 export type InvoiceCompletion = "Unpaid" | "Part Paid" | "Paid";
+
+/** One course on an invoice (db 021). */
+export type InvoiceCourse = { invoice_line_id: number; line_code: string; lead_id: number; course: CourseRef; billed_amount: Money };
 
 export type InvoiceRow = {
   invoice_id: number;
@@ -11,19 +15,17 @@ export type InvoiceRow = {
   status: "Issued" | "Superseded" | "Cancelled";
   billed_amount: Money;
   person: PersonRef;
-  lead_id: number | null;
-  lead_code: string | null;
-  course: CourseRef | null;
   collecting_branch: BranchRef;
-  payment_plan: { plan_code: string; plan_name: string } | null;
+  courses: InvoiceCourse[];
+  payment_plan: { plan_code: string; plan_name: string; installments: number } | null;
   issued_on: DateOnly;
-  admission_id: number | null;
   verified_paid: Money;
   pending_verification: Money;
   waived: Money;
   outstanding: Money;
   payment_completion: InvoiceCompletion;
   invoice_state: string;
+  admitted_lines: number;
 };
 
 export type ScheduleRow = {
@@ -39,45 +41,80 @@ export type ScheduleRow = {
   contact_hold?: boolean;
 };
 
+export type InvoiceLine = {
+  invoice_line_id: number;
+  line_no: number;
+  line_code: string;
+  lead: { lead_id: number; lead_code: string; stage: string };
+  course: CourseRef;
+  fee_discussion_id: number;
+  fee_version_id: number;
+  delivery_plan_id: number | null;
+  standard_fee: Money;
+  billed_amount: Money;
+  original_billed_amount: Money | null;
+  revised_at: DateTime | null;
+  verified_paid: Money;
+  pending_verification: Money;
+  waived: Money;
+  outstanding: Money;
+  open_to_allocate: Money;
+  payment_completion: InvoiceCompletion;
+  admission_id: number | null;
+};
+
 export type InvoiceDetail = InvoiceRow & {
-  fee_discussion_id: number | null;
-  fee_version_id: number | null;
-  standard_fee: Money | null;
+  standard_fee: Money;
   terms: string | null;
   day0_date: DateOnly | null;
-  agreed_due_days: number[] | null;
+  issuer: Issuer;
   superseded_by_invoice_id: number | null;
   cancel_reason: string | null;
   original_billed_amount: Money | null;
   revised_at: DateTime | null;
   issued_by: number | null;
   created_at: DateTime;
+  lines: InvoiceLine[];
   schedule: ScheduleRow[];
+  split: string;
   payments: PaymentRow[];
+  receipts: PaymentRow[];
+  admissions: { admission_id: number; admission_code: string; course: CourseRef; enrolment_status: string }[];
+  promises: { promise_id: number; promised_amount: Money; promised_date: DateOnly; status: string }[];
   correction_requests: CorrectionRequest[];
 };
 
+export type ReadinessCheck = { check: string; ok: boolean; detail: string; token?: Money; verified_total?: Money };
 export type AdmissionReadiness = {
   invoice_id: number;
+  invoice_number: string;
   ready: boolean;
-  checks: { check: string; ok: boolean; detail: string }[];
-  missing: string[];
-  admission_id: number | null;
+  lines: {
+    invoice_line_id: number;
+    line_code: string;
+    course: CourseRef;
+    lead: { lead_id: number; lead_code: string };
+    ready: boolean;
+    checks: ReadinessCheck[];
+    missing: string[];
+    admission: { admission_id: number; admission_code: string } | null;
+  }[];
 };
 
 export type PrintableInvoice = {
   document: string;
   invoice_number: string;
   issued_on: DateOnly;
-  branch: { name: string; address: string | null; phone: string | null; email: string | null };
+  status: string;
+  payment_status: string;
+  issuer: Issuer;
   bill_to: PersonRef & { email?: string | null };
-  course: CourseRef | null;
-  standard_fee: Money | null;
-  billed_amount: Money;
+  lines: { line_no: number; line_code: string; course: CourseRef; lead_code: string; standard_fee: Money; billed_amount: Money }[];
   terms: string | null;
-  plan: string | null;
-  schedule: { installment_no: number; due_date: DateOnly; amount_due: Money }[];
-  balance: { verified_paid: Money; outstanding: Money };
+  plan: { plan_name: string; split: string };
+  totals: { standard_fee: Money; billed_amount: Money; discount: Money; verified_paid: Money; pending_verification: Money; waived: Money; balance_due: Money };
+  installments: { installment_no: number; due_date: DateOnly; amount_due: Money; due_position: string | null; balance: Money | null }[];
+  receipts: { receipt_number: string; transaction_number: string; payment_date: DateOnly; verified_at: DateTime | null; amount: Money; entry_type: string; mode: string | null }[];
 };
 
 export type InvoiceTotals = { billed: Money; verified_paid: Money; pending_verification: Money; outstanding: Money };
@@ -90,6 +127,7 @@ export type InvoiceFilters = {
   completion?: string;
   person_id?: number;
   lead_id?: number;
+  outstanding?: boolean;
   q?: string;
 };
 

@@ -29,6 +29,8 @@ export type KpiTiles = {
   pending_verification_excluded: Money;
   overdue_dues: Money;
   demos: DemoCounts;
+  /** Open invoices whose next instalment is due more than 30 days after the last verified payment. */
+  long_gap_plans: { count: number; outstanding: Money };
 };
 
 export type BranchTiles = KpiTiles & {

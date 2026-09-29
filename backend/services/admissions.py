@@ -1,15 +1,22 @@
-"""Admissions: create from an invoice, complimentary courses, list / detail / update, cancel, service-branch
-transfers and post-admission fee changes (admin approves, Accounts applies).
+"""Admissions: created per invoiced course (automatically on verification, or from the eligibility review),
+complimentary courses, list / detail / update, cancel, service-branch transfers and post-admission fee changes
+(admin approves, Accounts applies).
 
-The database enforces both prerequisites (accepted plan on the invoice's version, a Verified qualifying payment
-on the invoice), copies parties / fee / plan from the invoice, links the invoice's payments, moves the lead to
-Admitted and the discussion to Converted, and freezes fee / plan / date afterwards.
+The database enforces the prerequisites (the course's accepted delivery plan, verified money on its invoice line
+reaching the ₹1,000 token), copies parties / fee / plan / delivery from the line, links payments wholly on the line,
+moves the lead to Admitted and the discussion to Converted, and freezes fee / plan / date afterwards.
 """
 from datetime import date, datetime, timezone
 
 from config.database import db
-from models import Admission, AdmissionFeeChange, AdmissionTransfer, Branch, Course, FeeDiscussion
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
+from models import (
+    Admission, AdmissionFeeChange, AdmissionTransfer, Branch, Course, DeliveryPlan, Invoice, InvoiceLine,
+)
 from repositories import admissions as admissions_repo
+from repositories import invoices as invoices_repo
 from repositories import users as users_repo
 from repositories.common import paginate
 from services import audit, tasks
@@ -38,16 +45,48 @@ def _check_staff(user_id: int, branch_id: int, field: str) -> None:
 
 # ---------------------------------------------------------------- create
 
-def create(data: dict) -> Admission:
+def _line_for(data: dict) -> InvoiceLine:
+    """The invoiced course: invoice_line_id, or invoice_id for a one-course invoice."""
+    if data.get("invoice_line_id"):
+        line = db.session.get(InvoiceLine, data["invoice_line_id"])
+        if line is None:
+            raise NotFound("Invoice line not found")
+        invoices_service.get_invoice(line.invoice_id)
+        return line
     invoice = invoices_service.get_invoice(data["invoice_id"])
+    if len(invoice.lines) != 1:
+        raise ValidationError(f"{invoice.invoice_number} has {len(invoice.lines)} courses; choose one",
+                              {"invoice_line_id": ["Required for a multi-course invoice"]})
+    return invoice.lines[0]
+
+
+def _insert_admission(line: InvoiceLine, data: dict, created_by: int) -> Admission:
+    admission = Admission(
+        invoice_id=line.invoice_id, invoice_line_id=line.invoice_line_id, service_branch_id=data.get("service_branch_id"),
+        admission_date=data.get("admission_date") or date.today(),
+        counsellor_id=line.lead.assigned_to, created_by=created_by, **{f: data.get(f) for f in OWNER_FIELDS},
+    )
+    db.session.add(admission)
+    db.session.flush()  # prerequisites checked; code, parties, fee, plan and delivery filled by the DB
+    db.session.refresh(admission)
+    audit.record("ADMISSION_CREATED", "admission", admission.admission_id,
+                 new={"admission_code": admission.admission_code, "invoice_id": line.invoice_id,
+                      "invoice_line_id": line.invoice_line_id, "final_fee": admission.final_fee},
+                 branch_id=admission.original_branch_id)
+    return admission
+
+
+def create(data: dict) -> Admission:
+    """Manual creation from the eligibility review (normally admissions are created on verification)."""
+    line = _line_for(data)
     user = current_user()
-    branch_id = invoice.collecting_branch_id
-    if not (user.is_manager_of(branch_id) or user.has_role(*COUNSELLOR_ROLES, branch_id=branch_id)):
-        raise Forbidden("Only counsellors or a branch manager can create admissions")
-    existing = admissions_repo.admission_for_invoice(invoice.invoice_id)
+    branch_id = line.invoice.collecting_branch_id
+    if not (user.is_manager_of(branch_id) or user.has_role(*COUNSELLOR_ROLES, "ACCOUNTS", branch_id=branch_id)):
+        raise Forbidden("Only counsellors, accounts or a branch manager can create admissions")
+    existing = admissions_repo.admission_for_line(line.invoice_line_id)
     if existing is not None:
-        raise Conflict(f"Invoice {invoice.invoice_number} is already admitted as {existing.admission_code}",
-                       {"admission_id": existing.admission_id})
+        raise Conflict(f"{line.course.course_title} on {line.invoice.invoice_number} is already admitted as "
+                       f"{existing.admission_code}", {"admission_id": existing.admission_id})
     if data.get("service_branch_id") and db.session.get(Branch, data["service_branch_id"]) is None:
         raise ValidationError("Unknown branch", {"service_branch_id": ["Not found"]})
     if data.get("admission_date") and data["admission_date"] > date.today():
@@ -55,22 +94,62 @@ def create(data: dict) -> Admission:
     for field in OWNER_FIELDS:
         if data.get(field):
             _check_staff(data[field], branch_id, field)
-
-    discussion = db.session.get(FeeDiscussion, invoice.fee_discussion_id)
-    admission = Admission(
-        invoice_id=invoice.invoice_id, service_branch_id=data.get("service_branch_id"),
-        admission_date=data.get("admission_date") or date.today(),
-        counsellor_id=discussion.counsellor_id or invoice.lead.assigned_to, created_by=user.user_id,
-        **{f: data.get(f) for f in OWNER_FIELDS},
-    )
-    db.session.add(admission)
-    db.session.flush()  # prerequisites checked; code, parties, fee and plan filled by the DB
-    db.session.refresh(admission)
+    admission = _insert_admission(line, data, user.user_id)
     db.session.expire_all()
-    audit.record("ADMISSION_CREATED", "admission", admission.admission_id,
-                 new={"admission_code": admission.admission_code, "invoice_id": invoice.invoice_id,
-                      "final_fee": admission.final_fee}, branch_id=admission.original_branch_id)
     return get_admission(admission.admission_id)
+
+
+def auto_admit(invoice_id: int) -> list[Admission]:
+    """After verification: every course line of the invoice whose verified money reached the admission token gets
+    its admission — once (unique per line), reusing the person. A line the database refuses (e.g. an offer already
+    used) is left for the eligibility review, with a task for the branch manager."""
+    invoice = db.session.get(Invoice, invoice_id)
+    if invoice is None or invoice.status != "Issued":
+        return []
+    created = []
+    for line in invoice.lines:
+        if admissions_repo.admission_for_line(line.invoice_line_id) is not None or not line.lead.is_open:
+            continue
+        token = invoices_repo.line_token_status(line.invoice_line_id)
+        if token["payment_id"] is None and token["token"] > 0:
+            continue
+        savepoint = db.session.begin_nested()
+        try:
+            admission = _insert_admission(line, {}, current_user().user_id)
+            savepoint.commit()
+        except SQLAlchemyError as exc:
+            savepoint.rollback()
+            message = str(getattr(exc, "orig", exc)).split("\n")[0]
+            tasks.create_system_task("GENERAL", f"Admission blocked for {line.course.course_title} on "
+                                     f"{invoice.invoice_number}: {message}", invoice.collecting_branch_id,
+                                     datetime.now(timezone.utc), team_role_code="BRANCH_MANAGER",
+                                     dedupe_key=f"admission-blocked:{line.invoice_line_id}", invoice_id=invoice_id)
+            continue
+        created.append(admission)
+    if created:
+        db.session.expire_all()
+    return created
+
+
+def eligibility(filters: dict, page: int, per_page: int):
+    """New Admission review: invoiced courses not yet admitted, with what each still needs."""
+    lines, meta = paginate(admissions_repo.unadmitted_lines_stmt(filters, current_user().branch_ids()), page, per_page)
+    rows = []
+    for line in lines:
+        token = invoices_repo.line_token_status(line.invoice_line_id)
+        plan = db.session.execute(select(DeliveryPlan).where(DeliveryPlan.lead_id == line.lead_id)).scalar_one_or_none()
+        plan_ok = plan is not None and plan.accepted_at is not None
+        token_ok = token["payment_id"] is not None or token["token"] == 0
+        rows.append({
+            **line.to_dict(), "invoice": line.invoice.to_summary(), "person": line.invoice.person.to_summary(),
+            "branch": line.invoice.collecting_branch.to_summary(),
+            "delivery_plan": plan.to_dict() if plan else None, "token": token["token"],
+            "verified_total": token["verified_total"], "eligible": plan_ok and token_ok and line.lead.is_open,
+            "waiting_for": [w for w, ok in (("accepted delivery plan", plan_ok),
+                                            (f"₹{token['token']:.2f} verified", token_ok),
+                                            ("an open deal", line.lead.is_open)) if not ok],
+        })
+    return rows, meta
 
 
 def add_complimentary(admission_id: int, data: dict) -> Admission:
