@@ -5,7 +5,7 @@ from sqlalchemy import delete, extract, select
 
 from config.database import db
 from models import Branch, BranchShift, Holiday
-from services import audit
+from services import audit, lms_sync
 from services.errors import NotFound, ValidationError
 
 
@@ -26,7 +26,9 @@ def update_branch(branch_id: int, data: dict) -> Branch:
     for field, value in data.items():
         setattr(branch, field, value)
     db.session.flush()
-    audit.record("BRANCH_UPDATED", "branch", branch_id, old=old, new=branch.to_dict(), branch_id=branch_id)
+    new = branch.to_dict()
+    audit.record("BRANCH_UPDATED", "branch", branch_id, old=old, new=new, branch_id=branch_id)
+    lms_sync.branch_changed(branch_id, [field for field in data if old[field] != new[field]])
     return branch
 
 

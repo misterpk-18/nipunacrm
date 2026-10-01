@@ -1,16 +1,16 @@
 ---
 name: build-api-step
-description: Build or extend Nipuna CRM backend APIs in backend/ following docs/API_PLAN.md and the project's layered Flask structure (routes → controllers → services → repositories → models). Use when implementing an API_PLAN step, adding or changing endpoints, or touching auth / branch scoping / validation in the backend.
+description: Build or extend Nipuna CRM backend APIs in backend/ following docs/API.md and the project's layered Flask structure (routes → controllers → services → repositories → models). Use when implementing an API build step, adding or changing endpoints, or touching auth / branch scoping / validation in the backend.
 ---
 
 # Building an API step (backend/)
 
-Flask + SQLAlchemy 2 over the existing `nipunacrm` schema. Follow `docs/API_PLAN.md` (build order, endpoint tables, conventions) and keep it up to date.
+Flask + SQLAlchemy 2 over the existing `nipunacrm` schema. Follow `docs/API.md` (build order, endpoint tables, conventions) and keep it up to date.
 
 ## 0. Read first
 
-1. The step's section in `docs/API_PLAN.md` (endpoints, roles, notes) and any "As built" notes of earlier steps.
-2. The matching section of `docs/DB_PHASES.md` — the database already enforces many rules; don't re-implement them, let their messages through.
+1. The step's section in `docs/API.md` (endpoints, roles, notes) and any "As built" notes of earlier steps.
+2. The matching section of `docs/DATABASE.md` — the database already enforces many rules; don't re-implement them, let their messages through.
 3. The real columns of every table you'll map:
    `psql -d nipunacrm -At -F'|' -c "SELECT column_name, udt_name, is_nullable, column_default FROM information_schema.columns WHERE table_name='<t>' ORDER BY ordinal_position"`
    and enum values: `SELECT t.typname, string_agg(e.enumlabel, ' | ' ORDER BY e.enumsortorder) FROM pg_type t JOIN pg_enum e ON e.enumtypid=t.oid GROUP BY 1`.
@@ -98,9 +98,9 @@ cd backend && ../venv/bin/pytest -q
 
 ## 8. Finish
 
-- Mark the step `✅` in `docs/API_PLAN.md` and add an **"As built"** list: extra endpoints, deviations, permission decisions, and assumptions not from the prototype.
+- Mark the step `✅` in `docs/API.md` and add an **"As built"** list: extra endpoints, deviations, permission decisions, and assumptions not from the prototype.
 - Report to the user: endpoints, rules enforced, test count, and the assumptions to confirm.
 
-## Conventions (from docs/API_PLAN.md)
+## Conventions (from docs/API.md)
 
 `/api/v1` prefix · `{"data": ...}` / `{"data": [...], "meta": {page, per_page, total, pages}}` / `{"error": {code, message, details}}` · money as strings `"27000.00"` · ISO 8601 dates (IST business dates) · enum values as stored · IDs plus human codes in responses · opaque bearer session tokens (`user_sessions`, 30-min idle, 12-h max, fresh auth 15 min).

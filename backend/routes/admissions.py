@@ -53,6 +53,21 @@ def cancel_admission(admission_id: int):
     return admissions_controller.cancel_admission(admission_id)
 
 
+@route("/admissions/<int:admission_id>/pause", "post", ADMIN_ROLES + ("BRANCH_MANAGER",))
+def pause_admission(admission_id: int):
+    return admissions_controller.pause_admission(admission_id)
+
+
+@route("/admissions/<int:admission_id>/resume", "post", ADMIN_ROLES + ("BRANCH_MANAGER",))
+def resume_admission(admission_id: int):
+    return admissions_controller.resume_admission(admission_id)
+
+
+@route("/lms/sync-status", "get", ADMISSION_READERS)
+def lms_sync_status():
+    return admissions_controller.lms_sync_status()
+
+
 @route("/admissions/<int:admission_id>/transfers", "post", ADMIN_ROLES + ("BRANCH_MANAGER",))
 def transfer_admission(admission_id: int):
     return admissions_controller.transfer_admission(admission_id)
@@ -73,7 +88,7 @@ def reject_fee_change(fee_change_id: int):
     return admissions_controller.decide_fee_change(fee_change_id, False)
 
 
-@route("/admission-fee-changes/<int:fee_change_id>/apply", "post", ("ACCOUNTS",), fresh=True)
+@route("/admission-fee-changes/<int:fee_change_id>/apply", "post", ADMIN_ROLES + ("ACCOUNTS",), fresh=True)
 def apply_fee_change(fee_change_id: int):
     return admissions_controller.apply_fee_change(fee_change_id)
 

@@ -9,7 +9,8 @@ import { CourseSelect, Field } from "@/components/crm/forms";
 import { ConfirmAction, DataTable, Empty, Section, Status } from "@/components/crm/ui";
 import { dateTime } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
-import { FormDialog } from "./shared";
+import { useCan } from "./can";
+import { FormDialog, LmsOwnedNote } from "./shared";
 
 /** Curriculum versions per course: create (optionally publish), publish a draft (retires the previous one). */
 export function CurriculumVersions({ className }: { className?: string }) {
@@ -17,7 +18,8 @@ export function CurriculumVersions({ className }: { className?: string }) {
   const [courseId, setCourseId] = useState("");
   const [form, setForm] = useState({ course_id: "", version_label: "", notes: "", publish: false });
   const versions = useCurriculumVersions(courseId ? Number(courseId) : undefined);
-  const canManage = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "ACADEMIC_COORDINATOR");
+  const { lmsOwned } = useCan();
+  const canManage = !lmsOwned && hasRole("FOUNDER_CEO", "SUPER_ADMIN", "ACADEMIC_COORDINATOR");
   const create = useApiMutation(
     () =>
       batchesApi.createCurriculumVersion({
@@ -70,6 +72,9 @@ export function CurriculumVersions({ className }: { className?: string }) {
         ) : undefined
       }
     >
+      <div className="mb-3">
+        <LmsOwnedNote what="Curriculum versions" />
+      </div>
       <div className="mb-3 max-w-md">
         <Field label="Filter by course" htmlFor="cv-filter">
           <CourseSelect id="cv-filter" value={courseId} placeholder="All courses" onChange={(e) => setCourseId(e.target.value)} />
@@ -85,7 +90,7 @@ export function CurriculumVersions({ className }: { className?: string }) {
         columns={[
           { header: "Course", cell: (v) => <span className="block max-w-72 truncate">{`${v.course.course_title} (${v.course.course_code})`}</span> },
           { header: "Version", cell: (v) => <b>{v.version_label}</b> },
-          { header: "Status", cell: (v) => <Status>{v.status}</Status> },
+          { header: "Status", cell: (v) => <Status>{v.lms_mirrored ? "From LMS" : v.status}</Status> },
           { header: "Published", cell: (v) => dateTime(v.published_at) },
           { header: "Notes", cell: (v) => <span className="block max-w-56 truncate">{v.notes ?? "—"}</span> },
           {

@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { get, list, patch, post, type Query } from "./client";
 import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef, UserRef } from "./types";
 
-export const ENROLMENT_STATUSES = ["Awaiting Batch Allocation", "Scheduled", "In Progress", "Deferred", "Paused", "Completed", "Cancelled"];
+export const ENROLMENT_STATUSES = ["Awaiting Batch Allocation", "Scheduled", "In Progress", "Paused", "Completed", "Cancelled"];
+/** Enrolments a Branch Manager can pause (the LMS pauses its enrolments; the pull confirms). */
+export const PAUSABLE_STATUSES = ["Awaiting Batch Allocation", "Scheduled", "In Progress"];
 export const CURRICULUM_STATUSES = ["Mapping Pending", "Mapped"];
 export const HANDOVER_STATUSES = ["Pending", "Completed"];
 export const LMS_STATUSES = ["Not Created", "Invited", "Active", "Inactive", "Completed"];
@@ -53,6 +55,9 @@ export type Allocation = {
   allocated_at: DateTime;
   ended_at: DateTime | null;
   end_reason: string | null;
+  /** LMS combo track (db 028); null for a single course. */
+  track_code: string | null;
+  lms_mirrored: boolean;
 };
 
 export type CurriculumVersion = {
@@ -63,6 +68,8 @@ export type CurriculumVersion = {
   notes: string | null;
   published_by: number | null;
   published_at: DateTime | null;
+  /** A version the LMS runs, mirrored by the status pull (db 028). */
+  lms_mirrored: boolean;
   created_at: DateTime;
 };
 
@@ -105,6 +112,8 @@ export type Admission = AdmissionRow & {
   cancellation: { reason?: string | null; cancelled_at?: DateTime | null; cancelled_by?: number | null } | null;
   academic_completed_at: DateTime | null;
   completion_authorised_by: number | null;
+  /** The LMS Academic Coordinator who decided the completion ("LMS" when the LMS didn't say). */
+  completion_authorised_by_email: string | null;
   support_until: DateOnly | null;
   created_at: DateTime;
 };
@@ -213,6 +222,8 @@ export const admissionsApi = {
     list<EligibleCourse>("/admissions/eligibility", { per_page: 50, ...query } as Query),
   update: (id: number, body: AdmissionUpdate) => patch<AdmissionDetail>(`/admissions/${id}`, body),
   cancel: (id: number, reason: string) => post<Admission>(`/admissions/${id}/cancel`, { reason }),
+  pause: (id: number, reason: string) => post<AdmissionDetail>(`/admissions/${id}/pause`, { reason }),
+  resume: (id: number) => post<AdmissionDetail>(`/admissions/${id}/resume`, {}),
   transfer: (id: number, body: { to_branch_id: number; reason: string; effective_date?: DateOnly | null }) =>
     post<Record<string, unknown>>(`/admissions/${id}/transfers`, body),
   complimentary: (id: number, body: { offer_id: number; course_id: number }) => post<Admission>(`/admissions/${id}/complimentary`, body),

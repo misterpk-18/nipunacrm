@@ -15,7 +15,7 @@ import { useApiMutation } from "@/lib/mutation";
 import { BatchDialog } from "./batch-dialog";
 import { timing } from "./batches-list";
 import { useCan } from "./can";
-import { CheckResult, FormDialog } from "./shared";
+import { CheckResult, FormDialog, LmsOwnedNote } from "./shared";
 
 const INVALIDATE = [batchKeys.all, admissionKeys.all, studentKeys.all];
 
@@ -81,6 +81,9 @@ export function BatchDetailView({ batchId }: { batchId: number }) {
           ) : undefined
         }
       />
+      <div className="mb-4">
+        <LmsOwnedNote what="Batches, allocations and joining dates" />
+      </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <Schedule b={b} />
         <div className="min-w-0 space-y-4 lg:col-span-2">
@@ -195,7 +198,7 @@ function Members({ batchId }: { batchId: number }) {
   });
   if (!b) return null;
   const branch = b.branch.branch_id;
-  const canJoin = can.coordinator(branch) || can.at(branch, "TRAINER");
+  const canJoin = can.joining(branch);
 
   const actions = (x: Allocation) => (
     <div className="flex gap-1">

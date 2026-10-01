@@ -39,6 +39,12 @@ class BaseConfig:
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
     AI_MODEL = os.getenv("AI_MODEL", "claude-opus-5")
 
+    # Nipuna LMS (db 026): admission / course / finance events are posted there by the lms-sync job.
+    # Without both values the events stay Pending in lms_outbox.
+    LMS_BASE_URL = os.getenv("LMS_BASE_URL")
+    LMS_SERVICE_KEY = os.getenv("LMS_SERVICE_KEY")
+    LMS_TIMEOUT_SECONDS = float(os.getenv("LMS_TIMEOUT_SECONDS", "10"))
+
 
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
@@ -54,6 +60,8 @@ class TestingConfig(BaseConfig):
     LOG_LEVEL = "WARNING"
     UPLOAD_DIR = Path(os.getenv("TEST_UPLOAD_DIR", "/tmp/nipuna-test-uploads"))
     ANTHROPIC_API_KEY = None  # tests never call the real API
+    LMS_BASE_URL = "http://lms.test"  # tests replace the HTTP call
+    LMS_SERVICE_KEY = "test-service-key"
 
 
 class ProductionConfig(BaseConfig):

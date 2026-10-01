@@ -1,6 +1,6 @@
 ---
 name: db-migration
-description: Change the nipunacrm PostgreSQL schema — write the next numbered SQL migration in db/, apply it, test it in a rolled-back transaction, prove a clean replay, reset sequences and update docs/DB_PHASES.md. Use for any new or changed table, column, constraint, trigger, function, view, enum value or seed data.
+description: Change the nipunacrm PostgreSQL schema — write the next numbered SQL migration in db/, apply it, test it in a rolled-back transaction, prove a clean replay, reset sequences and update docs/DATABASE.md. Use for any new or changed table, column, constraint, trigger, function, view, enum value or seed data.
 ---
 
 # Database migrations (nipunacrm)
@@ -9,7 +9,7 @@ The SQL files in `db/` are the **only** source of the schema. SQLAlchemy models 
 
 ## 1. Before writing
 
-1. Read `docs/DB_PHASES.md` (status table + the section for the area) and the latest migrations.
+1. Read `docs/DATABASE.md` (status table + the section for the area) and the latest migrations.
 2. Look at the real tables, not memory:
    ```bash
    psql -d nipunacrm -At -F'|' -c "SELECT column_name, udt_name, is_nullable, column_default FROM information_schema.columns WHERE table_name='<table>' ORDER BY ordinal_position"
@@ -78,8 +78,8 @@ The replay check must report `schema diff lines: 0`.
 
 ## 6. Update docs and code
 
-- `docs/DB_PHASES.md`: add the file to the status table and a section: changed decisions, added tables/views/functions, rules enforced.
-- `docs/API_PLAN.md`: adjust affected endpoints (see the `build-api-step` skill).
+- `docs/DATABASE.md`: add the file to the status table and a section: changed decisions, added tables/views/functions, rules enforced.
+- `docs/API.md`: adjust affected endpoints (see the `build-api-step` skill).
 - `backend/models/*`: add / adjust mapped columns for tables the API already uses (enums via `models/enums.py`).
 
 ## 7. Report to the user

@@ -18,7 +18,7 @@ from repositories import payments as payments_repo
 from repositories import users as users_repo
 from repositories.common import paginate
 from services import admissions as admissions_service
-from services import audit, notifications, payment_alerts, sla, tasks
+from services import audit, lms_sync, notifications, payment_alerts, sla, tasks
 from services import invoices as invoices_service
 from services import persons as persons_service
 from services.context import ADMIN_ROLES, COUNSELLOR_ROLES, current_user
@@ -240,6 +240,8 @@ def _insert(payment: Payment, parts: list[tuple[InvoiceLine, Decimal]]) -> Payme
                       "invoice_id": payment.invoice_id,
                       "allocations": {line.line_code: amount for line, amount in parts}},
                  branch_id=payment.collecting_branch_id)
+    if payment.invoice_id:
+        lms_sync.finance_changed(invoice_id=payment.invoice_id)  # pending verification counts in the summary
     return payment
 
 
@@ -281,6 +283,8 @@ def verify(payment_id: int, data: dict) -> tuple[Payment, list]:
     audit.record("PAYMENT_VERIFIED", "payment", payment_id,
                  new={"amount": payment.amount, "receipt_number": payment.receipt_number,
                       "admissions": [a.admission_code for a in admitted]}, branch_id=payment.collecting_branch_id)
+    if payment.invoice_id:
+        lms_sync.finance_changed(invoice_id=payment.invoice_id)
     return payment, admitted
 
 
@@ -292,6 +296,8 @@ def fail(payment_id: int, reason: str) -> Payment:
     db.session.flush()
     _close_verification(payment)
     audit.record("PAYMENT_FAILED", "payment", payment_id, reason=reason, branch_id=payment.collecting_branch_id)
+    if payment.invoice_id:
+        lms_sync.finance_changed(invoice_id=payment.invoice_id)
     db.session.refresh(payment)
     return payment
 
@@ -315,6 +321,7 @@ def allocate(payment_id: int, invoice_id: int, allocations: list[dict] | None = 
     admitted = admissions_service.auto_admit(invoice.invoice_id) if payment.verification_status == "Verified" else []
     audit.record("PAYMENT_ALLOCATED", "payment", payment_id, new={"invoice_id": invoice_id},
                  branch_id=payment.collecting_branch_id)
+    lms_sync.finance_changed(invoice_id=invoice_id)
     return payment, admitted
 
 
@@ -393,4 +400,6 @@ def decide_correction(request_id: int, approve: bool, note: str | None) -> Payme
                  new={"request_code": request.request_code,
                       "reversal": request.reversal.receipt_number if request.reversal else None},
                  reason=note, branch_id=request.payment.collecting_branch_id)
+    if approve and request.payment.invoice_id:
+        lms_sync.finance_changed(invoice_id=request.payment.invoice_id)  # the reversal
     return request

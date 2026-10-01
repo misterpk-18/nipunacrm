@@ -28,10 +28,10 @@ export function useFinanceRoles() {
     canSeeUnallocated: accounts || isAdmin || hasRole("BRANCH_MANAGER"),
     canRecord: hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "SALES", "FRONT_OFFICE", "ACCOUNTS"),
     canChangeDueDate: hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "SALES", "FRONT_OFFICE", "ACCOUNTS"),
-    /** Refunds: register / assess (managers + Accounts), decide (admins), payout (Accounts only), withdraw (managers). */
+    /** Refunds: register / assess (managers + Accounts), decide (admins), payout (Accounts, Founder / CEO, Super Admin), withdraw (managers). */
     canRegisterRefund: isAdmin || accounts || hasRole("BRANCH_MANAGER"),
     canDecideRefund: isAdmin,
-    canPayout: accounts,
+    canPayout: accounts || isAdmin,
     canWithdrawRefund: isAdmin || hasRole("BRANCH_MANAGER"),
   };
 }

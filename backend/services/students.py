@@ -7,6 +7,7 @@ from services import audit, storage, tasks
 from services import persons as persons_service
 from services.context import ADMIN_ROLES, current_user
 from services.errors import BusinessRule, Forbidden, NotFound, ValidationError
+from services.lms_pull import require_crm_academics
 
 REVIEWER_ROLES = ADMIN_ROLES + ("BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "FRONT_OFFICE")
 CASE_FIELDS = ("status", "owner_user_id", "resolution_notes", "refund_case_id", "subject", "description")
@@ -147,6 +148,7 @@ def _academic_admission(admission_id: int) -> Admission:
 
 
 def create_certificate(admission_id: int, data: dict) -> Certificate:
+    require_crm_academics("Certificates")
     admission = _academic_admission(admission_id)
     course_id = data.get("course_id") or admission.course_id
     if course_id != admission.course_id and db.session.get(ComboCourse, (admission.course_id, course_id)) is None:
@@ -166,6 +168,7 @@ def get_certificate(certificate_id: int) -> Certificate:
 
 
 def update_certificate(certificate_id: int, data: dict) -> Certificate:
+    require_crm_academics("Certificates")
     certificate = get_certificate(certificate_id)
     _academic_admission(certificate.admission_id)
     if certificate.status in ("Issued", "Revoked"):
@@ -177,6 +180,7 @@ def update_certificate(certificate_id: int, data: dict) -> Certificate:
 
 
 def issue_certificate(certificate_id: int) -> Certificate:
+    require_crm_academics("Certificates")
     certificate = get_certificate(certificate_id)
     _academic_admission(certificate.admission_id)
     if certificate.status != "Eligible":
@@ -193,6 +197,7 @@ def issue_certificate(certificate_id: int) -> Certificate:
 def revoke_certificate(certificate_id: int, reason: str) -> Certificate:
     from datetime import datetime, timezone
 
+    require_crm_academics("Certificates")
     certificate = get_certificate(certificate_id)
     if not current_user().is_admin:
         raise Forbidden("Only an admin can revoke certificates")

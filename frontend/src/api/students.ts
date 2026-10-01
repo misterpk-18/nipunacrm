@@ -86,6 +86,16 @@ export type Certificate = {
   revoked_by: number | null;
   revoked_at: DateTime | null;
   revoke_reason: string | null;
+  /** LMS register (db 028): a reissue keeps the number with a new version; the earlier one is Superseded. */
+  version: number;
+  certificate_type: string | null;
+  holder_name: string | null;
+  enrolment_code: string | null;
+  issued_by_email: string | null;
+  revoked_by_email: string | null;
+  reissue_reason: string | null;
+  supersedes_version: number | null;
+  lms_mirrored: boolean;
 };
 
 export type StudentDocument = {

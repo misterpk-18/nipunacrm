@@ -38,6 +38,7 @@ from models.placement import (
 from models.management import ReportRun, ScheduledReport, TargetAchievement, TargetVersion, target_lines
 from models.system import AppSetting, AuditLog, DeletionRequest, Incident, IntegrationStatus
 from models.ai import AiFeedback, AiInsight, AiQuery
+from models.lms import LmsOutbox, LmsPullHold, LmsPullState, LmsSyncVersion
 
 __all__ = [
     "LOOKUPS", "ActiveSession", "Admission", "AdmissionBalance", "AdmissionCurriculum", "AdmissionFeeChange",
@@ -48,7 +49,7 @@ __all__ = [
     "Document", "DocumentChecklist", "DocumentType", "Enquiry", "EntryMethod", "FeeDiscussion",
     "FeeDiscussionVersion", "FeeVersionInstallment", "Holiday", "Incident", "Installment", "InstallmentDue",
     "IntegrationStatus", "Invoice",
-    "InvoiceBalance", "InvoiceLine", "InvoiceLineBalance", "JobApplication", "JobOpening", "Lead", "LeadActivity", "LeadImport", "LeadImportRow", "LeadQualificationReview",
+    "InvoiceBalance", "InvoiceLine", "InvoiceLineBalance", "JobApplication", "JobOpening", "Lead", "LeadActivity", "LmsOutbox", "LmsPullHold", "LmsPullState", "LmsSyncVersion", "LeadImport", "LeadImportRow", "LeadQualificationReview",
     "LeadSource", "LostReason", "Notification", "NotificationRule", "Offer", "OfferBranch",
     "OfferComplimentaryCourse", "OfferCourse", "Payment", "PaymentAllocation", "PaymentCorrectionRequest", "PaymentGap", "PaymentMode",
     "PaymentPlan",

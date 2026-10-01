@@ -2,6 +2,9 @@
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useLmsSyncStatus } from "@/api/lms";
+import { Warning } from "@/components/crm/ui";
+import { dateTime } from "@/lib/format";
 
 /** A button that opens a small form dialog; `onSubmit` returns a promise, the dialog closes when it resolves. */
 export function FormDialog({
@@ -90,3 +93,15 @@ export function CheckResult({ ok, reason, owner }: { ok: boolean; reason: string
 export const num = (v: unknown) => (v === undefined || v === "" || v === null || Number.isNaN(Number(v)) ? undefined : Number(v));
 export const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
 export const compact = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== "")) as T;
+
+/** Shown where academic work moved to the Nipuna LMS (db 028): the rows here are the LMS's, mirrored by the status pull. */
+export function LmsOwnedNote({ what }: { what: string }) {
+  const status = useLmsSyncStatus();
+  if (!(status.data?.academics_managed_in_lms ?? true)) return null;
+  const synced = status.data?.pull.last_success_at;
+  return (
+    <Warning>
+      {what} are managed in the Nipuna LMS and mirrored here read-only{synced ? ` · last synced ${dateTime(synced)}` : " · not synced yet"}.
+    </Warning>
+  );
+}

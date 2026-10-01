@@ -1,13 +1,34 @@
-/** LMS access (read-only): admissions with their LMS status, from GET /admissions. No provisioning calls exist. */
+/** LMS access (read-only): admissions with their LMS status, from GET /admissions; the status pull's state from
+ * GET /lms/sync-status (db 028). */
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { list, type Query } from "./client";
+import { get, list, type Query } from "./client";
+import type { DateTime } from "./types";
 import { LMS_STATUSES, type AdmissionFilters, type AdmissionRow } from "./admissions";
 
 export type LmsFilters = Pick<AdmissionFilters, "page" | "per_page" | "branch_id" | "q" | "lms_status" | "curriculum_status" | "enrolment_status">;
 
+export type LmsSyncStatus = {
+  /** On: batches, allocations, joining, curriculum, completion and certificates come from the LMS (read-only here). */
+  academics_managed_in_lms: boolean;
+  configured: boolean;
+  held: number;
+  pull: {
+    since: string;
+    last_attempt_at: DateTime | null;
+    last_success_at: DateTime | null;
+    last_http_status: number | null;
+    last_error: string | null;
+    last_counts: Record<string, number> | null;
+  };
+};
+
 export const lmsApi = {
   list: (filters: LmsFilters) => list<AdmissionRow>("/admissions", filters as Query),
+  syncStatus: () => get<LmsSyncStatus>("/lms/sync-status"),
 };
+
+export const useLmsSyncStatus = () =>
+  useQuery({ queryKey: ["lms", "sync-status"], queryFn: lmsApi.syncStatus, staleTime: 60_000 });
 
 /** Keys sit under ["admissions"] so any admission change refreshes this screen too. */
 export const lmsKeys = {

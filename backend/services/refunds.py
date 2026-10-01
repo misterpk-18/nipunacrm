@@ -11,7 +11,7 @@ from sqlalchemy import select
 from config.database import db
 from models import Admission, Payment, PaymentMode, RefundCase, RefundCaseReceipt
 from repositories.common import paginate
-from services import audit, tasks
+from services import audit, lms_sync, tasks
 from services import admissions as admissions_service
 from services.context import current_user
 from services.errors import BusinessRule, Forbidden, NotFound, ValidationError
@@ -119,13 +119,15 @@ def decide(case_id: int, data: dict) -> RefundCase:
     audit.record("REFUND_DECIDED", "admission", case.admission_id,
                  new={"case_code": case.case_code, "decision": decision, "amount": data.get("amount")},
                  reason=data.get("reason"), branch_id=case.admission.service_branch_id)
+    lms_sync.finance_changed(admission_id=case.admission_id)  # a waiver changes the balance
     db.session.expire(case.admission, ["balance"])
     return case
 
 
 def _accounts(case: RefundCase) -> None:
-    if not current_user().has_role("ACCOUNTS", branch_id=case.admission.service_branch_id):
-        raise Forbidden("Only Accounts at the service branch can handle payouts")
+    user = current_user()
+    if not (user.is_admin or user.has_role("ACCOUNTS", branch_id=case.admission.service_branch_id)):
+        raise Forbidden("Only Accounts at the service branch, Founder / CEO or Super Admin can handle payouts")
 
 
 def payout(case_id: int, data: dict) -> RefundCase:
@@ -165,6 +167,7 @@ def payout(case_id: int, data: dict) -> RefundCase:
     audit.record("REFUND_PAYOUT", "admission", case.admission_id,
                  new={"case_code": case.case_code, "payout_status": case.payout_status, "amount": case.payout_amount},
                  branch_id=case.admission.service_branch_id)
+    lms_sync.finance_changed(admission_id=case.admission_id)
     db.session.expire(case.admission, ["balance"])
     return case
 

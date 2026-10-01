@@ -357,7 +357,7 @@ function AcademicTab({ personId }: { personId: number }) {
         {allowed && c.status === "Eligible" && (
           <ConfirmAction title="Issue certificate?" description="A certificate number is assigned on issue." action="Issue" onConfirm={() => issue.mutateAsync(c.certificate_id)} trigger={<Button size="sm">Issue</Button>} />
         )}
-        {can.isAdmin && c.status === "Issued" && (
+        {can.isAdmin && !can.lmsOwned && c.status === "Issued" && (
           <ConfirmAction
             title="Revoke certificate?"
             action="Revoke"
@@ -381,7 +381,7 @@ function AcademicTab({ personId }: { personId: number }) {
         <div className="space-y-4">
           <Section
             title="Certificates"
-            subtitle="Eligibility is decided by the Academic Coordinator; issue assigns the number"
+            subtitle={can.lmsOwned ? "From the LMS Certificate Register: a reissue keeps the number with a new version" : "Eligibility is decided by the Academic Coordinator; issue assigns the number"}
             action={
               manageable.length ? (
                 <FormDialog
@@ -423,8 +423,9 @@ function AcademicTab({ personId }: { personId: number }) {
                 { header: "Admission", cell: (c) => d.admissions.find((a) => a.admission_id === c.admission_id)?.admission_code ?? `#${c.admission_id}` },
                 { header: "Course", cell: (c) => c.course.course_title },
                 { header: "Status", cell: (c) => <Status>{c.status}</Status> },
-                { header: "Number", cell: (c) => c.certificate_number ?? "—" },
-                { header: "Notes", cell: (c) => <span className="block max-w-56 truncate">{c.revoke_reason ?? c.eligibility_notes ?? "—"}</span> },
+                { header: "Number", cell: (c) => (c.certificate_number ? `${c.certificate_number}${c.lms_mirrored ? ` · v${c.version}` : ""}` : "—") },
+                { header: "Type", cell: (c) => c.certificate_type ?? "—" },
+                { header: "Notes", cell: (c) => <span className="block max-w-56 truncate">{c.revoke_reason ?? c.reissue_reason ?? c.eligibility_notes ?? "—"}</span> },
                 { header: "Issued", cell: (c) => dateTime(c.issued_at) },
                 { header: "", cell: certActions },
               ]}

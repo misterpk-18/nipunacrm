@@ -22,6 +22,14 @@ from services.security import hash_password
 @pytest.fixture(scope="session", autouse=True)
 def test_database():
     rebuild_database(TestingConfig.SQLALCHEMY_DATABASE_URI, TestingConfig.MIGRATIONS_DIR)
+    # The CRM's own academic rules are tested with academics owned by the CRM; tests/test_lms_pull.py turns the
+    # LMS ownership (db 028's default) back on
+    from sqlalchemy import create_engine
+
+    engine = create_engine(TestingConfig.SQLALCHEMY_DATABASE_URI)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE app_settings SET setting_value = 'false' WHERE setting_key = 'academics_managed_in_lms'"))
+    engine.dispose()
 
 
 @pytest.fixture

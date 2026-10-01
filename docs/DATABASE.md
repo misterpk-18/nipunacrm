@@ -1,4 +1,6 @@
-# Nipuna CRM — Database Build Phases
+# Nipuna CRM — Database
+
+The schema, migration by migration, and the rules it enforces. Source of truth: the numbered SQL files in `db/`.
 
 Tables are created in dependency order: a table is only built once everything it references exists.
 Derived from the prototype at https://nipuna-crm-frozen-demo.nipunatech.chatgpt.site/ (sample data only).
@@ -13,7 +15,7 @@ Migration files live in `db/` and are applied in numeric order, each in its own 
 psql -d nipunacrm -v ON_ERROR_STOP=1 -1 -f db/<file>.sql
 ```
 
-The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are rebuilt from the same files — see [DEVELOPMENT.md](DEVELOPMENT.md#3-databases).
+The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are rebuilt from the same files — see [DEVELOPMENT.md · Part A (local development)](DEVELOPMENT.md#3-databases).
 
 | Phase | Status | Migration |
 |---|---|---|
@@ -36,7 +38,13 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | V4 · Qualify and convert | ✅ Done (dev only) | `019_qualify_convert.sql` — six-check qualification review; a lead joins the pipeline only through Convert; expected close on the card |
 | V4 · Delivery plans | ✅ Done (dev only) | `020_delivery_plans.sql` — one delivery plan per course deal (DP-00001), replacing the fee discussion's accepted plan |
 | V4 · Multi-course invoices | ✅ Done (dev only) | `021_multi_course_invoices.sql` — invoice lines, per-course payment allocation and balances, admission per line, issuer snapshot, invoice-level promises |
+| V4 · Fee change self-approval | ✅ Done (dev only) | `023_fee_change_self_approval.sql` — Founder / CEO and Super Admin may approve their own fee change request |
+| Admin Accounts access | ✅ Done (dev only) | `024_admin_accounts_access.sql` — Founder / CEO and Super Admin may apply approved fee changes |
+| Admin refund payout | ✅ Done (dev only) | `025_refund_admin_payout.sql` — an admin may pay out a refund they decided |
 | V4 · Transactions and receipts | ✅ Done (dev only) | `022_transaction_receipts.sql` — TXN numbers on record; receipt numbers only at verification; evidence and cash checks |
+| LMS outbox | ✅ Done (dev only) | `026_lms_outbox.sql` — admission / course / finance events for the Nipuna LMS, written in the same transaction as the change; per-record source versions |
+| LMS status pull | ✅ Done (dev only) | `027_lms_pull_enums.sql`, `028_lms_status_pull.sql` — the CRM mirrors what the LMS owns (login, LMS status, enrolment, curriculum, batches, allocations, completion, certificate register); academic writes read-only while `academics_managed_in_lms` is on; Deferred refused |
+| LMS branch events | ✅ Done (dev only) | `029_lms_branch_events.sql` — outbox accepts `BranchUpserted` and `BranchFinanceSnapshot` (owner decisions D3 / D4); new outbox status Superseded for a snapshot replaced before it was sent |
 
 Phases 0–3 cover the complete sales-to-cash flow and are the MVP. Phases 4–6 can follow as their screens are built.
 
@@ -211,7 +219,7 @@ A full text review of the prototype found rules the phase-by-phase build had mis
 | Admission | Could be created any time | Needs (1) an accepted confirmed delivery plan on the fee version and (2) a Verified payment allocated to that discussion. Creation links those payments, moves the lead to Admitted and the discussion to Converted |
 | 70% floor | Hard block | Advisory. Below-floor approval needs Founder / CEO or Super Admin **plus** an independent approver on the special closing request |
 | Extra concession | Could be saved as Approved directly | A version with extra concession (or below floor) is Approved only after a matching special closing request is Approved |
-| Fee after admission | Frozen forever | `admission_fee_changes`: Founder / CEO or Super Admin approves (no self-approval), Accounts applies; installments are rebuilt; can't go below verified payments |
+| Fee after admission | Frozen forever | `admission_fee_changes`: Founder / CEO or Super Admin approves (self-approval allowed since 023), Accounts or an admin applies (024); installments are rebuilt; can't go below verified payments |
 | Lookup values | Partly invented | Prototype values: sources, channels, entry methods, payment modes (Cheque is exception-only and needs an independent approver), intake status (New / Incomplete / Duplicate Review / Outreach Prospect) |
 | Lead stages | Could move anywhere | Admitted is final; Payment Pending Verification can only go to Admitted or Lost |
 
@@ -333,7 +341,7 @@ Rules:
 
 Backfill: one card per person and branch that had open leads past New Enquiry (68 cards on dev). The card takes the furthest stage among those leads, and the person's other open leads there move to it. Persons 66 and 120 each had two courses at different stages, so both of their courses are now at Payment Pending Verification. Admitted and Lost leads were not given cards.
 
-API: see API_PLAN step 5, "As built (person pipeline)". Screens: Pipeline (person cards), Persons and Person 360, and the Lead status filter on Leads.
+API: see [API.md](API.md) step 5, "As built (person pipeline)". Screens: Pipeline (person cards), Persons and Person 360, and the Lead status filter on Leads.
 
 ## Flexible instalments (018) ✅ (applied to `nipunacrm-dev` only)
 
@@ -356,7 +364,6 @@ Rules:
 - Payments of any amount up to the invoice balance were already allowed (verified money covers the oldest instalment first). Money beyond the whole invoice still becomes an unallocated advance.
 - Backfill: existing versions got their plan's split of the final payable, on their invoice's due dates if one was issued (else the plan's default days from the version date).
 - "1 month" for the gap is 30 days (setting). The gap is measured from the last verified payment's date.
-
 
 ## V4 · Qualify and convert (019) ✅ (applied to `nipunacrm-dev` only)
 
@@ -411,3 +418,57 @@ Backfill: every existing invoice became a one-line invoice; payments were alloca
 | `unallocated_advances`, `task_board` (views) | Carry the transaction number (the task link shows the receipt, else the transaction) |
 
 Backfill: transaction numbers in recording order; pending and failed payments lost the receipt number they had been given at recording; verified ones were marked as checked.
+
+## V4 · Fee change self-approval (023) ✅ (applied to `nipunacrm-dev` only)
+
+Dropped `fee_changes_no_self_approval` on `admission_fee_changes`. Only Founder / CEO and Super Admin can approve a fee change (trigger `before_fee_change_write`), so the check only ever blocked them; they may now approve their own request. Counsellors / Branch Managers still only request; Accounts still applies.
+
+## Admin Accounts access (024) ✅ (applied to `nipunacrm-dev` only)
+
+`before_fee_change_write` now accepts Accounts, Founder / CEO or Super Admin as `accounts_corrected_by` when a fee change is applied. The API and UI also let admins do refund payout and reconcile (no database role check there). Unchanged: a fee can't go below verified payments.
+
+## Admin refund payout (025) ✅ (applied to `nipunacrm-dev` only)
+
+Dropped `refund_separation_of_duties` on `refund_cases`. Only Founder / CEO or Super Admin can decide a refund (`check_refund_decision`), so the check only ever blocked them; an admin may now pay out a refund they decided. Payout still needs an approved refund, stays within the approved amount and needs reconciliation before Completed.
+
+## LMS outbox (026) ✅ (applied to `nipunacrm-dev` only)
+
+The CRM stays the owner of admissions and money; the Nipuna LMS keeps a read-only projection built from events the CRM sends it (contract: the LMS repo's `docs/CRM_INTEGRATION.md` §2.1). How the events are written and delivered: [API.md · Step 22](API.md#step-22--lms-sync-outbox--dev-only).
+
+| Object | Holds / enforces |
+|---|---|
+| `lms_sync_versions` | One counter per record: `course:<id>`, `admission:<id>`, `finance:<id>` (the admission's finance summary is versioned separately, as the LMS does). Incremented with every event about the record, in the same transaction; the value is the event's `source_version`. Kept out of the business tables so their freeze / guard triggers are untouched |
+| `lms_outbox` | One row per event: `event_id` (uuid, unique), `event_type` (CourseUpserted · AdmissionQualified · AdmissionUpdated · AdmissionCancelled · FinanceSummaryUpdated), `record_key` (delivery queue: `course:<id>` or `admission:<id>` — an admission's finance events share its queue so they never overtake its qualification), `source_version`, `occurred_at`, `payload` (the event's `data`), `status` (`lms_outbox_status`: Pending / Delivered / Failed), `attempts`, `next_attempt_at`, `locked_until` (worker claim), `last_http_status`, `last_error`, `response_status` / `response_result` (the LMS's answer), `activation_token_issued` (the token itself is never stored), `delivered_at` |
+| `guard_lms_outbox_envelope()` | BEFORE UPDATE: `event_id`, `event_type`, `record_key`, `source_version`, `occurred_at` and `payload` can't change once written, so a retry sends exactly the same event (the LMS answers 409 for an event_id reused with another payload). A changed record gets a new event |
+| Indexes | `lms_outbox_pending_idx (record_key, outbox_id) WHERE status = 'Pending'` for the worker's "oldest pending row per record"; `(status, event_type)` for counts |
+
+## LMS status pull (027–028) ✅ (applied to `nipunacrm-dev` only)
+
+Round 2 of the LMS integration: the LMS owns academic work and the CRM mirrors it from `GET /integrations/crm/status` (contract: the LMS repo's `docs/CRM_INTEGRATION.md` §2.2; answers in `nipuna crm-docs/CRM_ROUND2_LMS_REPLY.md`). How the pull runs: [API.md · Step 23](API.md#step-23--lms-status-pull--dev-only).
+
+**Sync session.** The pull writes each record in a transaction that has run `set_config('app.sync_source', 'LMS', TRUE)`; `lms_sync_session()` reads it. The LMS has already checked these facts, so the triggers below let them through. Every other writer still gets the CRM's rules.
+
+| Object | Holds / enforces |
+|---|---|
+| `certificate_status` + `Superseded` (027) | A reissued LMS certificate keeps its number; the earlier version becomes Superseded. Own file because 028 uses the value in an index |
+| `app_settings.academics_managed_in_lms` | `true`: batches, allocations, joining dates, curriculum, completion and certificates are read-only in the CRM (the API answers 409 `MANAGED_IN_LMS`) and come from the pull. `false`: the CRM's own academic screens work as before (the test suite runs this way) |
+| `lms_pull_state` | One row: `since` (the LMS's last `as_of`, stored exactly as returned), `last_attempt_at`, `last_success_at` ("last synced"), `last_http_status`, `last_error`, `last_counts`, `locked_until` (a running pull's claim) |
+| `lms_pull_holds` | A pulled record that couldn't be applied yet (e.g. an allocation to a batch the pull never sent): `record_key` (`academics:<id>`, `batches:<code>`, `certificates:<number>/<version>` …), the full `payload`, `reason`, `attempts`. Retried on every pull; a newer copy replaces it |
+| `admissions_no_deferred` | CHECK: `enrolment_status` can't be Deferred. The LMS has no such status and the pull overwrites the column; a student who must wait is paused. (The value stays in the enum type: retyping the column would mean rebuilding every view on admissions) |
+| `admissions.completion_authorised_by_email` | The LMS Academic Coordinator who decided the completion (`LMS` when the LMS didn't say). `admissions_completion_authorised` now accepts it instead of a CRM user |
+| `curriculum_versions.lms_mirrored` | A version the LMS runs, matched by course + label and created by the pull as Published with no CRM publisher. Mirrored versions don't count toward `curriculum_versions_one_published` (the LMS can run several versions of a course at once) |
+| `batches.lms_mirrored`, `lead_trainer_email`, `trainer_emails[]` | A batch from the LMS, keyed by `lms_course_id` (= the LMS `batch_code`, now unique). `trainer_user_id` is set when a CRM user has the lead trainer's email (matched ignoring case). `before_batch_insert` allows a combo course for the sync session (the LMS allocates combo tracks to batches of the combo itself) |
+| `batch_allocations.track_code`, `lms_allocated_on`, `lms_mirrored` | One row per LMS allocation, keyed by admission + course + track + batch + `allocated_on` (`batch_allocations_lms_key`). `batch_allocations_one_active` is now per admission, course and track. In the sync session `before_allocation_insert` keeps the course the LMS names and skips the CRM's checks; `prevent_allocation_rebind` and `sync_enrolment_from_allocation` do nothing (the enrolment status comes with the allocations) |
+| `certificates.version`, `certificate_type`, `holder_name`, `enrolment_code`, `issued_by_email`, `revoked_by_email`, `reissue_reason`, `supersedes_version`, `lms_changed_at`, `lms_mirrored` | The LMS Certificate Register (decision D2: the LMS number series). Unique on `(certificate_number, version)`; one live certificate per admission, course and type (`Revoked` and `Superseded` don't count). Mirrored rows may have no CRM issuer or revoker. In the sync session `before_certificate_issue` keeps the LMS number and dates |
+
+## LMS branch events (029) ✅ (applied to `nipunacrm-dev` only)
+
+Owner decisions D3 and D4 (LMS reply `nipuna crm-docs/CRM_ROUND2_LMS_REPLY.md` §3): the CRM sends its branches and a finance snapshot per branch for the LMS dashboards. How they are built: [API.md · Step 22](API.md#step-22--lms-sync-outbox--dev-only).
+
+| Object | Holds / enforces |
+|---|---|
+| `lms_outbox_event_type_valid` | Now also `BranchUpserted` (record and version key `branch:<id>`) and `BranchFinanceSnapshot` (`branch-finance:<id>`) |
+| `lms_outbox_status` + `Superseded` | A snapshot still Pending when the next one for its branch is written: never sent, since each snapshot replaces the previous one in the LMS. Delivered and Superseded snapshots older than 7 days are deleted by the job (the version counter in `lms_sync_versions` keeps counting) |
+
+Data: `flask lms drop-crm-batches --yes` (dev / test databases only) deletes the CRM's own batches and every allocation, and resets the watermark so the next pull brings the LMS's (Q5 "drop and mirror").
+

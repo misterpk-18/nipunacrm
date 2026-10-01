@@ -74,6 +74,6 @@ Rules that bite:
 
 ## 7. Turn findings into work
 
-- Schema gaps → `db-migration` skill (new numbered migration, tests, `docs/DB_PHASES.md`).
-- Endpoint changes → `docs/API_PLAN.md` (see `build-api-step`), marking what's still to build.
+- Schema gaps → `db-migration` skill (new numbered migration, tests, `docs/DATABASE.md`).
+- Endpoint changes → `docs/API.md` (see `build-api-step`), marking what's still to build.
 - Tell the user which behaviours you **observed running** versus only read in code, and list anything you had to assume.

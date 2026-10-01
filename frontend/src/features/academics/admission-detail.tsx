@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, BadgeCheck, Ban, CalendarCheck, Gift, IndianRupee, Pencil, Users } from "lucide-react";
+import { ArrowRightLeft, BadgeCheck, Ban, CalendarCheck, Gift, IndianRupee, Pause, Pencil, Play, Users } from "lucide-react";
 import {
   DELIVERY_MODES,
   HANDOVER_STATUSES,
   LMS_STATUSES,
+  PAUSABLE_STATUSES,
   admissionKeys,
   admissionsApi,
   useAdmission,
@@ -23,7 +24,7 @@ import { ConfirmAction, DataTable, ErrorPanel, Facts, LoadingRows, Section, Stat
 import { date, dateTime, money, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { useCan } from "./can";
-import { CheckResult, FormDialog } from "./shared";
+import { CheckResult, FormDialog, LmsOwnedNote } from "./shared";
 
 const INVALIDATE = [admissionKeys.all, batchKeys.all, studentKeys.all, ["tasks"], ["invoices"]];
 
@@ -88,7 +89,13 @@ function Summary({ a }: { a: AdmissionDetail }) {
           ["First verified payment", dateTime(a.first_verified_payment_at)],
           ["Counsellor", a.counsellor?.full_name ?? "—"],
           ["Handover · LMS", `${a.handover_status} · ${a.lms_status}`],
-          ["Academic completion", a.academic_completed_at ? `${dateTime(a.academic_completed_at)} · support until ${date(a.support_until)}` : "—"],
+          ["LMS last change · activity", `${dateTime(a.lms_last_synced_at)} · ${dateTime(a.lms_last_activity_at)}`],
+          [
+            "Academic completion",
+            a.academic_completed_at
+              ? `${dateTime(a.academic_completed_at)} · support until ${date(a.support_until)}${a.completion_authorised_by_email ? ` · authorised by ${a.completion_authorised_by_email}` : ""}`
+              : "—",
+          ],
           ["Access until", date(a.access_until)],
         ]}
       />
@@ -125,6 +132,8 @@ function Actions({ a }: { a: AdmissionDetail }) {
     { success: "Service branch transferred — active allocations were moved out", invalidate: INVALIDATE },
   );
   const cancel = useApiMutation((reason: string) => admissionsApi.cancel(a.admission_id, reason), { success: "Admission cancelled", invalidate: INVALIDATE });
+  const pause = useApiMutation((reason: string) => admissionsApi.pause(a.admission_id, reason), { success: "Enrolment paused — the LMS pauses it too", invalidate: INVALIDATE });
+  const resume = useApiMutation(() => admissionsApi.resume(a.admission_id), { success: "Enrolment resumed", invalidate: INVALIDATE });
   const complete = useApiMutation(() => admissionsApi.complete(a.admission_id), { success: "Completion authorised — support window started", invalidate: INVALIDATE });
   const addComp = useApiMutation(() => admissionsApi.complimentary(a.admission_id, { offer_id: Number(comp.offer_id), course_id: Number(comp.course_id) }), {
     success: (r) => `Complimentary admission ${r.admission_code} created`,
@@ -142,12 +151,12 @@ function Actions({ a }: { a: AdmissionDetail }) {
       {canEdit && (
         <FormDialog
           title="Update admission"
-          description="Handover, LMS and delivery details. Fee, plan and admission date are frozen."
+          description={`Handover${can.lmsOwned ? "" : ", LMS"} and delivery details. Fee, plan and admission date are frozen.${can.lmsOwned ? " LMS status comes from the LMS." : ""}`}
           onOpen={() => setEdit({ handover_status: a.handover_status, lms_status: a.lms_status, delivery_mode: a.delivery_mode, planned_start_date: a.planned_start_date ?? "" })}
           onSubmit={() => {
             const body: Record<string, string | null> = {};
             if (edit.handover_status !== a.handover_status) body["handover_status"] = edit.handover_status;
-            if (edit.lms_status !== a.lms_status) body["lms_status"] = edit.lms_status;
+            if (!can.lmsOwned && edit.lms_status !== a.lms_status) body["lms_status"] = edit.lms_status;
             if (edit.delivery_mode !== a.delivery_mode) body["delivery_mode"] = edit.delivery_mode;
             if (edit.planned_start_date !== (a.planned_start_date ?? "")) body["planned_start_date"] = edit.planned_start_date || null;
             return update.mutateAsync(body);
@@ -162,9 +171,11 @@ function Actions({ a }: { a: AdmissionDetail }) {
           <Field label="Handover status" htmlFor="ad-handover">
             <NativeSelect id="ad-handover" value={edit.handover_status} options={HANDOVER_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => setEdit({ ...edit, handover_status: e.target.value })} />
           </Field>
-          <Field label="LMS status" htmlFor="ad-lms">
-            <NativeSelect id="ad-lms" value={edit.lms_status} options={LMS_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => setEdit({ ...edit, lms_status: e.target.value })} />
-          </Field>
+          {!can.lmsOwned && (
+            <Field label="LMS status" htmlFor="ad-lms">
+              <NativeSelect id="ad-lms" value={edit.lms_status} options={LMS_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => setEdit({ ...edit, lms_status: e.target.value })} />
+            </Field>
+          )}
           <Field label="Delivery mode" htmlFor="ad-mode">
             <NativeSelect id="ad-mode" value={edit.delivery_mode} options={DELIVERY_MODES.map((s) => ({ value: s, label: s }))} onChange={(e) => setEdit({ ...edit, delivery_mode: e.target.value })} />
           </Field>
@@ -252,6 +263,36 @@ function Actions({ a }: { a: AdmissionDetail }) {
           }
         />
       )}
+      {can.manager(svc) && PAUSABLE_STATUSES.includes(a.enrolment_status) && (
+        <ConfirmAction
+          title={`Pause ${a.admission_code}?`}
+          description="The student has to wait (e.g. exams, health). The LMS pauses the enrolment; resume it when they return."
+          action="Pause enrolment"
+          reason
+          reasonLabel="Pause reason"
+          onConfirm={(reason) => pause.mutateAsync(reason)}
+          trigger={
+            <Button size="sm" variant="outline">
+              <Pause />
+              Pause
+            </Button>
+          }
+        />
+      )}
+      {can.manager(svc) && a.enrolment_status === "Paused" && (
+        <ConfirmAction
+          title={`Resume ${a.admission_code}?`}
+          description="Back to In Progress (joined), Scheduled (allocated) or Awaiting Batch Allocation. The LMS resumes the enrolment."
+          action="Resume enrolment"
+          onConfirm={() => resume.mutateAsync(undefined)}
+          trigger={
+            <Button size="sm" variant="outline">
+              <Play />
+              Resume
+            </Button>
+          }
+        />
+      )}
       {can.manager(svc) && active && (
         <ConfirmAction
           title={`Cancel ${a.admission_code}?`}
@@ -304,7 +345,7 @@ function Allocations({ a }: { a: AdmissionDetail }) {
   });
 
   const joinAction = (x: Allocation) =>
-    x.status === "Active" && !x.joining_date && (can.coordinator(svc) || can.at(svc, "TRAINER")) ? (
+    x.status === "Active" && !x.joining_date && can.joining(svc) ? (
       <FormDialog
         title={`Record joining · ${x.batch_code}`}
         description="First confirmed regular class (demos excluded). Moves enrolment to In Progress."
@@ -353,6 +394,9 @@ function Allocations({ a }: { a: AdmissionDetail }) {
 
   return (
     <Section title="Batch allocation" subtitle="Accepted plan, enrolment, batch allocation and first regular attendance are separate records">
+      <div className="mb-3">
+        <LmsOwnedNote what="Batch allocations and joining dates" />
+      </div>
       <DataTable
         rows={a.allocations}
         rowKey={(x) => x.allocation_id}
@@ -366,6 +410,7 @@ function Allocations({ a }: { a: AdmissionDetail }) {
               </Link>
             ),
           },
+          { header: "Track", cell: (x) => x.track_code ?? "—" },
           { header: "Status", cell: (x) => <Status>{x.status}</Status> },
           { header: "Allocated", cell: (x) => dateTime(x.allocated_at) },
           { header: "Joining date", cell: (x) => (x.joining_date ? date(x.joining_date) : "Not yet — first regular class") },
@@ -421,6 +466,9 @@ function Curriculum({ a }: { a: AdmissionDetail }) {
   const published = (versions.data ?? []).filter((v) => v.status === "Published" && !a.curricula.some((m) => m.curriculum_version_id === v.curriculum_version_id));
   return (
     <Section title="Curriculum mapping" subtitle={a.curriculum_status === "Mapped" ? "Mapped" : `Curriculum Mapping Pending · recovery: Academic Coordinator (${a.service_branch.branch_code})`}>
+      <div className="mb-3">
+        <LmsOwnedNote what="Curriculum mappings" />
+      </div>
       <DataTable
         rows={a.curricula}
         rowKey={(c) => c.curriculum_version_id}
@@ -509,7 +557,7 @@ function FeeChanges({ a }: { a: AdmissionDetail }) {
             header: "",
             cell: (c) => (
               <div className="flex gap-1">
-                {c.status === "Pending" && can.isAdmin && c.requested_by !== can.userId && (
+                {c.status === "Pending" && can.isAdmin && (
                   <>
                     <ConfirmAction
                       title="Approve fee change?"
@@ -533,7 +581,7 @@ function FeeChanges({ a }: { a: AdmissionDetail }) {
                     />
                   </>
                 )}
-                {c.status === "Approved" && can.at(svc, "ACCOUNTS") && (
+                {c.status === "Approved" && (can.isAdmin || can.at(svc, "ACCOUNTS")) && (
                   <ConfirmAction
                     title="Apply approved fee change?"
                     description="Revises the admission fee, invoice amount and instalments."

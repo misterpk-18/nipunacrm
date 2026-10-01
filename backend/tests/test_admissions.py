@@ -149,13 +149,21 @@ def test_fee_change_below_verified_and_rejection(client, people, course):
     other = admitted(client, people, course, amount="30000")
     change2 = call(client, "post", f"/admissions/{other['admission']['admission_id']}/fee-changes", people["admin"]["h"], 201,
                    json={"new_fee": "31000", "reason": "Added module"})
-    assert client.post(f"{API}/admission-fee-changes/{change2['fee_change_id']}/approve", json={},
-                       headers=people["admin"]["h"]).status_code == 403  # own request
     assert client.post(f"{API}/admission-fee-changes/{change2['fee_change_id']}/reject", json={},
                        headers=people["founder"]["h"]).status_code == 400
     rejected = call(client, "post", f"/admission-fee-changes/{change2['fee_change_id']}/reject", people["founder"]["h"],
                     json={"reason": "Not agreed"})
     assert rejected["status"] == "Rejected"
+
+    # an admin may approve their own request
+    third = admitted(client, people, course, amount="30000")
+    change3 = call(client, "post", f"/admissions/{third['admission']['admission_id']}/fee-changes", people["admin"]["h"], 201,
+                   json={"new_fee": "31000", "reason": "Added module"})
+    approved = call(client, "post", f"/admission-fee-changes/{change3['fee_change_id']}/approve", people["admin"]["h"], json={})
+    assert approved["status"] == "Approved"
+    # admins have full Accounts access: they can apply it too
+    applied = call(client, "post", f"/admission-fee-changes/{change3['fee_change_id']}/apply", people["founder"]["h"])
+    assert applied["status"] == "Applied"
 
 
 # ---------------------------------------------------------------- academics

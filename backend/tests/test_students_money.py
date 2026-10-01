@@ -199,17 +199,16 @@ def test_refund_case_lifecycle(client, people, course):
     assert client.post(f"{API}/refund-cases/{cid}/withdraw", json={}, headers=bm).status_code == 422
 
 
-def test_refund_separation_of_duties_waiver_and_withdraw(client, people, course, make_user, login):
+def test_refund_admin_payout_waiver_and_withdraw(client, people, course):
     flow = admitted(client, people, course, amount="10000")
     aid = flow["admission"]["admission_id"]
-    # someone who is both Super Admin and Accounts can't decide and then pay out the same refund
-    both = make_user(roles=[("SUPER_ADMIN", None), ("ACCOUNTS", 1)])
-    both_h = login(both.email)
+    # admins have full Accounts access, including paying out a refund they decided themselves
     case = call(client, "post", "/refund-cases", people["accounts"]["h"], 201, json={"admission_id": aid, "request_reason": "x"})
-    call(client, "post", f"/refund-cases/{case['refund_case_id']}/decide", both_h, json={"decision": "Refund Approved", "amount": "1000"})
-    same = client.post(f"{API}/refund-cases/{case['refund_case_id']}/payout", json={"status": "Processing", "payout_reference": "r"},
-                       headers=both_h)
-    assert same.status_code == 422
+    call(client, "post", f"/refund-cases/{case['refund_case_id']}/decide", people["founder"]["h"],
+         json={"decision": "Refund Approved", "amount": "1000"})
+    paid = call(client, "post", f"/refund-cases/{case['refund_case_id']}/payout", people["founder"]["h"],
+                json={"status": "Processing", "payout_reference": "NEFT-1"})
+    assert paid["payout_status"] == "Processing"
 
     waiver = call(client, "post", "/refund-cases", people["bm"]["h"], 201, json={"admission_id": aid, "request_reason": "Hardship"})
     decided = call(client, "post", f"/refund-cases/{waiver['refund_case_id']}/decide", people["founder"]["h"],

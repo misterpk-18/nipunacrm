@@ -131,7 +131,7 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
               <tbody>
                 {lines.map((l) => (
                   <tr key={l.invoice_line_id}>
-                    <td className="min-w-40 max-w-64 whitespace-normal">
+                    <td className="min-w-40 max-w-64 whitespace-normal!">
                       <b>{l.course.course_title}</b>
                       <small className="block text-muted-foreground">
                         {inv.invoice_number} · {l.line_code}

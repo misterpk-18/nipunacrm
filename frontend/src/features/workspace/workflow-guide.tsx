@@ -16,8 +16,8 @@ const STEPS: Step[] = [
   { title: "Record payment claim", detail: "Record money received against the invoice. Until it is verified it is only a claim — no receipt, no collection.", screen: "Payments & receipts", to: "/payments" },
   { title: "Verify", detail: "Accounts checks the evidence and verifies the claim. Only then is a receipt number issued and balances change.", screen: "Payments & receipts", to: "/payments" },
   { title: "Admission", detail: "Created per invoiced course once ₹1,000 is verified on it (or its whole amount, if smaller).", screen: "Admissions", to: "/admissions" },
-  { title: "Batch", detail: "Allocate the admission to a batch of its course and branch. Separate from payment and from LMS access.", screen: "Batches", to: "/batches" },
-  { title: "LMS review", detail: "Check curriculum mapping and the learner's LMS status. The CRM shows LMS status; it does not create LMS accounts.", screen: "LMS access", to: "/lms-access" },
+  { title: "Batch", detail: "The Academic Coordinator allocates the student to a batch in the Nipuna LMS; the CRM shows it read-only. Separate from payment and from LMS access.", screen: "Batches", to: "/batches" },
+  { title: "LMS review", detail: "Check curriculum mapping and the learner's LMS status. The LMS creates the login when the admission reaches it; its status comes back to the CRM.", screen: "LMS access", to: "/lms-access" },
 ];
 
 const TRUTHS: [string, string][] = [

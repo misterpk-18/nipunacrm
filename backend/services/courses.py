@@ -5,7 +5,7 @@ from config.database import db
 from models import Branch, ComboCourse, Course, CourseBranch
 from repositories import courses as courses_repo
 from repositories.common import paginate
-from services import audit
+from services import audit, lms_sync
 from services.errors import BusinessRule, NotFound, ValidationError
 
 
@@ -28,6 +28,7 @@ def create_course(data: dict) -> Course:
     if branch_ids is not None:
         _set_branches(course, branch_ids)
     audit.record("COURSE_CREATED", "course", course.course_id, new=course.to_dict())
+    lms_sync.course_changed(course.course_id)
     return course
 
 
@@ -39,6 +40,7 @@ def update_course(course_id: int, data: dict) -> Course:
     db.session.flush()
     # A fee change only affects new fee discussions; saved versions keep their own standard fee
     audit.record("COURSE_UPDATED", "course", course_id, old=old, new=course.to_dict())
+    lms_sync.course_changed(course_id)
     return course
 
 
@@ -86,4 +88,5 @@ def set_components(course_id: int, components: list[dict]) -> Course:
     db.session.flush()
     db.session.refresh(combo)
     audit.record("COMBO_COMPONENTS_SET", "course", course_id, old={"components": old}, new={"components": component_ids})
+    lms_sync.course_changed(course_id)
     return combo

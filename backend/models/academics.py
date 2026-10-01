@@ -2,6 +2,7 @@
 from datetime import date, datetime, time
 
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text, Time
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config.database import db
@@ -25,6 +26,7 @@ class CurriculumVersion(db.Model):
     notes: Mapped[str | None] = mapped_column(Text)
     published_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lms_mirrored: Mapped[bool] = mapped_column(Boolean, default=False)  # a version the LMS runs (db 028)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
 
     course: Mapped[Course] = relationship(lazy="joined")
@@ -32,7 +34,8 @@ class CurriculumVersion(db.Model):
     def to_dict(self) -> dict:
         return {"curriculum_version_id": self.curriculum_version_id, "course": self.course.to_summary(),
                 "version_label": self.version_label, "status": self.status, "notes": self.notes,
-                "published_by": self.published_by, "published_at": self.published_at, "created_at": self.created_at}
+                "published_by": self.published_by, "published_at": self.published_at, "lms_mirrored": self.lms_mirrored,
+                "created_at": self.created_at}
 
 
 class AdmissionCurriculum(db.Model):
@@ -53,7 +56,8 @@ class AdmissionCurriculum(db.Model):
 
 
 class Batch(db.Model):
-    """GNT-B-0001 (trigger). Standalone courses only."""
+    """GNT-B-0001 (trigger). The CRM's own batches run standalone courses only; a batch mirrored from the LMS
+    (lms_mirrored, lms_course_id = the LMS batch_code) may run a combo (db 028)."""
 
     __tablename__ = "batches"
 
@@ -74,7 +78,10 @@ class Batch(db.Model):
     min_students: Mapped[int | None] = mapped_column(SmallInteger)
     location: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(BatchStatus, default="Planned")
-    lms_course_id: Mapped[str | None] = mapped_column(String(100))
+    lms_course_id: Mapped[str | None] = mapped_column(String(100), unique=True)
+    lms_mirrored: Mapped[bool] = mapped_column(Boolean, default=False)
+    lead_trainer_email: Mapped[str | None] = mapped_column(String(255))
+    trainer_emails: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -113,6 +120,9 @@ class Batch(db.Model):
             "location": self.location,
             "status": self.status,
             "lms_course_id": self.lms_course_id,
+            "lms_mirrored": self.lms_mirrored,
+            "lead_trainer_email": self.lead_trainer_email,
+            "trainer_emails": self.trainer_emails,
         }
 
 
@@ -131,6 +141,9 @@ class BatchAllocation(db.Model):
     allocated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_reason: Mapped[str | None] = mapped_column(Text)
+    track_code: Mapped[str | None] = mapped_column(String(60))      # LMS combo track (db 028)
+    lms_allocated_on: Mapped[date | None] = mapped_column(Date)
+    lms_mirrored: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
 
     batch: Mapped[Batch] = relationship(lazy="joined")
@@ -141,7 +154,8 @@ class BatchAllocation(db.Model):
                 "admission_code": self.admission.admission_code, "batch_id": self.batch_id,
                 "batch_code": self.batch.batch_code, "course_id": self.course_id, "status": self.status,
                 "joining_date": self.joining_date, "allocated_by": self.allocated_by, "allocated_at": self.allocated_at,
-                "ended_at": self.ended_at, "end_reason": self.end_reason}
+                "ended_at": self.ended_at, "end_reason": self.end_reason, "track_code": self.track_code,
+                "lms_mirrored": self.lms_mirrored}
 
 
 class BatchOccupancy(db.Model):

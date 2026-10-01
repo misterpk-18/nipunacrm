@@ -46,6 +46,12 @@ class Conflict(AppError):
     code = "CONFLICT"
 
 
+class ManagedInLms(AppError):
+    """Academic work the Nipuna LMS owns while `academics_managed_in_lms` is on (db 028)."""
+    status = 409
+    code = "MANAGED_IN_LMS"
+
+
 class BusinessRule(AppError):
     status = 422
     code = "BUSINESS_RULE"

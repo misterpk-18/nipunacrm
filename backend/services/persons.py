@@ -7,7 +7,7 @@ from config.database import db
 from models import Admission, Person, PipelineEntry
 from repositories import leads as leads_repo
 from repositories.common import paginate
-from services import audit
+from services import audit, lms_sync
 from services.context import current_user
 from services.errors import Forbidden, NotFound, ValidationError
 
@@ -115,4 +115,5 @@ def update_person(person_id: int, data: dict) -> Person:
         setattr(person, field, value)
     db.session.flush()
     audit.record("PERSON_UPDATED", "person", person_id, old=old, new={f: getattr(person, f) for f in PROFILE_FIELDS})
+    lms_sync.person_changed(person_id, [f for f in PROFILE_FIELDS if old[f] != getattr(person, f)])
     return person

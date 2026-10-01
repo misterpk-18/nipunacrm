@@ -11,6 +11,7 @@ import { DataTable, Empty, PageHead, Pagination, Section, Status, Warning } from
 import { date, dateTime, isPast } from "@/lib/format";
 import { BatchDialog } from "./batch-dialog";
 import { useCan } from "./can";
+import { LmsOwnedNote } from "./shared";
 import { CurriculumVersions } from "./curriculum";
 
 export type BatchSearch = Omit<BatchFilters, "per_page" | "branch_id">;
@@ -42,7 +43,7 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
         title="Batch Workspace"
         description="Schedule, capacity and allocation."
         actions={
-          academic && (can.isAdmin || hasRole("BRANCH_MANAGER", "ACADEMIC_COORDINATOR")) ? (
+          academic && !can.lmsOwned && (can.isAdmin || hasRole("BRANCH_MANAGER", "ACADEMIC_COORDINATOR")) ? (
             <Button onClick={() => setCreating(true)}>
               <Plus />
               New batch
@@ -50,6 +51,9 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
           ) : undefined
         }
       />
+      <div className="mb-4">
+        <LmsOwnedNote what="Batches, allocations and joining dates" />
+      </div>
       <div className="mb-4 grid gap-3 md:grid-cols-3">
         <Warning>Accepted delivery plan, enrolment, batch allocation and first regular attendance are separate records.</Warning>
         <Warning>Confirmed seat: allocate within 1 working day after Admission and before first class · future plan ≥ 48h before first class.</Warning>

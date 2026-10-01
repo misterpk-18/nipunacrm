@@ -16,6 +16,7 @@ from repositories import users as users_repo
 from repositories.common import paginate
 from services import audit
 from services import admissions as admissions_service
+from services.lms_pull import require_crm_academics
 from services.context import current_user
 from services.errors import BusinessRule, Forbidden, NotFound, ValidationError
 
@@ -74,6 +75,7 @@ def _check_batch_refs(data: dict, branch_id: int, course_id: int) -> None:
 
 
 def create_batch(data: dict) -> Batch:
+    require_crm_academics("Batches")
     _require_academic(data["branch_id"])
     course = db.session.get(Course, data["course_id"])
     if course is None or course.status != "Active":
@@ -91,6 +93,7 @@ def create_batch(data: dict) -> Batch:
 
 
 def update_batch(batch_id: int, data: dict) -> Batch:
+    require_crm_academics("Batches")
     batch = get_batch(batch_id)
     _require_academic(batch.branch_id)
     if batch.status in ("Completed", "Cancelled"):
@@ -149,6 +152,7 @@ def allocation_check(batch_id: int, admission_id: int) -> dict:
 
 
 def allocate(admission_id: int, batch_id: int) -> BatchAllocation:
+    require_crm_academics("Batch allocations")
     admission = admissions_service.get_admission(admission_id)
     _require_academic(admission.service_branch_id)
     batch = get_batch(batch_id)
@@ -171,6 +175,7 @@ def get_allocation(allocation_id: int) -> BatchAllocation:
 
 
 def close_allocation(allocation_id: int, status: str, reason: str | None) -> BatchAllocation:
+    require_crm_academics("Batch allocations")
     allocation = get_allocation(allocation_id)
     if not (current_user().is_admin or current_user().has_role("ACADEMIC_COORDINATOR",
                                                                branch_id=allocation.batch.branch_id)):
@@ -186,6 +191,7 @@ def close_allocation(allocation_id: int, status: str, reason: str | None) -> Bat
 
 def set_joining_date(allocation_id: int, joining_date: date) -> BatchAllocation:
     """First confirmed regular class (demos excluded); moves enrolment to In Progress."""
+    require_crm_academics("Joining dates")
     allocation = get_allocation(allocation_id)
     user = current_user()
     branch_id = allocation.batch.branch_id
@@ -212,6 +218,7 @@ def list_curriculum_versions(course_id: int | None) -> list[CurriculumVersion]:
 
 
 def create_curriculum_version(data: dict) -> CurriculumVersion:
+    require_crm_academics("Curriculum versions")
     if db.session.get(Course, data["course_id"]) is None:
         raise ValidationError("Unknown course", {"course_id": ["Not found"]})
     version = CurriculumVersion(course_id=data["course_id"], version_label=data["version_label"], notes=data.get("notes"))
@@ -224,6 +231,7 @@ def create_curriculum_version(data: dict) -> CurriculumVersion:
 
 def publish_curriculum_version(version_id: int) -> CurriculumVersion:
     """Publishing retires the course's previously published version."""
+    require_crm_academics("Curriculum versions")
     version = db.session.get(CurriculumVersion, version_id)
     if version is None:
         raise NotFound("Curriculum version not found")
@@ -243,6 +251,7 @@ def publish_curriculum_version(version_id: int) -> CurriculumVersion:
 
 def map_curriculum(admission_id: int, curriculum_version_id: int) -> Admission:
     """Map a published curriculum version to the enrolment, then mark curriculum Mapped."""
+    require_crm_academics("Curriculum mappings")
     admission = admissions_service.get_admission(admission_id)
     if not (current_user().is_admin or current_user().has_role("ACADEMIC_COORDINATOR",
                                                                branch_id=admission.service_branch_id)):
@@ -262,6 +271,7 @@ def map_curriculum(admission_id: int, curriculum_version_id: int) -> Admission:
 
 def complete(admission_id: int) -> Admission:
     """Authorised academic completion → alumni + support window (stamped by the DB)."""
+    require_crm_academics("Course completions")
     admission = admissions_service.get_admission(admission_id)
     if not (current_user().is_admin or current_user().has_role("ACADEMIC_COORDINATOR",
                                                                branch_id=admission.service_branch_id)):

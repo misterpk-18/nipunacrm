@@ -9,6 +9,7 @@ from models.enums import (
 from repositories import admissions as admissions_repo
 from services import academics as academics_service
 from services import admissions as admissions_service
+from services import lms_pull
 
 
 def _admission_detail(admission) -> dict:
@@ -87,6 +88,22 @@ def cancel_admission(admission_id: int):
     v = Validator(json_body())
     v.string("reason", required=True)
     return ok(admissions_service.cancel(admission_id, v.validate()["reason"]).to_dict())
+
+
+def pause_admission(admission_id: int):
+    v = Validator(json_body())
+    v.string("reason", required=True)
+    return ok(_admission_detail(admissions_service.pause(admission_id, v.validate()["reason"])))
+
+
+def resume_admission(admission_id: int):
+    v = Validator(json_body())
+    v.string("reason")
+    return ok(_admission_detail(admissions_service.resume(admission_id, v.validate().get("reason"))))
+
+
+def lms_sync_status():
+    return ok(lms_pull.sync_status())
 
 
 def transfer_admission(admission_id: int):

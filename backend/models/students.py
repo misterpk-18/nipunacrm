@@ -1,7 +1,7 @@
 """Student records: documents (+ mandatory checklist view), certificates, support cases."""
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config.database import db
@@ -74,12 +74,13 @@ class DocumentChecklist(db.Model):
 
 
 class Certificate(db.Model):
-    """One live certificate per admission per course; number assigned on issue (per service branch + FY)."""
+    """One live certificate per admission, course and type. Mirrored from the LMS register (lms_mirrored: LMS number,
+    one row per version, Issued / Superseded / Revoked); the CRM's own are numbered on issue (db 028)."""
 
     __tablename__ = "certificates"
 
     certificate_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    certificate_number: Mapped[str | None] = mapped_column(String(30), unique=True)
+    certificate_number: Mapped[str | None] = mapped_column(String(30))  # unique with version
     admission_id: Mapped[int] = mapped_column(Integer, ForeignKey("admissions.admission_id"))
     course_id: Mapped[int] = mapped_column(Integer, ForeignKey("courses.course_id"))
     status: Mapped[str] = mapped_column(CertificateStatus, default="Eligibility Pending")
@@ -90,6 +91,16 @@ class Certificate(db.Model):
     revoked_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoke_reason: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(SmallInteger, default=1)
+    certificate_type: Mapped[str | None] = mapped_column(String(60))
+    holder_name: Mapped[str | None] = mapped_column(String(150))
+    enrolment_code: Mapped[str | None] = mapped_column(String(30))
+    issued_by_email: Mapped[str | None] = mapped_column(String(255))
+    revoked_by_email: Mapped[str | None] = mapped_column(String(255))
+    reissue_reason: Mapped[str | None] = mapped_column(Text)
+    supersedes_version: Mapped[int | None] = mapped_column(SmallInteger)
+    lms_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lms_mirrored: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
 
@@ -99,7 +110,11 @@ class Certificate(db.Model):
         return {"certificate_id": self.certificate_id, "certificate_number": self.certificate_number,
                 "admission_id": self.admission_id, "course": self.course.to_summary(), "status": self.status,
                 "eligibility_notes": self.eligibility_notes, "issued_by": self.issued_by, "issued_at": self.issued_at,
-                "revoked_by": self.revoked_by, "revoked_at": self.revoked_at, "revoke_reason": self.revoke_reason}
+                "revoked_by": self.revoked_by, "revoked_at": self.revoked_at, "revoke_reason": self.revoke_reason,
+                "version": self.version, "certificate_type": self.certificate_type, "holder_name": self.holder_name,
+                "enrolment_code": self.enrolment_code, "issued_by_email": self.issued_by_email,
+                "revoked_by_email": self.revoked_by_email, "reissue_reason": self.reissue_reason,
+                "supersedes_version": self.supersedes_version, "lms_mirrored": self.lms_mirrored}
 
 
 class SupportCase(db.Model):

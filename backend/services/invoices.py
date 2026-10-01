@@ -18,7 +18,7 @@ from models import (
 )
 from repositories import invoices as invoices_repo
 from repositories.common import paginate
-from services import audit
+from services import audit, lms_sync
 from services import delivery_plans as plans_service
 from services import fees as fees_service
 from services import leads as leads_service
@@ -283,6 +283,7 @@ def cancel(invoice_id: int, reason: str) -> Invoice:
     db.session.flush()
     db.session.expire(invoice, ["balance"])
     audit.record("INVOICE_CANCELLED", "invoice", invoice_id, reason=reason, branch_id=invoice.collecting_branch_id)
+    lms_sync.finance_changed(invoice_id=invoice_id)
     return invoice
 
 
@@ -305,6 +306,7 @@ def set_due_date(invoice_id: int, installment_no: int, due_date: date) -> Instal
     audit.record("INSTALLMENT_DUE_DATE_CHANGED", "invoice", invoice_id,
                  old={"installment_no": installment_no, "due_date": old}, new={"due_date": due_date},
                  branch_id=invoice.collecting_branch_id)
+    lms_sync.finance_changed(invoice_id=invoice_id)  # next due date / instalments
     return installment
 
 

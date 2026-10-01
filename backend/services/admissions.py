@@ -19,7 +19,7 @@ from repositories import admissions as admissions_repo
 from repositories import invoices as invoices_repo
 from repositories import users as users_repo
 from repositories.common import paginate
-from services import audit, tasks
+from services import audit, lms_pull, lms_sync, tasks
 from services import invoices as invoices_service
 from services.context import ADMIN_ROLES, COUNSELLOR_ROLES, current_user
 from services.errors import BusinessRule, Conflict, Forbidden, NotFound, ValidationError
@@ -73,6 +73,8 @@ def _insert_admission(line: InvoiceLine, data: dict, created_by: int) -> Admissi
                  new={"admission_code": admission.admission_code, "invoice_id": line.invoice_id,
                       "invoice_line_id": line.invoice_line_id, "final_fee": admission.final_fee},
                  branch_id=admission.original_branch_id)
+    lms_sync.admission_qualified(admission.admission_id)
+    lms_sync.finance_changed(admission_id=admission.admission_id)
     return admission
 
 
@@ -175,6 +177,8 @@ def add_complimentary(admission_id: int, data: dict) -> Admission:
     audit.record("COMPLIMENTARY_ADMISSION_CREATED", "admission", admission.admission_id,
                  new={"parent": parent.admission_code, "offer_id": data["offer_id"], "course_id": data["course_id"]},
                  branch_id=admission.original_branch_id)
+    lms_sync.admission_qualified(admission.admission_id)
+    lms_sync.finance_changed(admission_id=admission.admission_id)
     return admission
 
 
@@ -191,6 +195,8 @@ def update(admission_id: int, data: dict) -> Admission:
     if not (user.is_manager_of(branch_id)
             or user.has_role(*COUNSELLOR_ROLES, "ACCOUNTS", "ACADEMIC_COORDINATOR", branch_id=branch_id)):
         raise Forbidden("You can't update this admission")
+    if "lms_status" in data:
+        lms_pull.require_crm_academics("LMS statuses")   # the pull writes it from the LMS
     for field in OWNER_FIELDS:
         if data.get(field):
             _check_staff(data[field], branch_id, field)
@@ -201,6 +207,10 @@ def update(admission_id: int, data: dict) -> Admission:
         admission.lms_last_synced_at = datetime.now(timezone.utc)
     db.session.flush()
     audit.record("ADMISSION_UPDATED", "admission", admission_id, old=old, new=data, branch_id=branch_id)
+    if "delivery_mode" in data and data["delivery_mode"] != old["delivery_mode"]:
+        lms_sync.admission_updated(admission_id, "delivery_mode")
+    if "planned_start_date" in data and data["planned_start_date"] != old["planned_start_date"]:
+        lms_sync.admission_qualified(admission_id)  # not an AdmissionUpdated field: the admission is sent again in full
     return admission
 
 
@@ -229,7 +239,42 @@ def cancel(admission_id: int, reason: str) -> Admission:
     admission.cancellation_reason = reason
     db.session.flush()
     audit.record("ADMISSION_CANCELLED", "admission", admission_id, reason=reason, branch_id=admission.service_branch_id)
+    lms_sync.admission_cancelled(admission_id, reason)
+    lms_sync.finance_changed(admission_id=admission_id)
     db.session.expire(admission, ["balance"])
+    return admission
+
+
+PAUSABLE = ("Awaiting Batch Allocation", "Scheduled", "In Progress")
+
+
+def pause(admission_id: int, reason: str) -> Admission:
+    """Pause the enrolment (the student must wait). The LMS pauses its enrolments; the pull then confirms Paused."""
+    admission = _managed(admission_id)
+    if admission.enrolment_status not in PAUSABLE:
+        raise BusinessRule(f"Only an open enrolment can be paused (it is {admission.enrolment_status})")
+    old = admission.enrolment_status
+    admission.enrolment_status = "Paused"
+    db.session.flush()
+    audit.record("ADMISSION_PAUSED", "admission", admission_id, old={"enrolment_status": old},
+                 new={"enrolment_status": "Paused"}, reason=reason, branch_id=admission.service_branch_id)
+    lms_sync.admission_updated(admission_id, "status")
+    return admission
+
+
+def resume(admission_id: int, reason: str | None) -> Admission:
+    """Resume a paused enrolment: back to In Progress (joined), Scheduled (allocated) or Awaiting Batch Allocation."""
+    admission = _managed(admission_id)
+    if admission.enrolment_status != "Paused":
+        raise BusinessRule(f"Only a paused enrolment can be resumed (it is {admission.enrolment_status})")
+    active = admissions_repo.active_allocations(admission_id)
+    status = ("In Progress" if any(a.joining_date for a in active)
+              else "Scheduled" if active else "Awaiting Batch Allocation")
+    admission.enrolment_status = status
+    db.session.flush()
+    audit.record("ADMISSION_RESUMED", "admission", admission_id, old={"enrolment_status": "Paused"},
+                 new={"enrolment_status": status}, reason=reason, branch_id=admission.service_branch_id)
+    lms_sync.admission_updated(admission_id, "status")
     return admission
 
 
@@ -253,6 +298,7 @@ def transfer(admission_id: int, data: dict) -> AdmissionTransfer:
     audit.record("ADMISSION_TRANSFERRED", "admission", admission_id,
                  old={"service_branch_id": record.from_branch_id}, new={"service_branch_id": record.to_branch_id},
                  reason=data["reason"], branch_id=record.from_branch_id)
+    lms_sync.admission_updated(admission_id, "service_branch_code")
     return record
 
 
@@ -296,8 +342,6 @@ def decide_fee_change(fee_change_id: int, approve: bool, reason: str | None) -> 
     user = current_user()
     if change.status != "Pending":
         raise BusinessRule(f"Fee change is {change.status}")
-    if change.requested_by == user.user_id:
-        raise Forbidden("You can't approve your own fee change")
     change.status = "Approved" if approve else "Rejected"
     change.approved_by = user.user_id  # recorded for rejections too
     change.rejection_reason = None if approve else reason
@@ -316,10 +360,11 @@ def decide_fee_change(fee_change_id: int, approve: bool, reason: str | None) -> 
 
 
 def apply_fee_change(fee_change_id: int) -> AdmissionFeeChange:
-    """Accounts applies it: admission fee, invoice amount and instalments are revised by the DB."""
+    """Accounts (or an admin) applies it: admission fee, invoice amount and instalments are revised by the DB."""
     change = get_fee_change(fee_change_id)
-    if not current_user().has_role("ACCOUNTS", branch_id=change.admission.service_branch_id):
-        raise Forbidden("Only Accounts at the service branch can apply fee changes")
+    user = current_user()
+    if not (user.is_admin or user.has_role("ACCOUNTS", branch_id=change.admission.service_branch_id)):
+        raise Forbidden("Only Accounts at the service branch, Founder / CEO or Super Admin can apply fee changes")
     change.status = "Applied"
     change.accounts_corrected_by = current_user().user_id
     db.session.flush()
@@ -329,4 +374,5 @@ def apply_fee_change(fee_change_id: int) -> AdmissionFeeChange:
     audit.record("FEE_CHANGE_APPLIED", "admission", change.admission_id,
                  old={"final_fee": change.old_fee}, new={"final_fee": change.new_fee},
                  branch_id=change.admission.service_branch_id)
+    lms_sync.finance_changed(admission_id=change.admission_id, invoice_id=change.admission.invoice_id)
     return change

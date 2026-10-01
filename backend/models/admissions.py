@@ -21,7 +21,7 @@ class Admission(db.Model):
 
     __tablename__ = "admissions"
 
-    ACTIVE_STATUSES = ("Awaiting Batch Allocation", "Scheduled", "In Progress", "Deferred", "Paused")
+    ACTIVE_STATUSES = ("Awaiting Batch Allocation", "Scheduled", "In Progress", "Paused")
 
     admission_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     admission_code: Mapped[str] = mapped_column(String(30), unique=True)  # NIT-GNT-2026-000001, set by trigger
@@ -60,6 +60,7 @@ class Admission(db.Model):
     cancellation_reason: Mapped[str | None] = mapped_column(Text)
     academic_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completion_authorised_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    completion_authorised_by_email: Mapped[str | None] = mapped_column(String(255))  # from the LMS (db 028)
     support_until: Mapped[date | None] = mapped_column(Date)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -131,6 +132,7 @@ class Admission(db.Model):
                              "reason": self.cancellation_reason} if self.cancelled_at else None,
             "academic_completed_at": self.academic_completed_at,
             "completion_authorised_by": self.completion_authorised_by,
+            "completion_authorised_by_email": self.completion_authorised_by_email,
             "support_until": self.support_until,
             "created_at": self.created_at,
         }

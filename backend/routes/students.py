@@ -165,12 +165,12 @@ def decide_refund_case(case_id: int):
     return collections_controller.decide_refund_case(case_id)
 
 
-@route("/refund-cases/<int:case_id>/payout", "post", ("ACCOUNTS",))
+@route("/refund-cases/<int:case_id>/payout", "post", ADMIN_ROLES + ("ACCOUNTS",))
 def payout_refund_case(case_id: int):
     return collections_controller.payout_refund_case(case_id)
 
 
-@route("/refund-cases/<int:case_id>/reconcile", "post", ("ACCOUNTS",))
+@route("/refund-cases/<int:case_id>/reconcile", "post", ADMIN_ROLES + ("ACCOUNTS",))
 def reconcile_refund_case(case_id: int):
     return collections_controller.reconcile_refund_case(case_id)
 

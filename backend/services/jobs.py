@@ -1,8 +1,10 @@
 """Background jobs (run by `flask jobs run`, scheduled with cron): escalations, demo reminders, collections
-follow-ups, instalments due soon, broken promises, batch-allocation escalation, scheduled reports and clean-up.
+follow-ups, instalments due soon, broken promises, batch-allocation escalation, scheduled reports, clean-up and the
+Nipuna LMS (outbox delivery, status pull, branch finance snapshots).
 
 Every job is idempotent: system tasks use dedupe keys and notifications deduplicate, so running a job twice in a
-row changes nothing. Jobs never commit; the CLI commits each job on its own.
+row changes nothing. Jobs never commit; the CLI commits each job on its own — except lms-sync and lms-status-pull,
+which commit each record so no transaction stays open while the LMS answers.
 """
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -18,7 +20,7 @@ from models import (
 from repositories import settings as settings_repo
 from repositories import users as users_repo
 from services import reports as reports_service
-from services import payment_alerts, sla, tasks
+from services import lms_delivery, lms_finance, lms_pull, payment_alerts, sla, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +135,9 @@ def broken_promises() -> int:
 # ---------------------------------------------------------------- academics
 
 def batch_allocation_escalation() -> int:
+    """Off while academics are managed in the LMS: its allocation-escalation job raises these instead."""
+    if lms_pull.lms_owns_academics():
+        return 0
     rows = db.session.execute(select(BatchAllocationQueue).where(BatchAllocationQueue.escalate_at <= func.now())).scalars().all()
     for row in rows:
         tasks.create_system_task("ACADEMIC", f"Allocate a batch now: {row.admission_code} starts {row.planned_start_date}",
@@ -203,4 +208,7 @@ JOBS = {
     "batch-allocation": batch_allocation_escalation,
     "scheduled-reports": scheduled_reports,
     "cleanup": cleanup,
+    "lms-sync": lms_delivery.deliver,
+    "lms-status-pull": lms_pull.pull,
+    "lms-finance-snapshot": lms_finance.send_snapshots,
 }
