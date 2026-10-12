@@ -1,18 +1,30 @@
 """Demos (sidebar #4)."""
-from flask import Blueprint
+from flask import Blueprint, request
 
 from controllers import demos as demos_controller
 from routes.decorators import login_required, require_roles
-from services.context import DEMO_ROLES, LEAD_ROLES
+from services.context import DEMO_ROLES, LEAD_ROLES, current_user
+from services.errors import Forbidden
 
 demos_bp = Blueprint("demos", __name__)
 
 
 @demos_bp.get("/demos")
 @login_required
-@require_roles(*DEMO_ROLES)
+@require_roles(*DEMO_ROLES, "ACCOUNTS")
 def list_demos():
+    # Accounts only reads one lead's demos (read-only Lead 360), never the whole demo schedule
+    user = current_user()
+    if not user.has_role(*DEMO_ROLES) and request.args.get("lead_id") is None:
+        raise Forbidden("You don't have access to this action")
     return demos_controller.list_demos()
+
+
+@demos_bp.get("/demos/slots")
+@login_required
+@require_roles(*LEAD_ROLES)
+def demo_slots():
+    return demos_controller.slots()
 
 
 @demos_bp.get("/demos/<int:demo_id>")
@@ -73,6 +85,6 @@ def list_reminders(demo_id: int):
 
 @demos_bp.post("/demos/<int:demo_id>/approve-extra")
 @login_required
-@require_roles("ACADEMIC_COORDINATOR", "BRANCH_MANAGER")
+@require_roles("BRANCH_MANAGER")
 def approve_extra(demo_id: int):
     return demos_controller.approve_extra(demo_id)

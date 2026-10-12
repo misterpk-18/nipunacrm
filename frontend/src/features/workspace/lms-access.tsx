@@ -1,11 +1,11 @@
 /**
- * LMS access (V4, Phase 9): every admission with its curriculum, LMS and enrolment status. Read-only — the LMS
+ * LMS access (V4, Phase 9): every admission with its LMS and enrolment status. Read-only — the LMS
  * creates the login from the CRM's AdmissionQualified event (db 026) and its status comes back by the pull (db 028).
  */
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
-import { CURRICULUM_STATUSES, ENROLMENT_STATUSES, LMS_STATUSES } from "@/api/admissions";
+import { ENROLMENT_STATUSES, LMS_STATUSES } from "@/api/admissions";
 import { useLmsAccess, useLmsStatusCounts, useLmsSyncStatus, type LmsFilters } from "@/api/lms";
 import { useBranchFilter } from "@/auth/auth";
 import { dateTime } from "@/lib/format";
@@ -13,6 +13,7 @@ import { NativeSelect } from "@/components/crm/forms";
 import { DataTable, Empty, PageHead, Pagination, StatTile, Status, Warning } from "@/components/crm/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LmsSyncHealth } from "./lms-sync-health";
 
 export type LmsSearch = Omit<LmsFilters, "per_page" | "branch_id">;
 
@@ -41,7 +42,7 @@ export function LmsAccessPage({ search, onSearch }: { search: LmsSearch; onSearc
       <PageHead
         eyebrow=""
         title="LMS access"
-        description="One row per admission: curriculum mapping, LMS account status and enrolment. Read-only here."
+        description="One row per admission: LMS account status and enrolment, both from the LMS."
       />
       <div className="mb-5">
         <Warning>
@@ -52,6 +53,9 @@ export function LmsAccessPage({ search, onSearch }: { search: LmsSearch; onSearc
           {sync?.held ? ` ${sync.held} record(s) waiting to apply.` : ""} The admission and its verified receipts stay valid
           whatever the LMS status.
         </Warning>
+        <div className="mt-2">
+          <LmsSyncHealth />
+        </div>
       </div>
       <div className="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5 lg:gap-4" aria-label="LMS status">
         {LMS_STATUSES.map((s) => (
@@ -76,9 +80,6 @@ export function LmsAccessPage({ search, onSearch }: { search: LmsSearch; onSearc
           </form>
           <div className="min-w-0 flex-1 basis-40 sm:max-w-52 sm:flex-none">
             <NativeSelect aria-label="LMS status" value={search.lms_status ?? ""} placeholder="Any LMS status" options={LMS_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => set({ lms_status: e.target.value || undefined })} />
-          </div>
-          <div className="min-w-0 flex-1 basis-40 sm:max-w-52 sm:flex-none">
-            <NativeSelect aria-label="Curriculum" value={search.curriculum_status ?? ""} placeholder="Any curriculum" options={CURRICULUM_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => set({ curriculum_status: e.target.value || undefined })} />
           </div>
           <div className="min-w-0 flex-1 basis-40 sm:max-w-56 sm:flex-none">
             <NativeSelect aria-label="Enrolment" value={search.enrolment_status ?? ""} placeholder="Any enrolment" options={ENROLMENT_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => set({ enrolment_status: e.target.value || undefined })} />
@@ -125,7 +126,6 @@ export function LmsAccessPage({ search, onSearch }: { search: LmsSearch; onSearc
                 </span>
               ),
             },
-            { header: "Curriculum", cell: (a) => <Status kind={a.curriculum_status === "Mapped" ? "good" : "warn"}>{a.curriculum_status}</Status> },
             { header: "LMS status", cell: (a) => <Status kind={LMS_TONE[a.lms_status] ?? "neutral"}>{a.lms_status}</Status> },
             { header: "Enrolment", cell: (a) => <Status>{a.enrolment_status}</Status> },
           ]}

@@ -8,7 +8,6 @@ export const Route = createFileRoute("/lms-access")({
       page: num(s["page"]),
       q: str(s["q"]),
       lms_status: str(s["lms_status"]),
-      curriculum_status: str(s["curriculum_status"]),
       enrolment_status: str(s["enrolment_status"]),
     }),
   component: LmsAccessRoute,

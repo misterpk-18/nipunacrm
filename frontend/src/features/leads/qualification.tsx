@@ -21,13 +21,22 @@ export function useQualification(leadId: number) {
   return useQuery({ queryKey: leadKeys.qualification(leadId), queryFn: () => leadsApi.qualification(leadId) });
 }
 
-/** "A deal starts only after every check is reviewed." Ticks record who reviewed and when; qualifying never changes the stage. */
-export function QualificationPanel({ lead }: { lead: Lead }) {
+/**
+ * "A deal starts only after every check is reviewed." Ticks record who reviewed and when (checks the system can
+ * prove from saved data are ticked by "System"); qualifying never changes the stage. After a successful Mark
+ * Qualified the Convert-to-deal dialog opens straight away (or `onQualified`, when the caller handles it).
+ */
+export function QualificationPanel({ lead, onQualified }: { lead: Lead; onQualified?: () => void }) {
+  const [converting, setConverting] = useState(false);
   const q = useQualification(lead.lead_id);
   const toggle = useApiMutation(({ check, reviewed }: { check: string; reviewed: boolean }) => leadsApi.setCheck(lead.lead_id, check, reviewed), {
     invalidate: [leadKeys.qualification(lead.lead_id)],
   });
-  const qualify = useApiMutation(() => leadsApi.qualify(lead.lead_id), { success: "Marked qualified", invalidate: refresh(lead.lead_id) });
+  const qualify = useApiMutation(() => leadsApi.qualify(lead.lead_id), {
+    success: "Marked qualified",
+    invalidate: refresh(lead.lead_id),
+    onSuccess: () => (onQualified ? onQualified() : setConverting(true)),
+  });
   if (!q.data) return null;
   const data = q.data;
   const frozen = data.qualified_at !== null || !lead.is_open;
@@ -40,7 +49,7 @@ export function QualificationPanel({ lead }: { lead: Lead }) {
           <label
             key={c.check}
             className={cn("check-tile", c.reviewed && "check-tile-on", frozen && "cursor-default")}
-            title={c.reviewed_by ? `Reviewed by ${c.reviewed_by.full_name} · ${dateTime(c.reviewed_at)}` : c.hint}
+            title={c.reviewed_by ? `${c.auto ? "Ticked automatically" : `Reviewed by ${c.reviewed_by.full_name}`} · ${dateTime(c.reviewed_at)}` : c.hint}
           >
             <Checkbox
               checked={c.reviewed || (data.complete && frozen)}
@@ -70,6 +79,7 @@ export function QualificationPanel({ lead }: { lead: Lead }) {
           {data.qualified_at ? (data.converted_at ? `Converted ${dateTime(data.converted_at)}` : "Ready to convert to a deal") : `${done} of ${data.checks.length} reviewed`}
         </span>
       </div>
+      {converting && <ConvertDialog lead={lead} onClose={() => setConverting(false)} />}
     </Section>
   );
 }

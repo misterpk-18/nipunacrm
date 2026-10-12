@@ -1,8 +1,8 @@
 """Demo schedule queries."""
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, literal_column, select
 
 from config.database import db
-from models import Demo
+from models import Demo, Lead
 
 
 def _local_date(column):
@@ -17,6 +17,11 @@ def demos_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
                           ("status", Demo.status), ("lead_id", Demo.lead_id)):
         if filters.get(field) is not None:
             stmt = stmt.where(column == filters[field])
+    if filters.get("owner_id") is not None:  # demos of leads this counsellor owns
+        stmt = stmt.where(Demo.lead.has(Lead.assigned_to == filters["owner_id"]))
+    if filters.get("outcome_due"):  # booked, and the slot has ended: the trainer / counsellor still has to record it
+        stmt = stmt.where(Demo.status.in_(Demo.OPEN_STATUSES),
+                          Demo.scheduled_at + Demo.duration_minutes * literal_column("INTERVAL '1 minute'") <= func.now())
     if filters.get("from"):
         stmt = stmt.where(_local_date(Demo.scheduled_at) >= filters["from"])
     if filters.get("to"):

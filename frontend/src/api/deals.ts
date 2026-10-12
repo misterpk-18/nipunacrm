@@ -1,8 +1,11 @@
 /** A deal = one course (lead) after Convert: its delivery plan (db 020) and invoicing (db 021). */
 import { get, post, put } from "./client";
+import type { OfferableBatch } from "./playbook";
 import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef, UserRef } from "./types";
 
 export const CAPACITY_REVIEWS = ["Checked", "Waiting"] as const;
+
+export type AcceptanceMethod = "in_person" | "call" | "whatsapp";
 
 export type DeliveryPlan = {
   delivery_plan_id: number;
@@ -19,6 +22,21 @@ export type DeliveryPlan = {
   accepted_at: DateTime | null;
   notes: string | null;
   updated_at: DateTime;
+  /** The upcoming LMS batch picked as a hint when the start date was set (db 037); allocation stays separate. */
+  preferred_lms_batch_code: string | null;
+  preferred_lms_batch_label: string | null;
+  acceptance_method: AcceptanceMethod | null;
+  /** Set while the "Reply YES" message is out and the learner has not answered. */
+  confirmation_requested_at: DateTime | null;
+};
+
+export type PlanConfirmation = {
+  outbox_id: number;
+  status: "Queued" | "Sent" | "Delivered" | "Read" | "Failed" | "Skipped";
+  requested_at: DateTime;
+  sent_at: DateTime | null;
+  problem: string | null;
+  awaiting_reply: boolean;
 };
 
 export type DeliveryPlanState = {
@@ -26,6 +44,8 @@ export type DeliveryPlanState = {
   plan: DeliveryPlan | null;
   invoice: { invoice_id: number; invoice_number: string; status: string; billed_amount: Money } | null;
   can_edit: boolean;
+  confirmation: PlanConfirmation | null;
+  whatsapp: { sending: boolean; has_number: boolean };
 };
 
 export type DeliveryPlanBody = {
@@ -36,6 +56,9 @@ export type DeliveryPlanBody = {
   capacity_review?: string;
   notes?: string | null;
   student_accepted?: boolean;
+  acceptance_method?: "in_person" | "call";
+  preferred_lms_batch_code?: string | null;
+  preferred_lms_batch_label?: string | null;
 };
 
 export type Issuer = {
@@ -55,7 +78,7 @@ export type CourseOption = {
   amount: Money | null;
   fee_version: { version_id: number; version_no: number; status: string; final_payable: Money } | null;
   fee_discussion_id: number | null;
-  delivery_plan: { plan_code: string; status: string } | null;
+  delivery_plan: { plan_code: string; status: string; acceptance_method?: AcceptanceMethod | null } | null;
   invoice: { invoice_id: number; invoice_number: string; status: string; billed_amount: Money } | null;
   eligible: boolean;
   reasons: string[];
@@ -81,6 +104,9 @@ export const dealsApi = {
   deliveryPlan: (leadId: number) => get<DeliveryPlanState>(`/leads/${leadId}/delivery-plan`),
   saveDeliveryPlan: (leadId: number, body: DeliveryPlanBody) => put<DeliveryPlanState>(`/leads/${leadId}/delivery-plan`, body),
   acceptDeliveryPlan: (leadId: number, body: DeliveryPlanBody) => post<DeliveryPlanState>(`/leads/${leadId}/delivery-plan/accept`, body),
+  deliveryPlanBatches: (leadId: number, branchId?: number) =>
+    get<{ lead_id: number; branch_id: number; batches: OfferableBatch[] }>(`/leads/${leadId}/delivery-plan/batches`, branchId ? { branch_id: branchId } : undefined),
+  sendDeliveryPlanForConfirmation: (leadId: number) => post<DeliveryPlanState>(`/leads/${leadId}/delivery-plan/send-for-confirmation`, {}),
   reopenDeliveryPlan: (leadId: number, reason: string) => post<DeliveryPlanState>(`/leads/${leadId}/delivery-plan/reopen`, { reason }),
   invoiceOptions: (leadId: number) => get<InvoiceOptions>("/invoices/options", { lead_id: leadId }),
   createInvoice: (body: NewInvoice) => post<{ invoice_id: number; invoice_number: string; billed_amount: Money }>("/invoices", body),
@@ -89,6 +115,7 @@ export const dealsApi = {
 export const dealKeys = {
   deliveryPlan: (leadId: number) => ["deals", "delivery-plan", leadId] as const,
   invoiceOptions: (leadId: number) => ["deals", "invoice-options", leadId] as const,
+  planBatches: (leadId: number, branchId: number | undefined) => ["deals", "plan-batches", leadId, branchId ?? null] as const,
 };
 
 /** Split a total into 1–3 instalments: Full today; 50/50 (day 0, day 12); 50/25/25 (day 0, 10, 15). Paise-exact. */

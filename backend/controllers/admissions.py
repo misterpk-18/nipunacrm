@@ -1,9 +1,9 @@
-"""Admissions, transfers, fee changes; batches, allocations, curriculum and completion."""
+"""Admissions, transfers, fee changes; batches, allocations and completion."""
 from flask import request
 
 from controllers.common import Validator, created, get_page_params, json_body, ok, paginated, require_changes
 from models.enums import (
-    BATCH_STATUSES, CURRICULUM_STATUSES, DELIVERY_MODES, ENROLMENT_STATUSES, HANDOVER_STATUSES, LMS_STATUSES,
+    BATCH_STATUSES, DELIVERY_MODES, ENROLMENT_STATUSES, HANDOVER_STATUSES, LMS_STATUSES,
     SEAT_TYPES,
 )
 from repositories import admissions as admissions_repo
@@ -16,7 +16,6 @@ def _admission_detail(admission) -> dict:
     return {
         **admission.to_dict(),
         "allocations": [a.to_dict() for a in admissions_repo.allocations_for(admission.admission_id)],
-        "curricula": [c.to_dict() for c in admissions_repo.curricula_for(admission.admission_id)],
         "fee_changes": [c.to_dict() for c in admissions_repo.fee_changes_for(admission.admission_id)],
     }
 
@@ -58,7 +57,6 @@ def list_admissions():
     for field in ("branch_id", "service_branch_id", "original_branch_id", "person_id", "course_id"):
         v.integer(field, min_value=1)
     v.choice("enrolment_status", ENROLMENT_STATUSES)
-    v.choice("curriculum_status", CURRICULUM_STATUSES)
     v.choice("handover_status", HANDOVER_STATUSES)
     v.choice("lms_status", LMS_STATUSES)
     v.choice("seat_type", SEAT_TYPES)
@@ -106,6 +104,13 @@ def lms_sync_status():
     return ok(lms_pull.sync_status())
 
 
+def lms_refresh(admission_id: int):
+    """Refresh one admission from the LMS now (Student 360 / Admission)."""
+    admissions_service.get_admission(admission_id)       # scoping: 404 outside the user's branches
+    counts = lms_pull.refresh_admission(admission_id)
+    return ok({"refreshed": counts, "admission": _admission_detail(admissions_service.get_admission(admission_id))})
+
+
 def transfer_admission(admission_id: int):
     v = Validator(json_body())
     v.integer("to_branch_id", required=True, min_value=1)
@@ -139,7 +144,6 @@ def _batch_rules(v: Validator, creating: bool) -> None:
     if creating:
         v.integer("course_id", required=True, min_value=1)
         v.integer("branch_id", required=True, min_value=1)
-    v.integer("curriculum_version_id", nullable=True, min_value=1)
     v.choice("delivery_mode", DELIVERY_MODES)
     v.integer("trainer_user_id", nullable=True, min_value=1)
     v.string("schedule_days", nullable=True, max_length=50)
@@ -217,33 +221,7 @@ def set_joining_date(allocation_id: int):
     return ok(academics_service.set_joining_date(allocation_id, v.validate()["joining_date"]).to_dict())
 
 
-# ---------------------------------------------------------------- curriculum / completion
-
-def list_curriculum_versions():
-    v = Validator(request.args.to_dict())
-    v.integer("course_id", min_value=1)
-    return ok([c.to_dict() for c in academics_service.list_curriculum_versions(v.validate().get("course_id"))])
-
-
-def create_curriculum_version():
-    v = Validator(json_body())
-    v.integer("course_id", required=True, min_value=1)
-    v.string("version_label", required=True, max_length=30)
-    v.string("notes", nullable=True)
-    v.boolean("publish", default=False)
-    return created(academics_service.create_curriculum_version(v.validate()).to_dict())
-
-
-def publish_curriculum_version(version_id: int):
-    return ok(academics_service.publish_curriculum_version(version_id).to_dict())
-
-
-def map_curriculum(admission_id: int):
-    v = Validator(json_body())
-    v.integer("curriculum_version_id", required=True, min_value=1)
-    admission = academics_service.map_curriculum(admission_id, v.validate()["curriculum_version_id"])
-    return ok(_admission_detail(admission))
-
+# ---------------------------------------------------------------- completion
 
 def complete_admission(admission_id: int):
     return ok(academics_service.complete(admission_id).to_dict())

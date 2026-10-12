@@ -1,4 +1,4 @@
-import { get, list, post, upload, type Query } from "./client";
+import { API_BASE, ApiError, get, getToken, list, post, upload, type Query } from "./client";
 import type { Issuer } from "./deals";
 import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef, UserRef } from "./types";
 
@@ -142,6 +142,15 @@ export type NewPayment = {
 export type RecordResult = { payment: Payment | null; payments: Payment[]; advance: Payment | null };
 export type VerifyResult = Payment & { admissions_created: { admission_id: number; admission_code: string; course: CourseRef }[] };
 
+/** The proof file of a claim (the API checks branch access): an object URL to show or open, and its type. */
+export async function fetchProof(id: number): Promise<{ url: string; type: string }> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}/payments/${id}/proof`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) throw new ApiError(response.status, "HTTP_ERROR", response.status === 404 ? "No proof attached to this payment" : `Could not load the proof (${response.status})`);
+  const blob = await response.blob();
+  return { url: URL.createObjectURL(blob), type: blob.type };
+}
+
 export const paymentsApi = {
   list: (filters: PaymentFilters) =>
     list<PaymentRow>("/payments", filters as Query).then((p) => ({ ...p, totals: (p.meta as unknown as { totals?: PaymentTotals }).totals })),
@@ -172,6 +181,7 @@ export const paymentKeys = {
   all: ["payments"] as const,
   list: (filters: PaymentFilters) => ["payments", "list", filters] as const,
   detail: (id: number) => ["payments", "detail", id] as const,
+  proof: (id: number) => ["payments", "proof", id] as const,
   receipt: (id: number) => ["payments", "receipt", id] as const,
   unallocated: (query: object) => ["payments", "unallocated", query] as const,
   corrections: (query: object) => ["correction-requests", query] as const,

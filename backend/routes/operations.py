@@ -183,7 +183,7 @@ def add_application_event(application_id: int):
     return placement_controller.add_event(application_id)
 
 
-@route("/alumni", "get", PLACEMENT_ROLES + ("ACADEMIC_COORDINATOR",))
+@route("/alumni", "get", PLACEMENT_ROLES)
 def list_alumni():
     return placement_controller.list_alumni()
 

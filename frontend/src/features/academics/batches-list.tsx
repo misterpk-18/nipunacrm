@@ -12,7 +12,6 @@ import { date, dateTime, isPast } from "@/lib/format";
 import { BatchDialog } from "./batch-dialog";
 import { useCan } from "./can";
 import { LmsOwnedNote } from "./shared";
-import { CurriculumVersions } from "./curriculum";
 
 export type BatchSearch = Omit<BatchFilters, "per_page" | "branch_id">;
 
@@ -28,7 +27,7 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
   const [creating, setCreating] = useState(false);
   const filters: BatchFilters = { ...search, branch_id: branchId, per_page: 25 };
   const batches = useQuery({ queryKey: batchKeys.list(filters), queryFn: () => batchesApi.list(filters), placeholderData: (p) => p });
-  const academic = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "ACADEMIC_COORDINATOR");
+  const academic = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER");
   const queueQuery = { branch_id: branchId, per_page: 50 };
   const queue = useQuery({ queryKey: admissionKeys.queue(queueQuery), queryFn: () => admissionsApi.queue(queueQuery), enabled: academic });
   const set = (patch: Partial<BatchSearch>) => {
@@ -43,7 +42,7 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
         title="Batch Workspace"
         description="Schedule, capacity and allocation."
         actions={
-          academic && !can.lmsOwned && (can.isAdmin || hasRole("BRANCH_MANAGER", "ACADEMIC_COORDINATOR")) ? (
+          academic && !can.lmsOwned && (can.isAdmin || hasRole("BRANCH_MANAGER")) ? (
             <Button onClick={() => setCreating(true)}>
               <Plus />
               New batch
@@ -87,7 +86,7 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
               ),
             },
             { header: "Branch", cell: (b) => b.branch.branch_name },
-            { header: "Course / curriculum", cell: (b) => <span className="block max-w-64 truncate" title={b.course.course_title}>{`${b.course.course_title} · ${b.curriculum_version?.version_label ?? "no curriculum"}`}</span> },
+            { header: "Course", cell: (b) => <span className="block max-w-64 truncate" title={b.course.course_title}>{b.course.course_title}</span> },
             { header: "Trainer", cell: (b) => b.trainer?.full_name ?? "—" },
             { header: "Mode", cell: (b) => b.delivery_mode },
             { header: "Start → expected end", cell: (b) => `${date(b.start_date)} → ${date(b.end_date)}` },
@@ -101,7 +100,7 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
         <Pagination meta={batches.data?.meta} onPage={(page) => onSearch({ ...search, page })} />
       </Section>
       {academic && (
-        <Section title="Awaiting batch allocation" className="mt-4" subtitle="Open an admission to map its curriculum and allocate it">
+        <Section title="Awaiting batch allocation" className="mt-4" subtitle="Open an admission to allocate it">
           <DataTable
             rows={queue.data?.data}
             loading={queue.isLoading}
@@ -115,14 +114,12 @@ export function BatchesList({ search, onSearch }: { search: BatchSearch; onSearc
               { header: "Person", cell: (r) => r.admission.person.full_name },
               { header: "Course", cell: (r) => r.admission.course.course_title },
               { header: "Service branch", cell: (r) => r.admission.service_branch.branch_name },
-              { header: "Curriculum", cell: (r) => <Status>{r.admission.curriculum_status === "Mapped" ? "Mapped" : "Curriculum Mapping Pending"}</Status> },
               { header: "Admitted", cell: (r) => date(r.admission.admission_date) },
               { header: "Allocate by", cell: (r) => <span className={isPast(r.allocate_by) ? "font-medium text-destructive" : undefined}>{dateTime(r.allocate_by)}</span> },
             ]}
           />
         </Section>
       )}
-      <CurriculumVersions className="mt-4" />
       <BatchDialog open={creating} onOpenChange={setCreating} />
     </>
   );

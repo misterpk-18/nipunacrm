@@ -5,22 +5,25 @@ The database computes version numbers, the 70% advisory floor, validity and fina
 refuses an Approved version with extra concession / below floor unless a matching SCR is Approved, checks the
 approver's concession limit, blocks self-approval and requires an independent approval below the floor.
 """
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from config.database import db
 from models import (
-    Course, FeeDiscussion, FeeDiscussionVersion, Offer, PaymentPlan, SpecialClosingRequest,
+    Course, FeeDiscussion, FeeDiscussionVersion, Offer, PaymentPlan, SpecialClosingRequest, Task,
 )
 from repositories import fees as fees_repo
-from services import audit, notifications, tasks
+from services import audit, notifications, sla, staff_alerts, tasks
 from services import leads as leads_service
+from services import offers as offers_service
+from services import reports as reports_service
 from services.context import ADMIN_ROLES, COUNSELLOR_ROLES, current_user
 from services.errors import BusinessRule, Conflict, Forbidden, NotFound, ValidationError
 
 EDITABLE_VERSION_STATUSES = ("Discussion Saved", "Counteroffered", "Pending Approval")
+LIVE_VERSION_STATUSES = EDITABLE_VERSION_STATUSES + ("Approved",)  # versions whose 7-day validity still matters
 EARLY_STAGES = ("New Enquiry", "Counselling", "Demo Scheduled", "Demo Attended")
 CENT = Decimal("0.01")
 
@@ -106,11 +109,17 @@ def used_offers(discussion: FeeDiscussion) -> list[dict]:
     return fees_repo.used_offers(discussion.lead.person_id)
 
 
+def offer_options(discussion: FeeDiscussion) -> dict:
+    """Eligible offers (with saving and final price, best one flagged) and the unavailable ones with their reason."""
+    return offers_service.options_for(discussion.branch_id, discussion.course_id, discussion.lead.person_id,
+                                      discussion.course.standard_fee, date.today())
+
+
 def applicable_offers(discussion: FeeDiscussion) -> list[Offer]:
-    """Active offers for the course and branch today, minus offers the person has already used."""
-    used = {u["offer_code"] for u in used_offers(discussion)}
-    offers = fees_repo.applicable_offers(discussion.branch_id, discussion.course_id, date.today())
-    return [o for o in offers if o.offer_code not in used]
+    """Active offers for the course and branch today, minus offers the person has already used or can't take."""
+    ids = [o["offer_id"] for o in offer_options(discussion)["eligible"]]
+    offers = fees_repo.offers_by_ids(ids)
+    return sorted(offers, key=lambda o: o.offer_code)
 
 
 def check_offer_not_used(discussion: FeeDiscussion, offer: Offer | None) -> None:
@@ -124,11 +133,7 @@ def check_offer_not_used(discussion: FeeDiscussion, offer: Offer | None) -> None
 
 
 def _offer_discount(offer: Offer, standard_fee: Decimal) -> Decimal:
-    if offer.benefit_type == "Discount Amount":
-        return min(offer.discount_amount, standard_fee)
-    if offer.benefit_type == "Discount Percent":
-        return (standard_fee * offer.discount_percent / 100).quantize(CENT)
-    return Decimal("0.00")  # complimentary course: no discount on this fee
+    return offers_service.discount_for(offer, standard_fee)
 
 
 def _plan_for(data: dict) -> PaymentPlan:
@@ -169,8 +174,9 @@ def add_version(discussion_id: int, data: dict) -> FeeDiscussionVersion:
         raise ValidationError("Validity can't be in the past", {"valid_until": ["Must be today or later"]})
 
     for old in discussion.versions:
-        if old.status in EDITABLE_VERSION_STATUSES or old.status == "Approved":
+        if old.status in LIVE_VERSION_STATUSES:
             old.status = "Superseded"
+            tasks.complete_system_task(f"fee-expiry:{old.version_id}")
     version = FeeDiscussionVersion(
         fee_discussion_id=discussion.fee_discussion_id, standard_fee=standard_fee, offer_id=data.get("offer_id"),
         offer_discount=offer_discount, extra_concession=extra, payment_plan_id=plan.payment_plan_id,
@@ -182,6 +188,11 @@ def add_version(discussion_id: int, data: dict) -> FeeDiscussionVersion:
     db.session.flush()
     db.session.refresh(version)  # version_no, floor, final payable and validity come from a trigger
     db.session.refresh(discussion)
+    if data.get("request_reason") and version.needs_special_closing:
+        # Save and ask for approval in one step (the counsellor never leaves the fee screen)
+        request_special_closing(version.version_id, {"request_reason": data["request_reason"],
+                                                     "requested_extra": version.extra_concession})
+        db.session.refresh(version)
     return version
 
 
@@ -272,6 +283,7 @@ def request_special_closing(version_id: int, data: dict) -> SpecialClosingReques
                          entity_id=scr.scr_id, branch_id=discussion.branch_id, title=title)
     tasks.create_system_task("APPROVAL", title, discussion.branch_id, scr.decision_due_at,
                              team_role_code="BRANCH_MANAGER", dedupe_key=f"scr:{scr.scr_id}", scr_id=scr.scr_id)
+    staff_alerts.approval_waiting(scr)  # WhatsApp to the approvers who may decide it
     audit.record("SCR_REQUESTED", "special_closing_request", scr.scr_id,
                  new={"version_id": version.version_id, "requested_extra": requested}, branch_id=discussion.branch_id)
     return scr
@@ -365,3 +377,181 @@ def reject_scr(scr_id: int, reason: str) -> SpecialClosingRequest:
     db.session.refresh(scr)
     return scr
 
+
+
+# ---------------------------------------------------------------- 7-day validity, expiry reminders, re-issue
+
+def business_today() -> date:
+    return reports_service.business_now().date()
+
+
+def validity(version: FeeDiscussionVersion, discussion: FeeDiscussion | None = None) -> dict:
+    """The countdown shown on the fee discussion and the deal. state: valid | expiring (≤ 1 day) | expired | closed."""
+    discussion = discussion or version.discussion
+    days = (version.valid_until - business_today()).days
+    superseded = version.status in ("Superseded", "Rejected")
+    closed = superseded or discussion.milestone in ("Invoice Issued", "Converted", "Cancelled")
+    expired = version.status == "Expired" or (version.status in LIVE_VERSION_STATUSES and days < 0)
+    if expired and not closed:
+        label = "Expired today" if days == 0 else f"Expired {abs(days)} day{'s' if abs(days) != 1 else ''} ago"
+        state = "expired"
+    elif closed:
+        label, state = None, "closed"
+    elif days == 0:
+        label, state = "Valid until today", "expiring"
+    else:
+        label, state = f"Valid {days} more day{'s' if days != 1 else ''}", "expiring" if days == 1 else "valid"
+    return {"valid_until": version.valid_until, "days_left": max(days, 0) if state != "expired" else 0,
+            "state": state, "label": label}
+
+
+def discussion_payload(discussion: FeeDiscussion) -> dict:
+    """discussion.to_dict() with each version's validity countdown added."""
+    data = discussion.to_dict()
+    by_id = {v.version_id: validity(v, discussion) for v in discussion.versions}
+    for v in data["versions"]:
+        v["validity"] = by_id[v["version_id"]]
+    if data["current_version"]:
+        data["current_version"]["validity"] = by_id[data["current_version"]["version_id"]]
+    return data
+
+
+def expiry_reminders() -> int:
+    """One task per fee version for its owner the day before it expires (or on the day, if the job missed a run)."""
+    today = business_today()
+    rows = db.session.execute(
+        select(FeeDiscussionVersion).where(FeeDiscussionVersion.valid_until.in_((today, today + timedelta(days=1))),
+                                           FeeDiscussionVersion.status.in_(LIVE_VERSION_STATUSES))
+    ).scalars().all()
+    created = 0
+    for version in rows:
+        discussion = version.discussion
+        if (discussion.current_version.version_id != version.version_id
+                or discussion.milestone in FeeDiscussion.CLOSED_MILESTONES + ("Invoice Issued",)):
+            continue
+        owner = discussion.counsellor_id or discussion.lead.assigned_to
+        remind_day = max(version.valid_until - timedelta(days=1), today)
+        when = "today" if version.valid_until == today else "tomorrow"
+        key = f"fee-expiry:{version.version_id}"
+        before = db.session.execute(select(func.count()).select_from(Task).where(Task.dedupe_key == key)).scalar_one()
+        tasks.create_system_task(
+            "FEE_DISCUSSION",
+            f"Fee for {discussion.lead.person.full_name} expires {when} · {discussion.discussion_code} "
+            f"v{version.version_no} · ₹{version.final_payable}: close it or re-issue",
+            discussion.branch_id, sla.working_day_end(discussion.branch_id, remind_day), owner_user_id=owner,
+            team_role_code=None if owner else "BRANCH_MANAGER", dedupe_key=key, fee_discussion_id=discussion.fee_discussion_id)
+        created += 0 if before else 1
+    db.session.flush()
+    return created
+
+
+def reissue_info(discussion: FeeDiscussion) -> dict:
+    """Whether the lapsed current version can be re-issued at the same price, or what changed since."""
+    info = {"available": False, "same_price": False, "changes": [], "new_final_payable": None, "offer_id": None}
+    version = discussion.current_version
+    if (version is None or discussion.milestone in FeeDiscussion.CLOSED_MILESTONES + ("Invoice Issued",)
+            or validity(version, discussion)["state"] != "expired"):
+        return info
+    standard = discussion.course.standard_fee
+    changes, offer_discount, offer_id = [], Decimal("0.00"), None
+    if standard != version.standard_fee:
+        changes.append(f"The course's standard fee is now ₹{standard} (it was ₹{version.standard_fee})")
+    if version.offer is not None:
+        options = offer_options(discussion)
+        code = version.offer.offer_code
+        match = next((o for o in options["eligible"] if o["offer_code"] == code), None)
+        if match is None:
+            reason = next((u["reason"] for u in options["unavailable"] if u["offer_code"] == code),
+                          "it is no longer active")
+            changes.append(f"Offer {version.offer.offer_name} is no longer available: {reason}")
+        else:
+            offer_id, offer_discount = match["offer_id"], match["saving"]
+            if offer_discount != version.offer_discount:
+                changes.append(f"Offer {version.offer.offer_name} now saves ₹{offer_discount} (it saved ₹{version.offer_discount})")
+    new_final = standard - offer_discount - version.extra_concession
+    if new_final != version.final_payable:
+        changes.append(f"The price would now be ₹{new_final} (it was ₹{version.final_payable})")
+    return {"available": True, "same_price": not changes, "changes": changes,
+            "new_final_payable": new_final, "offer_id": offer_id}
+
+
+def reissue(discussion_id: int) -> FeeDiscussionVersion:
+    """One-click: a new version with the lapsed one's offer and extra concession, if that gives the same price."""
+    discussion = _workable_discussion(discussion_id)
+    info = reissue_info(discussion)
+    if not info["available"]:
+        raise BusinessRule("The current fee version is still valid, so there is nothing to re-issue")
+    if not info["same_price"]:
+        raise BusinessRule("The same price is no longer available: " + "; ".join(info["changes"]))
+    old = discussion.current_version
+    version = add_version(discussion_id, {
+        "offer_id": info["offer_id"], "extra_concession": old.extra_concession,
+        "payment_plan_id": old.payment_plan_id, "notes": f"Re-issued from v{old.version_no} at the same price",
+    })
+    audit.record("FEE_VERSION_REISSUED", "fee_version", version.version_id,
+                 new={"from_version_no": old.version_no, "version_no": version.version_no,
+                      "final_payable": version.final_payable}, branch_id=discussion.branch_id)
+    return version
+
+
+# ---------------------------------------------------------------- inline concession check
+
+def _inr(amount: Decimal) -> str:
+    whole = f"{int(amount):d}"
+    head, tail = whole[:-3], whole[-3:]
+    while len(head) > 2:
+        head, tail = head[:-2], head[-2:] + "," + tail
+    return "₹" + (f"{head},{tail}" if head else tail)
+
+
+def price_preview(discussion_id: int, offer_id: int | None, extra: Decimal) -> dict:
+    """Live check while the counsellor types a concession: the price, whether it needs approval, from which role, and
+    the caller's own limit. Uses the same limits and floor the approval itself is checked against."""
+    discussion = get_discussion(discussion_id)
+    standard = discussion.course.standard_fee
+    offer_discount = Decimal("0.00")
+    if offer_id:
+        match = next((o for o in offer_options(discussion)["eligible"] if o["offer_id"] == offer_id), None)
+        if match is None:
+            raise ValidationError("That offer isn't available for this deal", {"offer_id": ["Not applicable"]})
+        offer_discount = match["saving"]
+    final = standard - offer_discount - extra
+    if final < 0:
+        raise ValidationError("Discounts can't exceed the standard fee", {"extra_concession": ["Too large"]})
+    floor = (standard * Decimal("0.70")).quantize(CENT)
+    below_floor = final < floor
+    needs = extra > 0 or below_floor
+
+    mine = approver_limit(current_user().user_id, discussion.branch_id, standard)
+    my_label = "unlimited" if mine is None else _inr(max(mine, Decimal(0)))
+    within = mine is None or (mine >= 0 and extra <= mine and not below_floor)
+
+    # the lowest-limit role that could approve this amount (below the floor: only Founder / CEO or Super Admin)
+    candidates = []
+    for limit in fees_repo.concession_limits():
+        unlimited = limit.max_amount is None and limit.max_percent is None
+        caps = [x for x in (limit.max_amount, (standard * limit.max_percent / 100).quantize(CENT)
+                            if limit.max_percent is not None else None) if x is not None]
+        cap = None if unlimited else min(caps)
+        if (cap is None or extra <= cap) and (not below_floor or limit.role.role_code in ADMIN_ROLES):
+            candidates.append((cap is None, cap or Decimal(0), limit.role))
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    role = candidates[0][2] if candidates else None
+
+    if not needs:
+        message = "No approval needed"
+    elif below_floor:
+        message = (f"Below the 70% floor ({_inr(floor)}): needs Founder / CEO or Super Admin plus a second "
+                   f"approver (your limit {my_label})")
+    elif role is None:
+        message = f"Beyond every approver's limit (your limit {my_label})"
+    else:
+        message = f"Needs approval from {role.role_name} (your limit {my_label})"
+    return {
+        "standard_fee": standard, "offer_discount": offer_discount, "extra_concession": extra, "final_payable": final,
+        "minimum_floor": floor, "below_floor": below_floor, "needs_approval": needs,
+        "my_limit": None if mine is None else max(mine, Decimal(0)), "my_limit_unlimited": mine is None,
+        "within_my_limit": within and needs, "approver_role": role.role_code if role and needs else None,
+        "approver_role_name": role.role_name if role and needs else None,
+        "second_approver_required": below_floor, "message": message,
+    }

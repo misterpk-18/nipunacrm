@@ -37,11 +37,10 @@ Everyone signs in with their own account. What they see and can do depends on th
 |---|---|---|
 | **Founder / CEO** | Oversees the business; final approver for large discounts, fee changes, refunds and payment corrections; approves targets | Both branches |
 | **Super Admin** | Same approvals as Founder; manages users, access, settings and configuration | Both branches |
-| **Branch Manager** | Runs a branch: assigns leads, approves discounts within their limit, watches team work, collections and targets | Own branch |
+| **Branch Manager** | Runs a branch: assigns leads, approves discounts within their limit, watches team work, collections and targets; also owns the academic side (documents review, batches and allocation, completion, certificates, 3rd demo and next-course path approvals), a job the Academic Coordinator role used to do | Own branch |
 | **Sales (Counsellor)** | Owns leads: calls, counsels, books demos, negotiates fees, issues invoices, records payments | Own branch |
 | **Front Office** | Walk-ins and phone enquiries; same lead work as counsellors | Own branch |
 | **Accounts** | Verifies payments, manages collections and refund payouts, applies approved fee changes | Own branch |
-| **Academic Coordinator** | Batches, curricula, allocating admitted students to batches, certificates | Own branch |
 | **Trainer** | Runs demo classes and records how they went; sees their batches | Own branch |
 | **Placement Team** | Employers, job openings, student placement profiles and applications | Own branch |
 | **HR** | Staff-side access to student and task information | Own branch |
@@ -76,7 +75,9 @@ Every lead moves through these **pipeline stages**:
 
 Many stage moves happen automatically: converting a qualified lead puts it at *Counselling*, booking a demo moves it to *Demo Scheduled*, recording a payment moves it to *Payment Pending Verification*, and the admission (created when the payment is verified) moves it to *Admitted*.
 
-**Qualify, then convert.** A new lead is reviewed against **six qualification checks** — genuine intent, reachable contact, intended course(s) understood, branch and delivery mode discussed, exact next action agreed, and possible identity match reviewed (similar persons are checked by hand, never merged automatically). Each tick records who reviewed it and when. **Mark Qualified** needs all six and never changes the stage. Only then does **Convert to deal** open: the counsellor picks the course or courses (the lead's own course plus any others), the branch, the owner and the expected close date. The same person is reused; a course they already have open is returned, not duplicated. Conversion creates no admission, receipt or LMS access. Demos and fee discussions happen on deals, so they wait for conversion.
+**Qualify, then convert.** A new lead is reviewed against **six qualification checks** — genuine intent, reachable contact, intended course(s) understood, branch and delivery mode discussed, exact next action agreed, and possible identity match reviewed (similar persons are checked by hand, never merged automatically). Each tick records who reviewed it and when. The checks the system can prove tick themselves and show **System** as the reviewer: *reachable contact* (a saved outcome of Connected, Interested, Demo booked or Callback requested), *intended course(s)* (the lead has a course) and *exact next action* (a next action and its date are saved). Staff tick the rest; *branch and delivery mode discussed* is always manual. A staff tick is never replaced, and confirming a System tick makes it the reviewer's own. **Mark Qualified** needs all six and never changes the stage; it opens **Convert to deal** straight away. **Convert to deal** is only available once all six are ticked: the counsellor picks the course or courses (the lead's own course is already ticked), the branch (the lead's), the owner (the lead's owner) and the expected close date (left empty). The same person is reused; a course they already have open is returned, not duplicated. Conversion creates no admission, receipt or LMS access. Demos and fee discussions happen on deals, so they wait for conversion.
+
+**The next-step bar.** Nobody has to remember what comes next. Every lead's screen (Lead 360) opens with a bar at the top that shows the journey as a short row of steps (Capture, Qualify, Convert, Demo, Fee, Plan, Invoice, Payment, Verify, Admission, Batch) and **one** next action as the main button. Pressing it opens that step in place, so staff do not hunt for the right screen. If something blocks the step, the bar says why in plain words and offers **Fix it**; if someone else has to act, it says who ("Waiting for Accounts to verify TXN-…"). Once a step is saved the bar offers **Continue to next step: …** and never opens it by itself. After the money is in, it shows **"₹X more verified to admit"**. After admission the row becomes a trail: *Admitted → LMS login created → Batch allocated*, with dates and the batch details. A small **i** icon beside the technical words (deal, pipeline card, delivery plan, payment claim, receipt, admission token, fee version, special closing) explains each on hover. Links from the pipeline, notifications and My work open the lead with the right step already open.
 
 **Leads and the pipeline.** A lead stays an **Active lead** only while it is a *New Enquiry*, and the Leads screen shows these by default. Once converted, the lead becomes **Inactive** and the **person** moves onto the **Pipeline**:
 
@@ -94,6 +95,8 @@ Many stage moves happen automatically: converting a qualified lead puts it at *C
 
 - A lead can be entered by staff (phone, walk-in, WhatsApp), come from the website or ads, or be **imported from a CSV file** (for example college data or outreach lists).
 - For every lead the system records **where it came from** (source such as Google Ads, Referral, Walk-in), **how they contacted us** (channel) and **how it was entered**, so marketing performance can be measured.
+- **New lead is a quick add:** Name, Mobile, Course and Source. Everything else is filled in automatically and shown under **More details** (branch from the user or the branch filter, owner = the user for Sales / Front Office, contact channel and entry method as last used, status New, and the next follow-up two staffed hours from now). More details opens by itself if a rejected field is inside it.
+- **Duplicates show up as you type.** After the 10th digit of the mobile number, the form checks it: if the number already belongs to someone the user may see it shows "Already a person: <name> · N courses" with **Add course to this person** (which switches to *Add another course*; "Not this person" undoes it). If the number exists only at a branch the user cannot see, a plain notice says so without any detail. Nothing is merged automatically.
 - One person can enquire about several courses. The system keeps **one record per person** and a separate lead per course, so a returning learner's history stays together ("Add another course").
 - **Duplicates are never merged automatically.** If a phone number already exists, the new record is flagged *Duplicate Review* for a person to check.
 - CSV imports are checked row by row before anything is saved (valid phone and email, real course, correct branch); invalid rows are skipped and duplicates held for review.
@@ -102,26 +105,28 @@ Many stage moves happen automatically: converting a qualified lead puts it at *C
 #### 4.2 Counselling and follow-ups
 
 - The **Counsellor Workspace** shows each counsellor their own queue in tabs: New, Untouched, Due Today, Overdue, Hot, Demos, Fee Discussion, Payment Pending, Cold / Reactivation and Future Joining.
-- **Lead 360** is the full picture of one lead: contact details, stage, timeline of every call, message, note and stage change, demos, fee discussions, tasks and AI insights. Once the lead is in the pipeline, it also shows the person's card (shared stage, owner, other courses).
-- The **Deal pipeline** shows the open opportunities, their value (the approved fee, else the standard fee) and the number admitted, then **seven stage counts** — Counselling, Demo scheduled, Demo attended, Fee discussion, Payment review, Admitted and Closed lost (the last two all-time for the branch). Clicking a count filters the board or list; "Show all stages" clears it. The board has columns *Counselling · Demo · Fee discussion · Payment review*; each card shows the person, courses, value, delivery-plan status, owner and expected close. Drag a card, or use "Move to…", between the manual stages; *Payment review* is set by a recorded payment. **Mark lost…** closes every course on the card with one reason. The card's settings button changes the owner (branch managers), the next follow-up and the expected close.
+- **Lead 360** is the full picture of one lead: contact details, stage, timeline of every call, message, note and stage change, demos, fee discussions, tasks and AI insights. Once the lead is in the pipeline, it also shows the person's card (shared stage, owner, other courses). It starts with the **next-step bar** described in section 3. Accounts can open a lead **read-only** (from "Open lead" links, never from the menu): they see the bar, timeline, demos, delivery plan and batches, but not the sales tools, qualification, objections or AI tabs.
+- The **Deal pipeline** shows the open opportunities, their value (the approved fee, else the standard fee) and the number admitted, then **seven stage counts** — Counselling, Demo scheduled, Demo attended, Fee discussion, Payment review, Admitted and Closed lost (the last two all-time for the branch). Clicking a count filters the board or list; "Show all stages" clears it. The board has columns *Counselling · Demo · Fee discussion · Payment review*; each card shows the person, courses, value, delivery-plan status, owner and expected close, plus **Next: <step> · due today**, **days in stage** (red once past 7, the `pipeline_stalled_days` setting), a **blocker** badge when something is stuck (for example *Payment under review*, *Demo outcome pending*, *Waiting approval*, *Plan not accepted*) and a **Do it** button that opens that step on the lead. The card shows the step of its most urgent course. Drag a card, or use "Move to…", between the manual stages; *Payment review* is set by a recorded payment. **Mark lost…** closes every course on the card with one reason. The card's settings button changes the owner (branch managers), the next follow-up and the expected close.
 - **Next actions** below the board list one step per deal for the selected branch, most urgent first: review payment evidence, complete the scheduled demo, confirm the delivery plan, prepare the invoice, follow up the balance — each with a **Review deal** link.
 - On **Lead 360** the phone number sits beside **Call**, **WhatsApp** (green), **Email** and **Convert to deal**; the qualification checklist is on the right until the lead is converted, then the deal's **delivery plan** and **commercial and invoice** panels take its place.
 - **Persons** lists everyone who has enquired or studied at your branches. Search by name, part of the mobile number, email or person ID (it filters as you type; the header search box opens it too). **Person 360** shows the profile, the person's pipeline cards (one per branch), every lead and course with its status, and their admissions.
-- After each conversation the counsellor **logs a follow-up** (purpose, the learner's response, notes) and must set the **next follow-up time**. Overdue follow-ups are highlighted and counted on dashboards.
+- After each contact the counsellor presses **Save outcome** on the lead: the actual result (Connected, No answer, Callback requested, Demo booked, Interested, Later, Not interested, Wrong number, Stop contact), a note, and the agreed **next action with its date** (quick time chips: *In 2 hrs*, *Today 5pm*, *Tomorrow 11am*, *+3 days*, *Next week*, or the calendar; the outcome picks a sensible chip, and choosing a time by hand stops it moving) — or, when there is no date, a clear status (Awaiting reply, Not interested, Invalid contact, Stop contact). Nothing is silently dropped: a contact saved without either shows as *Next action missing* in My work. Overdue follow-ups are highlighted and counted on dashboards. See section 7 for the rest of the Front Office playbook.
 - A lead can be **marked lost** only with a reason (fee too high, joined competitor, timing, etc.), optionally a competitor name and a date to reconnect. Lost leads can be **reactivated** later.
 - **Saved views** let staff keep their favourite filters (e.g. "Hot fee discussions").
 
 #### 4.3 Demo classes
 
-- Counsellors book demos from Lead 360: date and time, in-person or online, standard (up to 45 minutes) or practical (up to 60 minutes), and the trainer.
-- The system schedules **reminders** — a booking confirmation, a reminder 24 hours before and 1 hour before (student and trainer). Rescheduling or cancelling updates the reminders automatically, and both need a reason.
-- After the class, the **trainer or counsellor records the outcome**: attended or no-show, student and trainer feedback, a rating, recommended course and the next step. A commercial follow-up is then due within 2 working hours.
-- A learner gets up to two demos; a **third demo needs approval** from the Academic Coordinator or Branch Manager.
+- Counsellors book demos from Lead 360 (or the next-step bar) with a **slot picker**: choose the course, the type (standard 45 minutes or practical 60), in-person or online, then a day and a **free trainer slot**. Trainers who teach the course are listed first. Slots follow the branch's hours and holidays and leave out anything the trainer already has (other demos, batch classes). A taken slot is refused and the list refreshes.
+- The system schedules **reminders** — a booking confirmation, a reminder 24 hours before and 1 hour before (student and trainer). Rescheduling or cancelling updates the reminders automatically, and both need a reason. **When WhatsApp is live** the learner is also messaged when a demo is booked, rescheduled or cancelled, and the 24-hour and 1-hour reminders go out as WhatsApp messages instead of reminder tasks (the trainer gets a staff alert; see *WhatsApp messages to learners*). When WhatsApp is off, or the learner has no number, the reminder becomes a task for staff to send, as before.
+- After the class, the **trainer or counsellor records the outcome**: attended or no-show, student and trainer feedback, a rating, recommended course and the next step. The trainer finds finished demos under **My work → Record demo outcome**; the form opens in place with the follow-up set to tomorrow. Counsellors see the same list for their own leads on My work → Today. When the trainer records it, the lead's owner is notified ("demo attended · start the fee discussion", or "no-show · follow up to rebook"). A commercial follow-up is then due within 2 working hours.
+- A learner gets up to two demos; a **third demo needs approval** from the Branch Manager.
 
 #### 4.4 Fees, offers and discounts
 
 - Every course has a **standard fee** in the Course Master (the same at both branches). Combos ("3+1 career combos") have their own package price.
-- The counsellor opens a **fee discussion** and builds a **fee version**: standard fee, any active **offer**, any **extra concession**, the resulting final amount and a **payment plan**. Each change creates a new version (v1, v2, …) — earlier versions are kept, never overwritten. A version is valid for 7 days.
+- The counsellor opens a **fee discussion** and builds a **fee version**: standard fee, any active **offer**, any **extra concession**, the resulting final amount and a **payment plan**. Each change creates a new version (v1, v2, …) — earlier versions are kept, never overwritten. A version is valid for 7 days, shown as **"Valid N more days"** on the fee discussion and its history.
+- **The fee discussion is one screen with two steps.** *Step 1, price:* the **best offer is applied automatically** (the biggest saving that keeps the price at or above the 70% floor) with the final price shown; the counsellor can switch to another eligible offer or *No offer*, and a list explains why other offers are not available (not started, ended, other branch or course, already used by this person). Typing an extra concession shows live, in plain words, whether it needs approval and from whom ("Needs approval from Branch Manager (your limit ₹0)"). **Request approval** saves the version and sends the special closing request in one click, and a status card (Waiting / Approved by … / Counteroffer with *Accept and send for approval* / Rejected with the reason) refreshes itself while waiting. With no concession, **Save and approve price** does it in one go. *Step 2, delivery plan:* once the price is approved, the delivery plan sits on the same screen, and **Create invoice** unlocks when the plan is accepted.
+- **When a version expires** it shows a red *Expired* and **Re-issue at same price** in one click, or lists what changed (offer ended, standard fee changed) so a new price can be saved. A reminder task goes to the counsellor the day before a version expires.
 - The **payment schedule** is agreed when the invoice is created (see 4.5), not on the fee version.
 - **Extra concessions need approval** through a **special closing request**:
   - Branch Managers can approve up to their limit (the lower of 5% or ₹1,000 by default); Founder / CEO and Super Admin have no limit.
@@ -131,22 +136,27 @@ Many stage moves happen automatically: converting a qualified lead puts it at *C
 - **Offers** (Offer Master) are set up by admins with dates, branches and courses they apply to, and can include a **complimentary course** (for example a free add-on when the final fee is above a threshold). Changing an active offer creates a new version so past fees stay explainable.
 - **Each offer can be used only once per person.** Once a learner has been admitted with an offer (as a discount or a complimentary course), that offer no longer appears for them on any later course, and the system refuses it if someone tries — it names the admission where it was used. A different offer can still apply. If the admission that used the offer is cancelled, the offer becomes available to that learner again.
 - **An offer gives one complimentary course per admission.** If an offer lists several free courses, the learner picks one. The free course also can't be one the learner already has (paid or free); the system refuses it and names the admission they already hold. Cancelling a wrongly granted free course frees the choice again.
-- **Delivery plan (per course).** Each deal has its own delivery plan (`DP-00001`): service branch, classroom / online / hybrid, *Confirmed Seat* or *Future Plan* (with a planned start date), capacity review (checked or waiting) and a tick that the **student's acceptance was captured**. The counsellor, branch manager or academic coordinator confirms it; an accepted plan is fixed (it can be reopened until the course is invoiced). Batch allocation stays a separate step.
+- **Delivery plan (per course).** Each deal has its own delivery plan (`DP-00001`): service branch, classroom / online / hybrid, *Confirmed Seat* or *Future Plan* (with a planned start date), capacity review (checked or waiting) and a tick that the **student's acceptance was captured**. The counsellor or branch manager confirms it; an accepted plan is fixed (it can be reopened until the course is invoiced). Batch allocation stays a separate step.
+- **Start date and preferred batch.** The start date is a free date; the course's upcoming batches at the service branch are listed as hints (timing, start date, seats left, or why a batch cannot be offered). Clicking one fills the start date and records it as the learner's **preferred batch**; typing another date drops it. This is only a wish: the Branch Manager still allocates in the LMS, and the preference is sent to the LMS with the admission. The plan is frozen once the deal is admitted, so set it before admission.
+- **How the learner accepts.** **Send for confirmation** sends the plan on WhatsApp; when the learner replies **YES** the plan is accepted and shows "How accepted: learner replied YES on WhatsApp". While WhatsApp sending is off, staff tick the acceptance and pick **In person** or **On a call**. Editing the plan after sending withdraws the request. The confirmation is sent **automatically** as soon as a saved plan is ready (mode, seat and start date set, not yet accepted, no request pending), the first time and again after an edit withdrew the request; **Send for confirmation** resends it. Accepting in person or on a call never sends it.
 
 #### 4.5 Invoices
 
-- **Create invoice** opens from a deal (Lead 360 or the fee discussion). It shows the **issuing branch and its address**, the learner, and every course deal of that learner at that branch. Only courses with an **approved fee** and an **accepted delivery plan**, not already invoiced and not lost, can be ticked — so one invoice can bill **one course or several compatible courses together** (for example `INV-GNT-2627-0001` with lines `…-L1`, `…-L2`). Each course's approved fee becomes its line amount.
+- **Create invoice** opens from a deal (Lead 360 or the fee discussion). It shows the **issuing branch and its address**, the learner, and every course deal of that learner at that branch. Only courses with an **approved fee** and an **accepted delivery plan**, not already invoiced and not lost, can be ticked — and **every eligible course comes pre-ticked** — so one invoice can bill **one course or several compatible courses together** (for example `INV-GNT-2627-0001` with lines `…-L1`, `…-L2`). Each course's approved fee becomes its line amount.
 - **Payment schedule:** 1, 2 or 3 instalments with any dates from today and any amounts (quick fills: Full, 50/50, 50/25/25), adding up to the invoice total. The learner can pay any amount at any time up to the balance; verified money covers the oldest instalment first. The dates drive reminders and alerts (see 4.11).
-- After creating, the invoice opens and each included course shows **View invoice**. No admission is created by invoicing.
+- After creating, the invoice opens with an **"Invoice issued. Continue: record payment"** button, and each included course shows **View invoice**. No admission is created by invoicing.
 - The issuing branch's name, address, phone and email are **copied onto the invoice** when it is issued: later branch edits, or a viewer switching the branch filter, never change it. **Guntur** invoices use the violet template and **Vijayawada** the teal one.
 - The invoice page shows the branch document itself — issuer, bill-to, course lines, payment terms, totals, verified paid, balance due, instalment cards and verified receipts — with **Print / Save PDF** (it prints on its own, A4). On a phone the tables become stacked cards. Tax / GSTIN and bank details are left off until approved values are provided.
 - Invoices cannot be edited. An unpaid invoice can be cancelled (its courses can then be invoiced again); after admission, only an approved fee change can revise a course's amount (see 4.8).
 
 #### 4.6 Payments and verification
 
-- **Record payment** (Payments & receipts, which opens with the invoice already selected from the invoice page) splits the money across the invoice's **courses** ("Allocate now" per course — no course can be paid beyond what is left on it) and takes one or several **tenders** (mode, amount, reference). Modes: cash, UPI / bank transfer, payment link / card, or cheque as an exception. A photo or PDF of the proof can be attached.
+- **Record payment** is a dialog that opens in place from the next-step bar or the invoice page with the invoice already selected (the Payments & receipts tab still works). The amount received is typed once and **split token-first**: each course not yet admitted first gets what it still needs to reach the admission token (or its remaining amount if smaller; pending claims count), then the rest goes to the oldest course, never beyond what is open on a course. Staff can edit every course amount. It takes one or several **tenders** (mode, amount, reference). Modes: cash, UPI / bank transfer, payment link / card, or cheque as an exception.
+- **Proof is required** (a screenshot or PDF) for every mode except cash; the system refuses the claim without it. Cash needs no proof but still needs the independent cash check at verification.
+- **"₹X more verified to admit <course>"** shows live in the dialog, on the invoice page beside each course, and in the next-step bar.
 - Each tender is a separate **payment claim** with a **transaction number** (`TXN-GNT-00001`). A claim is *Pending Verification*: it has **no receipt number**, does **not** count as paid and never looks like a receipt. Accounts is alerted immediately and has a 30-minute target before it escalates to the Branch Manager.
-- Accounts **verifies** after two confirmations — the evidence was reviewed, and (for cash) an independent cash check — or marks it **Failed** with a reason. Only then is the **receipt number** issued (`GNT-R-2627-00001`, per branch and financial year). This happens once and cannot be undone. Example: an invoice of ₹22,000 with a ₹5,000 claim pending shows ₹0 paid and ₹22,000 balance; after verification it has one receipt, ₹5,000 paid and ₹17,000 balance — on the invoice, the invoice list, collections and reports alike.
+- Accounts **verifies from the notification**: *Review & verify* opens the claim with its proof, courses and amount (Verify / Mark failed); *Open claim* goes to the Payments screen with the same dialog. The ledger's Verify button opens it too.
+- Accounts **verifies** after two confirmations — the evidence was reviewed, and (for cash) an independent cash check — or marks it **Failed** with a reason. Only then is the **receipt number** issued (`GNT-R-2627-00001`, per branch and financial year). This happens once and cannot be undone. The lead's owner counsellor (the person who recorded it, if there is no owner) gets a **bell notification** when the claim is verified (with the receipt) or fails (with the reason); whoever decided is not told of their own decision. The same alert also goes to the counsellor's phone on **WhatsApp** — **on by default** (setting `whatsapp_staff_alerts_enabled`). Example: an invoice of ₹22,000 with a ₹5,000 claim pending shows ₹0 paid and ₹22,000 balance; after verification it has one receipt, ₹5,000 paid and ₹17,000 balance — on the invoice, the invoice list, collections and reports alike.
 - **Payments can never be edited or deleted.** Mistakes are fixed with a **correction**: Accounts requests it with a reason, a *different* person (Founder / CEO or Super Admin) approves it, and the system adds a reversal entry linked to the original. The full history stays visible.
 - Cheques are accepted only as an exception approved by a manager other than the person collecting.
 - Money received without an invoice is kept as an **advance** and allocated later.
@@ -166,11 +176,17 @@ The *New Admission* screen is an **eligibility review**: invoiced courses not ad
 
 #### 4.9 Batches and classes
 
-**Dev only: academic work is done in the Nipuna LMS.** Batches, allocation, joining dates, curriculum, completion and certificates are managed in the LMS and mirrored into the CRM every few minutes, read-only: the CRM screens show them with a note and a "last synced" time, and the buttons are gone. The rules below are the CRM's own rules, which apply when the setting `academics_managed_in_lms` is off. With it on, the LMS raises the allocation alerts, a batch can run a combo course (its tracks are allocated separately), and certificates carry the **LMS number** (`NIT-CERT-2026-000001`); a reissue keeps the number with a new version and the earlier one shows as *Superseded*. If the LMS withdraws a student the CRM hasn't cancelled, the Branch Manager gets a task to cancel the admission (cancelling and refunds stay CRM decisions).
+**Academic work is done in the Nipuna LMS** (dev only so far). Batches, allocation, joining dates, completion and certificates are managed in the LMS and mirrored into the CRM every minute, read-only: the CRM screens show them with a note and a "last synced" time, and the buttons are gone. **The CRM holds no curriculum:** there are no curriculum versions and no mapping step here; the LMS keeps its own. **Refresh from LMS** on the admission and on Student 360 brings that student's LMS state in immediately; the LMS access screen and the Super Admin dashboard show whether the LMS is reachable, the last push and pull, and anything waiting. The LMS raises the allocation alerts, a batch can run a combo course (its tracks are allocated separately), and certificates carry the **LMS number** (`NIT-CERT-2026-000001`); a reissue keeps the number with a new version and the earlier one shows as *Superseded*. If the LMS withdraws a student the CRM hasn't cancelled, the Branch Manager gets a task to cancel the admission (cancelling and refunds stay CRM decisions).
 
-- Academic Coordinators create **batches** per course and branch: schedule, trainer, room or online link, capacity and start date. Each course has a published **curriculum version** (e.g. v2026.1).
-- Admitted students wait in the **allocation queue**. Before allocating, the system checks the batch has space, is at the student's branch, and the student is mapped to the right curriculum — and says exactly what blocks it and who can fix it.
-- Deadlines: confirmed-seat students should be allocated within 1 working day and before the first class; future-plan students 48 hours before start. The coordinator is alerted 24 hours before a batch starts if anyone is still unallocated.
+**Waiting for batch.** The **Waiting for batch** screen (Learning menu) lists admitted students who have no batch yet (admission *Awaiting Batch Allocation*; paused, cancelled, completed and allocated ones never appear). It shows the student, course, admission date, **days waiting** (working days), seat type and planned start, the counsellor's **preferred batch** and **Open in LMS**, where the Branch Manager allocates. Founder / CEO, Super Admin and Branch Manager open it, and Sales / Front Office read-only for their branch. While academics run in the LMS, **delay alerts escalate in working time**: the Branch Manager (task) and the owner counsellor are alerted 1 working day after admission for a Confirmed Seat (48 hours before the planned start for a Future Plan), the Branch Manager again (escalation) at 2 working days and the Founder / CEO and Super Admin at 5. They close by themselves once the LMS reports the allocation. The preferred batch goes to the LMS with the admission as an optional hint. **Person 360** has a **journey strip** per course (Lead → Deal → Plan → Invoice → Paid → Admitted → Batch, current step highlighted, a blocked step in red, and a "Next: …" line).
+
+**What sales sees of batches.** Each lead shows the course's upcoming batches at its branch with the LMS timetable (days, times, room) and seats left. A batch is offered to a learner only when it is Planned or Open, not *Blocked* in the LMS, and has a seat; otherwise staff see why (e.g. "Not public yet: No lead trainer assigned"). Without a timetable it reads "Timing not confirmed" — staff never promise a timing the LMS hasn't published.
+
+When `academics_managed_in_lms` is off, the CRM's own rules apply:
+
+- Branch Managers create **batches** per course and branch: schedule, trainer, room or online link, capacity and start date.
+- Admitted students wait in the **allocation queue**. Before allocating, the system checks the batch has space, is at the student's service branch, is for the student's course (or a part of their combo) and that the enrolment isn't paused, completed or cancelled — and says exactly what blocks it and who can fix it.
+- Deadlines: confirmed-seat students should be allocated within 1 working day and before the first class; future-plan students 48 hours before start. The Branch Manager is alerted 24 hours before a batch starts if anyone is still unallocated.
 - The **first attended class** (not demos) is recorded as the joining date; the student's status moves from *Awaiting Batch Allocation* to *Scheduled* to *In Progress*.
 - On completion, **certificates** are issued with their own numbers; a revoked certificate needs a reason.
 
@@ -182,6 +198,7 @@ One screen per student with everything in tabs: personal details, all enquiries 
 
 - The **Collections** screen lists every instalment that is due today, overdue or upcoming, with ageing bands (1–3, 4–7, 8–15, 16–30, 31–60, 61–90, 91+ days).
 - **Reminder and escalation schedule** for each instalment: 3 days before, on the due date, 3 days after; on day 4 it goes to the owner, day 7 to the branch manager, then weekly until day 30.
+- **WhatsApp to the learner.** Each unpaid instalment also gets an automatic WhatsApp message 3 days before the due date, on the due date (friendly) and 3 days after (firm but polite, "overdue"). It carries the invoice number, instalment number, the amount still due after verified money, the due date and "contact your Nipuna counsellor". Skipped: a learner on contact hold (a payment awaiting verification), fully paid instalments, cancelled invoices and Stop contact. One message per instalment per stage, and at most one per invoice per day: if two instalments trigger on the same day, only the earliest is sent. Staff tasks and notifications are unchanged.
 - **Due in 2 days:** every day the owner, Accounts and the Branch Manager get a notification for each unpaid instalment due within the next 2 days (setting `installment_due_soon_days`).
 - **Long payment gap:** when a payment is verified and the next unpaid instalment is due **more than 30 days** after it (setting `payment_gap_alert_days`), the owner, Accounts, the Branch Manager, the Founder / CEO and Super Admin are notified.
 - The dashboard's **Long-gap plans** card counts those plans (and their outstanding amount); clicking it lists the persons, longest gap first.
@@ -214,11 +231,57 @@ The bell icon shows **notifications**. For action-required items the system trac
 |---|---|---|---|
 | Discount approval (special closing) waiting | Branch Manager | 4 min | Founder / CEO at 5 min |
 | Payment waiting for verification | Accounts | 25 min | Branch Manager at 30 min |
+| New enquiry without a staff attempt | Front Office cover at 2 min | — | Branch Manager at 10 min, Founder / CEO at 30 min |
 
 Thresholds are adjustable by admins.
 
+Other alerts: when a claim is verified or fails, the lead's owner counsellor gets an information notification (and, if staff WhatsApp alerts are on, a WhatsApp message); when a trainer records a demo outcome the owner gets an action-required notification; and a student still waiting for a batch escalates in working time (Branch Manager first, then again, then Founder / CEO and Super Admin; see 4.9).
+
 #### Communications inbox
 All messages and calls are logged in one **inbox** with queues: Awaiting Reply, Match Review (a message from a number the system recognises, waiting to be linked to the right person — never linked automatically), Failed (can be retried), Missed Calls and Manual Activity. Inbound messages show a response deadline and whether it's within time, at risk or breached.
+
+#### WhatsApp messages to learners
+*(Dev only.)* The CRM sends approved WhatsApp templates by itself when something happens to the learner's money, admission or enquiry — no one has to remember. Each message is saved first, in the same step as the change it reports, so a learner is never told about something that was reversed.
+
+| When | Message |
+|---|---|
+| A new enquiry is entered (once a day per person) | Enquiry received, with its reference |
+| An invoice is issued | The invoice number, total and payment plan |
+| An advance payment is verified · an advance is put on an invoice · a payment brings an invoice to zero | Receipt and credit · what was allocated and what is left · "balance cleared" |
+| A payment correction is approved | The correction reference and the adjustment (not a refund) |
+| A refund is approved · declined · paid out | The case reference, the amount, and for a payout the date and reference |
+| A delivery plan is ready (saved with mode, seat and start date; sent automatically) · staff press **Send for confirmation** | The plan and a request to reply YES (a YES reply accepts the plan); the button resends it |
+| A demo is booked · rescheduled · cancelled (queued when staff act, even while sending is off) | Course, branch, time, venue and trainer · the new time · "cancelled, our counsellor will contact you" |
+| 24 hours and 1 hour before a demo | A reminder with the time, venue and trainer. Replaces the reminder task while WhatsApp is live; with WhatsApp off, or no number for the learner, the task remains |
+| An admission is confirmed (once per admission, complimentary ones too) | Admission number, course, learning mode and planned start |
+| An instalment is due in 3 days · due today · 3 days overdue (skips: payment awaiting verification, paid, cancelled invoice, Stop contact; one per invoice per day) | Invoice and instalment number, amount still due, due date, "contact your counsellor" (a firmer wording when overdue) |
+| A delivery plan is accepted · a batch is allocated | Plan, mode and start · batch, timing and start date |
+| The learner's LMS login is created · the LMS could not set up their course | "Account activated" · "access is delayed, the academic team is on it" |
+| A placement application is recorded or its stage changes | Reference, employer and role, and the status |
+
+**Staff alerts.** The CRM also messages staff on their own phone (the number on the user, `users.phone`), never the learner's:
+
+| When | Who is told |
+|---|---|
+| A payment is verified or fails | The lead's owner counsellor |
+| A lead is assigned (new lead with an owner, reassignment, bulk assignment; more than 5 leads to one person in a bulk = a single summary with the count) | The new owner |
+| A special closing request is raised (and again when it escalates after 5 staffed minutes) | Branch Managers whose limit covers it; Founder / Super Admin when it is below the floor, above every Branch Manager's limit, or on escalation |
+| A payment claim is recorded | The branch's Accounts users |
+| A demo is 24 hours / 1 hour away | The trainer |
+
+One switch, the setting `whatsapp_staff_alerts_enabled` (Settings, **on by default**), controls all of them. Nobody is told about their own action (assigning a lead to yourself, or deciding a payment you verified, sends nothing to you). A staff member with no phone number is kept as **Skipped** ("No WhatsApp number on file"). Staff messages are not part of the learner's chat: they do not appear on Person 360 → WhatsApp, only on the **WhatsApp** screen, labelled **Staff: <name>** with "About <learner>". Test-number limits still apply.
+
+**Messages the CRM sends for the LMS.** The LMS has its own messages (class reminder, class cancelled or moved, result published, certificate issued, a batch change to agree to, and later account activation links, staff invites and password reset codes). It does not message learners itself: it hands each message to the CRM, which sends it on the same number with the same on/off switch and test-number limit. They appear on the **WhatsApp** screen marked **From the LMS** (and in the learner's Person 360 conversation when the CRM knows the student). The CRM cannot resend them; the LMS does. Reset codes and activation links are hidden in the CRM. If a learner has WhatsApp switched off on Person 360, LMS messages are skipped too. The nine LMS templates still need Pinbot approval.
+
+**Provider approval.** Every template added in this round (demo, admission, instalment, staff alerts, plan confirmation) is still awaiting Pinbot approval, so none is sent to real numbers until approved (list in [DEVELOPMENT.md · Part E](DEVELOPMENT.md#templates-to-submit-to-pinbot)).
+
+A payment against an invoice that does not clear it sends nothing, and neither does a fee waiver. If a message can't be sent (no WhatsApp number, a missing value) it is kept as **Skipped** with the reason; if the provider refuses it, it is **Failed**. Anyone who can see the learner opens **Person 360 → WhatsApp** to read exactly what was sent, its status (Queued, Sent, Delivered, Read) and the learner's replies. Managers and Accounts see all messages on the **WhatsApp** screen and can **Retry** a failed one; if the provider's answer was lost, they first check the learner's phone and confirm it was not delivered, so no one gets the same message twice.
+
+**WhatsApp notifications switch and Send now (Person 360).** The header of Person 360 has a **WhatsApp notifications** switch and a **Send now** button (Founder, Super Admin, Branch Manager, Sales, Front Office; others see the switch read-only). **Off**: the learner receives nothing on WhatsApp, automatic or by hand; each message is kept as Skipped with "switched off". **On** (the default): messages flow as described here, and switching on also records the learner's marketing consent when none is recorded (source "Profile switch"). **Send now** opens the template picker and sends one template immediately through the learner's most recent enquiry, with the same rules as below. Staff alerts about the learner go to staff and are not affected.
+
+**Marketing templates** (course recommendation, brochure, new batch, enquiry follow-up) are different: staff send one to one lead at a time from **Lead 360 → Send template**, never automatically, and only to a learner whose **WhatsApp consent** is recorded on Person 360. The system refuses when consent is missing or withdrawn, after **Stop contact**, at the unanswered-lead ceiling, or when the same template already went to that lead today. A learner who replies **STOP** has their marketing consent withdrawn automatically (messages about their own money and admission continue). Replies such as **CALLBACK**, **BROCHURE**, **BATCH**, **DEMO**, **DETAILS** or **INTERESTED** reach the inbox and create a follow-up task for the lead's owner.
+
+An admin can switch sending on and limit it to test numbers while the integration is being checked.
 
 #### Working time
 Response targets count **staffed working time** — branch opening hours, excluding off days and holidays — so a message at 6:55 pm isn't "late" by 9:05 am the next day. Branch hours and holidays are set by admins (currently Monday–Saturday, 9 am–7 pm).
@@ -232,11 +295,22 @@ Response targets count **staffed working time** — branch opening hours, exclud
 
 ### 7. AI assistance (advisory only)
 
+#### The Front Office playbook (CRM AI v2.0)
+- **My work → Today** — one queue in service order: first, enquiries without a staff attempt and callbacks promised now; then new enquiries, demos in the next 24 hours and replies; then post-demo decisions and agreed follow-ups; finally future joining, reactivation and course-suggestion reminders. Nothing is hidden, only ordered. **Handover** lists what the cover person needs before the shift ends; a handover note can give the cover person a task without changing the owner.
+- **First response in 10 staffed minutes** from the original enquiry. If nobody has called: Front Office cover is alerted at 2 minutes, the Branch Manager at 10, the Founder / CEO at 30. A bot acknowledgement or an import never counts.
+- **Lead workbench** (on every lead) — *What we know* (goal, starting point, timing, joining window, open question, last discussion, promise), the one **suggested next action** with Use / Edit / Ignore / Remind later, **Save outcome** (Connected, No answer, Callback requested, Demo booked, Interested, Later, Not interested, Wrong number, Stop contact + the agreed next action and date in one step), objections in the learner's own words with the approved way to answer, approved content, and a **Ready to close** checklist on deals.
+- **Contact rules** shared by staff and AI: at most 5 calls and 3 WhatsApp messages while a learner has never been reached; college outreach gets one call plus one follow-up; **Stop contact** blocks all outreach until a Branch Manager clears it. A learner who gets in touch can always be answered.
+- **Reply drafts** come only from approved templates filled with recorded facts; a missing fact (e.g. no approved syllabus link) blocks sending. Sending opens WhatsApp and records the message as *Manually recorded* — never as delivered.
+- **Useful next course** on Person 360 for existing students: only approved course paths, never a course they already have, never ranked by fee. Discussing it creates no deal; confirmed interest becomes a new lead under the same person.
+- **Sales playbook** (More): approved knowledge and templates (Admins and Branch Managers; a BM for their branch), course paths (a Branch Manager approves), AI controls per branch (Observe / Assist, pause), recovery lists with manager follow-up tasks, and measures (first attempt in SLA, callbacks kept, demo attendance, qualified → paid, recovered and cross-course sales, source quality, how often suggestions were used or ignored).
+
+#### Other AI features
+
 - **Next best action** — suggests which leads a counsellor should contact next and why.
 - **Lead brief** — a short pre-call summary, why the lead is considered hot, and a suggested WhatsApp message in **English or Telugu**.
 - **Ask Nipuna** — managers ask questions in plain language ("How are collections this month?") and get an answer with the facts, sources, period and what data is missing.
 - AI **never changes records or sends messages by itself**; a person always decides. Every answer can be rated (helpful / incorrect / not useful / missing context) to improve it.
-- Today the answers come from built-in rules on live data; connecting a full AI model is planned.
+- Briefs, the counselling brief and Ask Nipuna use Claude when an `ANTHROPIC_API_KEY` is configured, using CRM facts only; without a key (the case today) they come from built-in rules on the same live data. Reply drafts and the suggested next action are always rule-based.
 
 ### 8. Safeguards the system always enforces
 
@@ -259,10 +333,11 @@ Founder / CEO and Super Admin have an **Admin / Settings** area to: manage users
 
 | Area | Today | Planned |
 |---|---|---|
-| WhatsApp, email, telephony | Messages and calls are logged by staff; due reminders become tasks | Automatic sending through connected channels |
-| LMS | Dev only: every admission, course and balance is sent to the Nipuna LMS as it changes, which creates the student's LMS login and enrolment; pause / resume are sent too. The LMS's login status, enrolment, curriculum, batches, allocations, completion and certificates come back every few minutes and are read-only in the CRM. Branch details (name, city, email) go to the LMS when edited, and every 15 minutes each branch's finance figures (target, verified collections, paid admissions, overdue dues, pending verifications, follow-ups) are sent for the LMS dashboards | The student's activation link (the CRM will send it once WhatsApp / email exists; until then the LMS coordinator reissues it); LMS Career screen reading CRM placement openings (later round) |
+| WhatsApp | Dev only: approved template messages are sent automatically for money, admission, enquiry and placement events, marketing templates are sent one lead at a time with recorded consent, and delivery status and replies come back (see *WhatsApp messages to learners*). Not on the test server yet; the provider's callback format is still to be confirmed with real traffic. Also automatic: demo booked / rescheduled / cancelled and 24h / 1h reminders, admission confirmed, instalment reminders (3 days before, due, 3 days after), the plan confirmation, and staff alerts (on by default). **All the new templates await Pinbot approval**; until then plan acceptance is recorded by hand (In person / On a call) | Running on the test server; bulk campaigns and AI replies only after acceptance tests |
+| Email, telephony | Messages and calls are logged by staff; due reminders become tasks | Automatic sending through connected channels |
+| LMS | Dev only: every admission, course and balance is sent to the Nipuna LMS as it changes, which creates the student's LMS login and enrolment; pause / resume are sent too. The LMS's login status, enrolment, batches, allocations, completion and certificates come back every few minutes and are read-only in the CRM. Branch details (name, city, email) go to the LMS when edited, and every 15 minutes each branch's finance figures (target, verified collections, paid admissions, overdue dues, pending verifications, follow-ups) are sent for the LMS dashboards | The student's activation link (the CRM will send it once WhatsApp / email exists; until then the LMS coordinator reissues it); LMS Career screen reading CRM placement openings (later round); the LMS reading the new optional *preferred batch* hint sent with each admission |
 | Bank / payment gateway (HDFC) | Payments recorded and verified manually | Automatic matching |
-| AI | Rule-based suggestions on live data | A full AI model |
+| AI | Rule-based suggestions on live data; the counselling brief uses Claude when an API key is configured | Automatic replies / reminders through a connected channel (Approved automatic profile) after acceptance tests |
 | Some dashboard tiles and report sections from the prototype | Not shown | Added as the data becomes available |
 
 Open product decisions are listed in [DEVELOPMENT.md · Part E (backlog)](DEVELOPMENT.md#part-e--backlog).
@@ -308,11 +383,10 @@ The server is the only real enforcement. The UI hides screens the server would r
 |---|---|---|---|
 | `FOUNDER_CEO` | Founder / CEO | All branches | Final approver: big discounts, refunds, corrections, fee changes, targets; can also do everything Accounts does |
 | `SUPER_ADMIN` | Super Admin | All branches | Same approvals as Founder; runs users, settings and configuration; can also do everything Accounts does |
-| `BRANCH_MANAGER` | Branch Manager | Own branch | Runs the branch: assigns leads, approves small discounts, cancels / transfers admissions |
+| `BRANCH_MANAGER` | Branch Manager | Own branch | Runs the branch: assigns leads, approves small discounts, cancels / transfers admissions; batches, allocation, completion, certificates, document review, 3rd-demo and course-path approvals |
 | `SALES` | Sales (Counsellor) | Own branch | Owns leads end to end until admission |
 | `FRONT_OFFICE` | Front Office | Own branch | Walk-ins and phone enquiries; same lead work as counsellors |
 | `ACCOUNTS` | Accounts | Own branch | Verifies payments, runs collections, pays out refunds, applies fee changes |
-| `ACADEMIC_COORDINATOR` | Academic Coordinator | Own branch | Curricula, batches, allocation, completion, certificates |
 | `TRAINER` | Trainer | Own branch | Runs demos and classes, records outcomes and joining dates |
 | `PLACEMENT` | Placement Team | Own branch | Employers, jobs, placement profiles, applications |
 | `HR` | HR | Own branch | Staff-side read access to students and tasks |
@@ -329,9 +403,9 @@ flowchart TB
     COUNS["COUNSELLOR_ROLES<br/>Sales · Front Office"]
     LEAD["LEAD_ROLES<br/>Managers + Counsellors"]
     FIN["FINANCE_ROLES<br/>Lead roles + Accounts"]
-    ACAD["ACADEMIC_ROLES<br/>Managers + Academic Coordinator"]
-    DEMO["DEMO_ROLES<br/>Lead roles + Trainer + Academic Coordinator"]
-    STAFF["STAFF_ROLES<br/>Finance roles + Academic Coordinator + Trainer + Placement + HR"]
+    ACAD["ACADEMIC_ROLES<br/>Managers (same as MANAGER_ROLES)"]
+    DEMO["DEMO_ROLES<br/>Lead roles + Trainer"]
+    STAFF["STAFF_ROLES<br/>Finance roles + Trainer + Placement + HR"]
 
     ADMIN --> MANAGER
     MANAGER --> LEAD
@@ -384,11 +458,13 @@ flowchart TD
 | LMS access (V4, read-only) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Workflow guide (V4) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Persons · Person 360 | ✅ | ✅ | ✅ | | | | | |
-| Leads · Lead 360 | ✅ | ✅ | ✅ | | | | | |
+| Leads (list) | ✅ | ✅ | ✅ | | | | | |
+| Lead 360 | ✅ | ✅ | ✅ | ✅ (read-only, by link) | ✅ (read-only, by link) | | | |
 | Deal pipeline | ✅ | ✅ | ✅ | | | | | |
 | Demos | ✅ | ✅ | ✅ | | ✅ | ✅ | | |
 | Admissions | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Batches | ✅ | ✅ | | | ✅ | ✅ | | |
+| Waiting for batch | ✅ | ✅ | ✅ (read-only) | | ✅ | | | |
 | Students · Student 360 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Payments | ✅ | ✅ | ✅ | ✅ | | | | |
 | Invoices | ✅ | ✅ | ✅ | ✅ | | | | |
@@ -407,6 +483,7 @@ flowchart TD
 | **More →** Target Master | ✅ | ✅ (view) | | ✅ (view) | | | | |
 | **More →** Notifications | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **More →** Ask Nipuna | ✅ | ✅ | | | | | | |
+| **More →** Sales playbook | ✅ | ✅ | | | ✅ (course paths) | | | |
 | **More →** Admin / Settings | ✅ | | | | | | | |
 
 ---
@@ -421,7 +498,8 @@ mindmap
     Leads
       Create lead · Add another course
       CSV import
-      Log follow-up · set next follow-up
+      Save outcome · next action or status
+      Record objections · stop contact
       Qualification checklist · Mark Qualified
       Convert to deal
       Move stage · Mark lost
@@ -450,10 +528,15 @@ mindmap
       Eligibility review · manual fallback
       Add complimentary course
       Request fee change
+    Playbook
+      My work Today · handover
+      Suggested next action · Use / Edit / Ignore / Remind
+      Reply drafts from approved templates
+      Next-course suggestions (students)
     Everyday
       Tasks · Notifications
       Communications inbox
-      AI Copilot · lead brief
+      AI Copilot · lead brief · counselling brief
 ```
 
 **Rules that apply to them**
@@ -461,7 +544,8 @@ mindmap
 - The same rule applies to a pipeline card: its owner (or a manager) moves it, marks it lost and sets its follow-up. Only a branch manager or admin changes the card's owner.
 - Demos, fee discussions and stage moves need a **converted** lead: tick all six qualification checks, Mark Qualified, then Convert to deal (courses, branch, owner, expected close). Conversion reuses the person and never duplicates an open course.
 - They **cannot** assign / bulk-assign / reactivate leads, approve discounts, verify payments, cancel admissions or touch settings.
-- Front Office can also log follow-ups and record payments, same as Sales.
+- Front Office can also save outcomes and record payments on any lead at the branch, as **cover**: helping never changes the owner.
+- Outreach obeys the shared contact rules: no outbound contact after **Stop contact** (only a Branch Manager or admin clears it), and at most 5 calls / 3 WhatsApp messages while a learner has never been reached (college outreach: one call plus one follow-up). Contact the learner starts can always be recorded.
 
 **Their core flow**
 
@@ -495,10 +579,17 @@ mindmap
       Special closing up to own limit
       Approve fee versions
       Approve 3rd demo
+      Approve next-course paths
     Admissions
       Cancel admission
       Transfer to other branch
       Allocate batches · create batches
+      Close allocation · record joining
+      Complete admission
+      Create · issue certificates
+      Documents review
+    Waiting for batch
+      Admitted students without a batch · delay alerts
     Money
       View payments · unallocated payments
       Collections · promises
@@ -508,12 +599,19 @@ mindmap
       Offer Master view
       Ask Nipuna
       Placement & Alumni
+    Sales playbook
+      Approve knowledge · templates (own branch)
+      AI controls · Observe / Assist · pause
+      Recovery lists → follow-up tasks
+      Playbook measures
+      Clear stop contact
 ```
 
 **Limits**
 - Discount approval limit: **lower of 5% or ₹1,000** of the standard fee (setting: *Concession limits*). Anything above goes to Founder / CEO or Super Admin.
-- **Cannot** verify payments, decide refunds, approve fee changes after admission, map curricula, create or activate offers, or open Admin / Settings.
-- Gets a task for every **unassigned lead** (due in 60 staffed minutes) and is the escalation target for **payments waiting > 30 min**.
+- **Cannot** verify payments, decide refunds, approve fee changes after admission, create or activate offers, or open Admin / Settings.
+- Gets a task for every **unassigned lead** (due in 60 staffed minutes) and is the escalation target for **payments waiting > 30 min** and **new enquiries with no staff attempt at 10 staffed minutes**.
+- Sales knowledge: edits and approves items for their own branch; company-wide items are admin-only.
 
 #### 4.3 Accounts
 
@@ -525,6 +623,8 @@ mindmap
       Verify (evidence reviewed · cash check) or fail with reason
       Allocate advance to invoice courses
       Request correction
+    Lead 360
+      Read-only, from Open lead links
     Invoices
       Create invoice
       Cancel invoice
@@ -544,40 +644,15 @@ mindmap
 
 **Rules**
 - Verification is **once and final** (Verified or Failed). Target: **30 minutes**, warning at 25, then escalates to the Branch Manager.
+- Accounts opens a lead **read-only** (next-step bar, delivery plan, demos, timeline, invoices tab) from the claim review, the invoice page or a notification; they act only on what the bar says is theirs (verify payment). Leads is not in their menu.
 - Verifying needs two confirmations: **evidence reviewed** and, for cash, an **independent cash check**. The receipt number is issued only then; a pending claim has only its transaction number (`TXN-…`).
 - Only verified payments count as collected or unlock admission — each course is admitted automatically on the verification that brings ₹1,000 (the token) onto it. Accounts may also create an admission from the eligibility review if an automatic one was refused.
 - They get the "instalment due in 2 days" and "long payment gap" notifications for their branch, and can open the dashboard's Long-gap plans list.
 - Accounts **pays out** refunds but never decides them; the decider can never be the one who pays out.
 
-#### 4.4 Academic Coordinator
+#### 4.4 Academic Coordinator (merged into Branch Manager)
 
-```mermaid
-mindmap
-  root(("Academic Coordinator"))
-    Curriculum
-      Create curriculum version
-      Publish · retires previous
-      Map admission to curriculum
-    Batches
-      Create · edit batches
-      Allocation queue
-      Allocation check · allocate
-      Close allocation
-      Record joining date
-    Students
-      Complete admission
-      Create · issue certificates
-      Documents review
-    Demos
-      Approve 3rd demo
-    Alumni
-      View alumni
-```
-
-**Rules**
-- **Dev only:** while academics are managed in the LMS, everything under Curriculum, Batches and certificates is done in the LMS and is read-only here (see 4.9).
-- Curriculum mapping is limited to Academic Coordinators **at the student's service branch**, plus admins. Branch Managers can allocate batches but **cannot map curricula**.
-- Allocation deadlines: Confirmed Seat within **1 working day** and before the first class; Future Plan **48 hours** before start; alert **24 hours** before a batch starts if anyone is unallocated.
+This role no longer exists (db 043). Everything it did now belongs to the **Branch Manager** (see 4.2) and admins: batches, the allocation queue and allocation check, closing allocations, joining dates, completing an admission, certificates, documents review, approving the 3rd demo and next-course paths, and the **Waiting for batch** screen with its first delay alert. The CRM has no curriculum to create, publish or map. While academics are managed in the LMS (dev) the batch, allocation and certificate screens are read-only here (see 4.9). Allocation deadlines: Confirmed Seat within **1 working day** and before the first class; Future Plan **48 hours** before start; alert **24 hours** before a batch starts if anyone is unallocated.
 
 #### 4.5 Trainer
 
@@ -596,7 +671,7 @@ mindmap
       Course Master
 ```
 
-Outcome can be recorded only **after the demo's start time** and only while the demo is Scheduled or Confirmed. Joining dates are recorded in the LMS while it manages academics (dev only).
+Finished demos without an outcome are listed on **My work → Record demo outcome**; the form opens in place. Outcome can be recorded only **after the demo's start time** and only while the demo is Scheduled or Confirmed. Joining dates are recorded in the LMS while it manages academics (dev only).
 
 #### 4.6 Placement Team
 
@@ -647,7 +722,6 @@ mindmap
       Offer Master · activate offers
       Concession limits
       Notification rules · channels
-      Curriculum versions
     Control
       Integrations · incidents
       Force sign-out sessions
@@ -768,7 +842,7 @@ stateDiagram-v2
 
 | What | Requested by | Approved by | Notes |
 |---|---|---|---|
-| 3rd demo (after 2 attended) | Counsellor | Academic Coordinator or BM | Setting `demo_max_attended` = 2 |
+| 3rd demo (after 2 attended) | Counsellor | BM | Setting `demo_max_attended` = 2 |
 | Fee version | Counsellor | **Counsellor or BM** if no extra concession and at / above floor (offers count as pre-approved); otherwise only via an approved special closing request | Must be Approved before accept plan / invoice |
 | Offer activation | Admin | Admin (fresh auth) | Needs approver + dates; activating deactivates the other active version of the same code. The creator can activate their own offer today |
 | Target version | Admin drafts | Admin (fresh auth) | Approved version supersedes the overlapping one |
@@ -804,7 +878,7 @@ Actions that need it:
 
 ### 7. Every setting, and who controls it
 
-All configuration lives in **More → Admin / Settings** (Founder / CEO and Super Admin only), except Course Master, Offer Master, Target Master and Curriculum, which have their own screens.
+All configuration lives in **More → Admin / Settings** (Founder / CEO and Super Admin only), except Course Master, Offer Master and Target Master, which have their own screens.
 
 ```mermaid
 mindmap
@@ -856,12 +930,21 @@ mindmap
 | `refund_decision_target_working_days` | 7 | Refund decision target | Admins |
 | `refund_payout_target_working_days` | 18 | Payout target after approval | Accounts |
 | `alumni_support_months` | 6 | Support after course completion | Placement, Admins |
-| `academics_managed_in_lms` | true (dev) | Batches, allocation, joining, curriculum, completion and certificates are done in the Nipuna LMS and read-only in the CRM | Acad. Coord., Trainer, BM, Admins |
+| `academics_managed_in_lms` | true (dev) | Batches, allocation, joining, completion and certificates are done in the Nipuna LMS and read-only in the CRM | Trainer, BM, Admins |
 | `report_cutoff_time` | 20:00 | Daily report cutoff (IST) | Managers, Accounts |
 | `business_timezone` | Asia/Kolkata | Staffed-time and report periods | Everyone |
 | `admission_token_amount` | 1000 | Verified payments (₹) needed on the invoice before the admission can be created | Counsellors, Accounts |
 | `installment_due_soon_days` | 2 | "Due soon" alert to the owner, Accounts and BM this many days before an instalment | Counsellors, Accounts, BM |
 | `payment_gap_alert_days` | 30 | Alert (owner, Accounts, BM, admins) and dashboard "Long-gap plans" when the next instalment is due this long after a verified payment | Counsellors, Accounts, BM, Admins |
+| `first_attempt_staffed_minutes` | 10 | First staff contact due after an enquiry is captured | Sales, Front Office, BM |
+| `first_attempt_cover_minutes` · `_manager_minutes` · `_founder_minutes` | 2 · 10 · 30 | When Front Office cover, the Branch Manager and the Founder / CEO are alerted about an enquiry nobody has contacted | Front Office, BM, Founder |
+| `unanswered_call_limit` · `unanswered_whatsapp_limit` | 5 · 3 | Most outbound calls / WhatsApp messages while the learner has never been reached | Sales, Front Office |
+| `unanswered_window_days` | 7 | After this, a never-reached lead appears on the *Never reached* recovery list | BM |
+| `whatsapp_staff_alerts_enabled` | true | Sends staff WhatsApp alerts to their own phone (`users.phone`): payment verified / failed, lead assigned, approval waiting, payment to verify, demo to take (bell notifications always happen) | Counsellors |
+| `pipeline_stalled_days` | 7 (not stored until set) | Days in a stage after which a pipeline card shows as stalled (red) | Counsellors, BM |
+| `batch_delay_coordinator_days` · `batch_delay_future_plan_hours` | 1 · 48 | A student with no batch: the Branch Manager is tasked this many working days after admission (Confirmed Seat), or this many hours before the planned start (Future Plan) | BM, Counsellors |
+| `batch_delay_manager_days` · `batch_delay_founder_days` | 2 · 5 | Working days without a batch before the Branch Manager, then the Founder / CEO and Super Admin, are alerted | BM, Founder, Super Admin |
+| `outreach_attempt_limit` · `outreach_follow_up_gap_days` | 2 · 3 | College outreach: one call plus one follow-up, at least 3 days apart, until interest is confirmed | Sales, Front Office |
 
 #### 7.2 Concession limits (Admin / Settings → Concession limits)
 
@@ -891,6 +974,12 @@ flowchart LR
 |---|---|---|---|---|---|
 | `PAYMENT_PENDING_VERIFICATION` | payment.recorded | Accounts | 25 min | 30 min | Branch Manager |
 | `SCR_PENDING` | scr.created | Branch Manager | 4 min | 5 min | Founder / CEO |
+| `INSTALMENT_DUE_SOON` | installment.due_soon | Owner, Accounts, Branch Manager | — | — | — |
+| `PAYMENT_GAP_LONG` | payment.gap_long | Owner, Accounts, BM, Founder / CEO, Super Admin | — | — | — |
+| `PAYMENT_VERIFIED` · `PAYMENT_FAILED` | payment outcome | Owner counsellor (named explicitly) | — | — | Information |
+| `DEMO_OUTCOME_RECORDED` | demo.outcome_recorded | Lead owner | — | — | Action Required |
+| `BATCH_DELAY_OWNER` · `_MANAGER` · `_FOUNDER` | no batch after admission | Owner counsellor · Branch Manager · Founder / CEO and Super Admin | — | — | Sent by the `batch-delay-alerts` job at the thresholds in 7.1 |
+| `FIRST_ATTEMPT_COVER` · `_MANAGER` · `_FOUNDER` | lead.first_attempt | Front Office · Branch Manager · Founder / CEO | — | — | Sent at 2 · 10 · 30 staffed minutes by the `first-attempt` job |
 
 Minutes are **staffed minutes** — they only run during branch hours (§7.4). Branch channels (WhatsApp numbers, email senders, phone lines) are configured per branch on the same tab; nothing is sent externally until integrations are live.
 
@@ -912,9 +1001,8 @@ Dropdown values used across the CRM: lead sources, contact channels, entry metho
 | Payment plans (Full · 2 instalments · 3 instalments) | Admin API | Admins | Lead roles |
 | Offers (discount / complimentary course, scope, dates) | More → Offer Master | Admins | Admins, BM |
 | Targets (collections, paid admissions per branch) | More → Target Master | Admins draft + approve | Admins, BM, Accounts |
-| Curriculum versions | Batches → Curriculum | Acad. Coord., Admins | Managers, Acad. Coord., Trainer |
 
-Rules that apply to all masters: an **active offer can't be edited** (make a new version); a **payment plan in use can't be changed** (make a new plan); **publishing a curriculum retires the previous version**.
+Rules that apply to all masters: an **active offer can't be edited** (make a new version); a **payment plan in use can't be changed** (make a new plan).
 
 ---
 
@@ -930,16 +1018,23 @@ Grouped by module. "Owner" = the lead's assigned counsellor. All of these are al
 | | Log follow-up | Owner, Front Office, BM, Admins |
 | | Assign, bulk assign, reactivate | BM, Admins |
 | | Log activity, saved views | All lead roles |
+| **Playbook** | Save outcome, record / close objections, reply draft + record sent message, use / ignore / snooze a suggestion, handover note | Owner, Front Office (cover), BM, Admins (any branch counsellor while unassigned) |
+| | Record stop contact | Sales, Front Office, BM, Admins |
+| | Clear stop contact | BM, Admins |
+| | Act on a next-course suggestion | Sales, Front Office, BM, Admins |
+| | Sales knowledge and reply templates: add, edit, approve, retire | BM (own branch), Admins (all) |
+| | Course paths: add, edit, approve, retire | BM, Admins |
+| | AI controls (Observe / Assist, pause), recovery tasks, playbook measures | BM (own branch), Admins |
 | **Pipeline** | Move a card, mark it lost, set its follow-up | Card owner, BM, Admins (any branch counsellor while unassigned) |
 | | Change a card's owner | BM, Admins |
 | | Set a card's expected close | Card owner, BM, Admins |
 | **Persons** | List / search persons, Person 360 | All lead roles (own branches) |
 | **Demos** | Book, edit, confirm, reschedule, cancel | Sales, Front Office, BM, Admins |
 | | Record outcome | Trainer, Sales, Front Office, BM, Admins |
-| | Approve 3rd demo | Academic Coordinator, BM |
+| | Approve 3rd demo | BM |
 | **Fees** | Open discussion | Counsellors, BM |
 | | New version, share, raise special closing | Counsellors |
-| **Delivery plan** | Save, accept, reopen (until invoiced) | Deal owner, counsellors, BM, Academic Coordinator, Admins |
+| **Delivery plan** | Save, accept, reopen (until invoiced) | Deal owner, counsellors, BM, Admins |
 | | Approve standard-price version (no extra concession) | Counsellors, BM, Admins |
 | | Decide special closing (approves the version too) | BM (within limit), Admins |
 | **Invoices** | Create (one or more compatible courses) | Counsellors, Accounts, BM |
@@ -957,11 +1052,10 @@ Grouped by module. "Owner" = the lead's assigned counsellor. All of these are al
 | | Request fee change | Counsellors, BM |
 | | Approve / reject fee change | Admins |
 | | Apply fee change | Accounts, Admins |
-| **Academics** | Create / edit batch, allocation queue, allocate | Academic Coordinator, BM |
-| | Close allocation, complete admission | Academic Coordinator |
-| | Joining date | Academic Coordinator, Trainer |
-| | Create / publish curriculum, map curriculum | Academic Coordinator, Admins |
-| | Create / issue certificate | Academic Coordinator, Admins |
+| **Academics** | Create / edit batch, allocation queue, allocate | BM, Admins |
+| | Close allocation, complete admission | BM, Admins |
+| | Joining date | BM, Admins, Trainer |
+| | Create / issue certificate | BM, Admins |
 | | Revoke certificate | Admins |
 | | *(Dev only: the Academics rows above are done in the LMS while `academics_managed_in_lms` is on)* | — |
 | **Students** | View Student 360, upload / review documents, support cases | All staff |
@@ -975,7 +1069,7 @@ Grouped by module. "Owner" = the lead's assigned counsellor. All of these are al
 | | Branch channels, notification rules | Admins |
 | **Notifications** | Read / acknowledge / complete own | Everyone |
 | **Placement** | Companies, jobs, profiles, consent, applications | Placement, BM, Admins |
-| | Alumni list | Placement, BM, Admins, Academic Coordinator |
+| | Alumni list | Placement, BM, Admins |
 | | Support extension | Admins |
 | **Reports** | Management, funnel, performance, SLA, export | BM, Admins, Accounts |
 | | Scheduled reports | Admins |
@@ -994,7 +1088,8 @@ Grouped by module. "Owner" = the lead's assigned counsellor. All of these are al
 Things that behave differently from what the rules above might suggest. Tracked here until they are decided in [DEVELOPMENT.md · Part E (backlog)](DEVELOPMENT.md#part-e--backlog).
 
 - **Offer self-activation:** the admin who creates an offer can also activate it; the two-person rule doesn't cover offers.
-- **Curriculum mapping at branches without an Academic Coordinator:** Branch Managers can allocate batches but can't map curricula, so only an admin can clear *Mapping Pending*.
+- **Branch Manager owns every academic action:** next-course paths, document review, knowledge approval, batches, completion and certificates all sit with the Branch Manager (and admins); there is no separate academic role to share the load or to review the Branch Manager's own work.
+- **The LMS may still refuse allocations on curriculum grounds** until it removes its own check (brief: `CRM_CURRICULUM_REMOVAL_LMS_REQUEST.md` in the LMS exchange folder). The CRM side works either way.
 - **Complimentary course list can include the main course:** an offer can list the student's own course as complimentary.
 - **Counsellors adding a complimentary course** type the numeric offer ID, because they can't list offers.
 - **Manual stage moves:** a deal can be moved to *Demo Attended* by hand without an attended demo; only backward moves after *Payment Pending Verification* are blocked.

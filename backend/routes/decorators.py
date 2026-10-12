@@ -1,11 +1,12 @@
-"""Route decorators: @login_required, @require_roles(...), @fresh_auth.
+"""Route decorators: @login_required, @require_roles(...), @fresh_auth, and @lms_service_key for calls from the LMS.
 
 Order on a route:  @login_required  →  @require_roles(...)  →  @fresh_auth  →  view
 """
+import hmac
 import logging
 from functools import wraps
 
-from flask import request
+from flask import current_app, request
 
 from services import audit
 from services import auth as auth_service
@@ -66,6 +67,19 @@ def fresh_auth(view):
         user = current_user()
         if user is None or not user.has_fresh_auth:
             raise FreshAuthRequired("Confirm your password to continue")
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def lms_service_key(view):
+    """A call from the Nipuna LMS: header X-Service-Key equal to LMS_SERVICE_KEY (the key both systems share)."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        expected = current_app.config.get("LMS_SERVICE_KEY") or ""
+        supplied = request.headers.get("X-Service-Key") or ""
+        if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+            raise Unauthenticated("Invalid service key")
         return view(*args, **kwargs)
 
     return wrapper

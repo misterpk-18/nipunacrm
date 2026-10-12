@@ -173,7 +173,10 @@ class SpecialClosingRequest(db.Model):
 
     def to_summary(self) -> dict:
         return {"scr_id": self.scr_id, "scr_code": self.scr_code, "status": self.status,
-                "requested_extra": self.requested_extra, "counter_extra": self.counter_extra}
+                "requested_extra": self.requested_extra, "counter_extra": self.counter_extra,
+                "decision_reason": self.decision_reason, "requested_at": self.requested_at,
+                "decision_due_at": self.decision_due_at, "decided_at": self.decided_at,
+                "decided_by_name": self.decider.full_name if self.decider else None}
 
     def to_dict(self) -> dict:
         version = self.version
@@ -220,6 +223,10 @@ class DeliveryPlan(db.Model):
     accepted_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    preferred_lms_batch_code: Mapped[str | None] = mapped_column(Text)   # db 037: a hint, not an allocation
+    preferred_lms_batch_label: Mapped[str | None] = mapped_column(Text)
+    acceptance_method: Mapped[str | None] = mapped_column(Text)  # in_person / call / whatsapp
+    confirmation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -239,4 +246,8 @@ class DeliveryPlan(db.Model):
             "planned_start_date": self.planned_start_date, "capacity_review": self.capacity_review,
             "student_accepted": self.student_accepted, "accepted_by": user_summary(self.acceptor),
             "accepted_at": self.accepted_at, "notes": self.notes, "updated_at": self.updated_at,
+            "preferred_lms_batch_code": self.preferred_lms_batch_code,
+            "preferred_lms_batch_label": self.preferred_lms_batch_label,
+            "acceptance_method": self.acceptance_method,
+            "confirmation_requested_at": self.confirmation_requested_at,
         }

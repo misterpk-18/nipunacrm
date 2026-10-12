@@ -15,9 +15,13 @@ others.
 
 A row that is still not delivered after MAX_ATTEMPTS becomes Failed, with a task for Super Admin. The service key and
 the activation token the LMS returns for a new student login are never logged or stored.
+
+Right after a request commits, push_soon() delivers the records it wrote in a background thread (short timeout); the
+job lms-sync and `flask lms worker` (every 10 s) are the retry path.
 """
 import json
 import logging
+import threading
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -25,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 
 from config.database import db
 from models import Admission, Branch, LmsOutbox
@@ -41,6 +45,8 @@ BACKOFF_BASE_SECONDS = 30
 BACKOFF_MAX_SECONDS = 3600
 CLAIM_SECONDS = 300
 TOKEN_FIELDS = ("activation_token",)
+PUSH_ROUNDS = 4                 # an admission's queue in one push: qualified, finance …
+_local = threading.local()      # a push uses its own shorter timeout
 
 
 @dataclass
@@ -64,7 +70,8 @@ def _request(method: str, path: str, body: dict | None = None) -> Answer:
                  "X-Service-Key": config["LMS_SERVICE_KEY"]},
     )
     try:
-        with urllib.request.urlopen(request, timeout=config.get("LMS_TIMEOUT_SECONDS", 10)) as response:
+        timeout = getattr(_local, "timeout", None) or config.get("LMS_TIMEOUT_SECONDS", 10)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return Answer(response.status, _json(response.read()))
     except urllib.error.HTTPError as exc:
         return Answer(exc.code, _json(exc.read()))
@@ -90,14 +97,29 @@ def pull_status(since: str) -> Answer:
     return _request("GET", f"{STATUS_PATH}?since={quote(since)}")
 
 
+def pull_status_for(since: str, *, crm_admission_id: int | None = None, crm_person_id: int | None = None) -> Answer:
+    """The status pull for one admission / person (LMS round 3, Q5). An LMS without the filter returns everything;
+    the caller then keeps only that record's entries."""
+    from urllib.parse import urlencode
+
+    query = {"since": since}
+    if crm_admission_id is not None:
+        query["crm_admission_id"] = crm_admission_id
+    if crm_person_id is not None:
+        query["crm_person_id"] = crm_person_id
+    return _request("GET", f"{STATUS_PATH}?{urlencode(query)}")
+
+
 # ---------------------------------------------------------------- the worker
 
-def _claim(limit: int) -> list[int]:
-    """The oldest pending row of each record that is due and not claimed by another run; claimed for CLAIM_SECONDS."""
+def _claim(limit: int, record_keys: list[str] | None = None) -> list[int]:
+    """The oldest pending row of each record (all, or the given ones) that is due and not claimed by another run;
+    claimed for CLAIM_SECONDS."""
     ids = db.session.execute(text("""
         WITH heads AS (
             SELECT DISTINCT ON (record_key) outbox_id, next_attempt_at, locked_until
-            FROM lms_outbox WHERE status = 'Pending' ORDER BY record_key, outbox_id
+            FROM lms_outbox WHERE status = 'Pending' AND (CAST(:keys AS TEXT[]) IS NULL OR record_key = ANY(:keys))
+            ORDER BY record_key, outbox_id
         )
         UPDATE lms_outbox o SET locked_until = now() + make_interval(secs => :claim)
         WHERE o.outbox_id IN (SELECT outbox_id FROM heads
@@ -105,7 +127,7 @@ def _claim(limit: int) -> list[int]:
                               ORDER BY outbox_id LIMIT :limit)
           AND o.status = 'Pending' AND (o.locked_until IS NULL OR o.locked_until < now())
         RETURNING o.outbox_id
-    """), {"claim": CLAIM_SECONDS, "limit": limit}).scalars().all()
+    """), {"claim": CLAIM_SECONDS, "limit": limit, "keys": record_keys}).scalars().all()
     db.session.commit()
     return sorted(ids)
 
@@ -150,6 +172,12 @@ def _fail(row: LmsOutbox, error: str) -> None:
         team_role_code="SUPER_ADMIN", description=f"Outbox row {row.outbox_id} (event {row.event_id}): {error}",
         dedupe_key=f"lms-sync-failed:{row.outbox_id}",
     )
+    if row.record_key.startswith("admission:") and row.event_type == "AdmissionQualified":
+        from services import whatsapp_events
+
+        admission = db.session.get(Admission, int(row.record_key.split(":", 1)[1]))
+        if admission is not None:
+            whatsapp_events.lms_access_delayed(admission)
     logger.warning("LMS event %s (%s, %s) failed: %s", row.event_id, row.event_type, row.record_key, error)
 
 
@@ -182,12 +210,34 @@ def _record(row: LmsOutbox, answer: Answer) -> str:
     return "stop" if answer.status is None else "retry"
 
 
-def deliver(limit: int = 200) -> dict:
-    """Post due Pending rows to the LMS (job lms-sync)."""
+UNREACHABLE = "LMS unreachable"
+HEALTH_PATH = "/api/v1/health"
+
+
+def lms_reachable() -> bool:
+    """The LMS answers its health check (tests replace this)."""
+    return _request("GET", HEALTH_PATH).status == 200
+
+
+def release_when_back() -> int:
+    """Rows backed off only because the LMS couldn't be reached are due again as soon as it answers, so an outage
+    doesn't leave them waiting out a long backoff (joint test step 5, 2026-10-02). Probes only while such rows wait."""
+    waiting = (LmsOutbox.status == "Pending") & LmsOutbox.last_error.startswith(UNREACHABLE) \
+        & (LmsOutbox.next_attempt_at > func.now())
+    if db.session.execute(select(LmsOutbox.outbox_id).where(waiting).limit(1)).first() is None:
+        return 0
+    if not lms_reachable():
+        return 0
+    return db.session.execute(update(LmsOutbox).where(waiting).values(next_attempt_at=func.now())).rowcount
+
+
+def deliver(limit: int = 200, record_keys: list[str] | None = None) -> dict:
+    """Post due Pending rows to the LMS (job lms-sync; or only the given records, for push_soon)."""
     if not configured():
         pending = db.session.execute(select(func.count()).where(LmsOutbox.status == "Pending")).scalar_one()
         return {"skipped": "LMS_BASE_URL / LMS_SERVICE_KEY not set", "pending": pending}
-    claimed = _claim(limit)
+    released = release_when_back() if record_keys is None else 0
+    claimed = _claim(limit, record_keys)
     counts: Counter = Counter()
     for n, outbox_id in enumerate(claimed):
         row = db.session.get(LmsOutbox, outbox_id)
@@ -205,7 +255,58 @@ def deliver(limit: int = 200) -> dict:
             if rest:
                 counts["not_attempted"] = len(rest)
             break
+    if released:
+        counts["released_after_outage"] = released
     return dict(counts) or {"delivered": 0}
+
+
+def deliver_records(record_keys: list[str]) -> dict:
+    """Deliver everything pending for these records now, in order (an admission's qualification, then its finance),
+    with the short push timeout. Never raises: the job retries whatever is left."""
+    totals: Counter = Counter()
+    _local.timeout = current_app.config.get("LMS_PUSH_TIMEOUT_SECONDS", 3)
+    try:
+        for _ in range(PUSH_ROUNDS):
+            result = deliver(limit=len(record_keys), record_keys=record_keys)
+            totals.update({k: v for k, v in result.items() if isinstance(v, int)})
+            if not result.get("delivered") or "skipped" in result:
+                break
+    except Exception:  # noqa: BLE001 - a push must never surface; the row stays Pending for the job
+        logger.exception("LMS push for %s failed; the job will retry", record_keys)
+        db.session.rollback()
+    finally:
+        _local.timeout = None
+    return dict(totals)
+
+
+def push_soon(record_keys: list[str]) -> None:
+    """After a request commits: deliver its records in a background thread, so the request never waits for the LMS."""
+    if not configured():
+        return
+    app = current_app._get_current_object()
+
+    def run():
+        with app.app_context():
+            try:
+                deliver_records(record_keys)
+            finally:
+                db.session.remove()
+
+    threading.Thread(target=run, name="lms-push", daemon=True).start()
+
+
+def health() -> dict:
+    """For the sync health strip: what waits in the outbox and when the LMS last took an event."""
+    pending, oldest, failed = db.session.execute(select(
+        func.count().filter(LmsOutbox.status == "Pending"),
+        func.min(LmsOutbox.created_at).filter(LmsOutbox.status == "Pending"),
+        func.count().filter(LmsOutbox.status == "Failed"))).one()
+    last_delivered = db.session.execute(select(func.max(LmsOutbox.delivered_at))).scalar()
+    last_error = db.session.execute(
+        select(LmsOutbox.last_error).where(LmsOutbox.status == "Pending", LmsOutbox.last_error.is_not(None))
+        .order_by(LmsOutbox.updated_at.desc()).limit(1)).scalar()
+    return {"pending": pending, "failed": failed, "oldest_pending_at": oldest, "last_delivered_at": last_delivered,
+            "last_error": last_error}
 
 
 def _release(outbox_ids: list[int]) -> None:

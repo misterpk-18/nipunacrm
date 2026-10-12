@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select, text
 
 from config.database import db
-from models import Lead, LeadQualificationReview, PipelineEntry
+from models import Lead, LeadActivity, LeadQualificationReview, PipelineEntry
 from models.enums import QUALIFICATION_CHECKS
 from repositories import leads as leads_repo
 from services import audit
@@ -29,20 +29,65 @@ CHECK_HINTS = {
 }
 
 
+# Saved outcomes that prove the person was actually reached
+REACHED_OUTCOMES = ("Connected", "Interested", "Demo booked", "Callback requested")
+
+
 def _reviews(lead_id: int) -> dict[str, LeadQualificationReview]:
     rows = db.session.execute(select(LeadQualificationReview).where(LeadQualificationReview.lead_id == lead_id)).scalars()
     return {row.check_code: row for row in rows}
 
 
+def _provable_checks(lead: Lead) -> list[str]:
+    """The checks the system can know from what is saved (the rest are staff judgement).
+
+    "Branch and delivery mode discussed" is never here: no delivery mode is recorded on a lead (only free-text
+    timing on the learner's need), so staff tick it.
+    """
+    proven = []
+    reached = db.session.execute(select(LeadActivity.activity_id).where(
+        LeadActivity.lead_id == lead.lead_id, LeadActivity.outcome.in_(REACHED_OUTCOMES)).limit(1)).first()
+    if reached is not None:
+        proven.append("Reachable contact confirmed")
+    if lead.course_id is not None:
+        proven.append("Intended course(s) understood")
+    if lead.next_action and lead.next_follow_up_at is not None:
+        proven.append("Exact next action agreed")
+    return proven
+
+
+def auto_tick(lead: Lead) -> list[str]:
+    """Tick, as System, every provable check that is not ticked yet. Called when the proving event is saved.
+
+    Never removes or overwrites a tick (manual ticks stay manual). Does nothing once the lead is qualified or closed.
+    """
+    if lead.qualified_at is not None or not lead.is_open or lead.converted_at is not None:
+        return []
+    reviews = _reviews(lead.lead_id)
+    added = [code for code in _provable_checks(lead) if code not in reviews]
+    for code in added:
+        db.session.add(LeadQualificationReview(lead_id=lead.lead_id, check_code=code, reviewed_by=None,
+                                               notes="Ticked automatically from what is saved on the lead"))
+    if added:
+        db.session.flush()
+    return added
+
+
 def checklist(lead_id: int) -> dict:
     lead = leads_service.get_lead(lead_id)
     reviews = _reviews(lead_id)
+    if not reviews and auto_tick(lead):  # leads that predate auto-ticks: first look catches up (staff unticks stick after)
+        reviews = _reviews(lead_id)
     checks = []
     for code in QUALIFICATION_CHECKS:
         row = reviews.get(code)
+        reviewer = None
+        if row is not None:
+            reviewer = ({"user_id": row.reviewer.user_id, "full_name": row.reviewer.full_name} if row.reviewer
+                        else {"user_id": None, "full_name": "System"})
         checks.append({
-            "check": code, "hint": CHECK_HINTS[code], "reviewed": row is not None,
-            "reviewed_by": {"user_id": row.reviewer.user_id, "full_name": row.reviewer.full_name} if row else None,
+            "check": code, "hint": CHECK_HINTS[code], "reviewed": row is not None, "auto": row is not None and row.reviewed_by is None,
+            "reviewed_by": reviewer,
             "reviewed_at": row.reviewed_at if row else None, "notes": row.notes if row else None,
         })
     backfilled = lead.qualified_at is not None and not reviews
@@ -74,6 +119,8 @@ def set_check(lead_id: int, check: str, reviewed: bool, notes: str | None) -> di
                                                reviewed_by=current_user().user_id, notes=notes))
     elif reviewed and existing is not None:
         existing.notes = notes
+        if existing.reviewed_by is None:  # staff confirming a System tick take it over
+            existing.reviewed_by, existing.reviewed_at = current_user().user_id, datetime.now(timezone.utc)
     elif not reviewed and existing is not None:
         db.session.delete(existing)
     db.session.flush()

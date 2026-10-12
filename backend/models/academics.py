@@ -1,4 +1,4 @@
-"""Curriculum versions, batches, batch allocations, and the occupancy / allocation-queue views."""
+"""Batches, batch allocations, and the occupancy / allocation-queue views."""
 from datetime import date, datetime, time
 
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text, Time
@@ -9,50 +9,11 @@ from config.database import db
 from models.access import User
 from models.admissions import Admission
 from models.courses import Course
-from models.enums import AllocationStatus, BatchStatus, CurriculumVersionStatus, DeliveryMode, SeatType
+from models.enums import (
+    AllocationStatus, BatchStatus, DeliveryMode, SeatType,
+)
 from models.leads import user_summary
 from models.masters import Branch
-
-
-class CurriculumVersion(db.Model):
-    """"Published v2026.1": one Published version per course at a time."""
-
-    __tablename__ = "curriculum_versions"
-
-    curriculum_version_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    course_id: Mapped[int] = mapped_column(Integer, ForeignKey("courses.course_id"))
-    version_label: Mapped[str] = mapped_column(String(30))
-    status: Mapped[str] = mapped_column(CurriculumVersionStatus, default="Draft")
-    notes: Mapped[str | None] = mapped_column(Text)
-    published_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    lms_mirrored: Mapped[bool] = mapped_column(Boolean, default=False)  # a version the LMS runs (db 028)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
-
-    course: Mapped[Course] = relationship(lazy="joined")
-
-    def to_dict(self) -> dict:
-        return {"curriculum_version_id": self.curriculum_version_id, "course": self.course.to_summary(),
-                "version_label": self.version_label, "status": self.status, "notes": self.notes,
-                "published_by": self.published_by, "published_at": self.published_at, "lms_mirrored": self.lms_mirrored,
-                "created_at": self.created_at}
-
-
-class AdmissionCurriculum(db.Model):
-    __tablename__ = "admission_curricula"
-
-    admission_id: Mapped[int] = mapped_column(Integer, ForeignKey("admissions.admission_id"), primary_key=True)
-    curriculum_version_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("curriculum_versions.curriculum_version_id"), primary_key=True
-    )
-    mapped_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
-    mapped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
-
-    curriculum_version: Mapped[CurriculumVersion] = relationship(lazy="joined")
-
-    def to_dict(self) -> dict:
-        return {"admission_id": self.admission_id, **self.curriculum_version.to_dict(), "mapped_by": self.mapped_by,
-                "mapped_at": self.mapped_at}
 
 
 class Batch(db.Model):
@@ -66,7 +27,6 @@ class Batch(db.Model):
     batch_name: Mapped[str] = mapped_column(String(150))
     course_id: Mapped[int] = mapped_column(Integer, ForeignKey("courses.course_id"))
     branch_id: Mapped[int] = mapped_column(Integer, ForeignKey("branches.branch_id"))
-    curriculum_version_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("curriculum_versions.curriculum_version_id"))
     delivery_mode: Mapped[str] = mapped_column(DeliveryMode, default="Classroom")
     trainer_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     schedule_days: Mapped[str | None] = mapped_column(String(50))
@@ -82,6 +42,9 @@ class Batch(db.Model):
     lms_mirrored: Mapped[bool] = mapped_column(Boolean, default=False)
     lead_trainer_email: Mapped[str | None] = mapped_column(String(255))
     trainer_emails: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    lms_seats_left: Mapped[int | None] = mapped_column(SmallInteger)  # db 032: the LMS's count, preferred
+    lms_readiness: Mapped[str | None] = mapped_column(String(30))  # Blocked = not public, never offered
+    lms_readiness_reason: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -89,7 +52,6 @@ class Batch(db.Model):
     course: Mapped[Course] = relationship(lazy="joined")
     branch: Mapped[Branch] = relationship(lazy="joined")
     trainer: Mapped[User | None] = relationship(foreign_keys=[trainer_user_id], lazy="joined")
-    curriculum_version: Mapped[CurriculumVersion | None] = relationship(lazy="joined")
     occupancy: Mapped["BatchOccupancy"] = relationship(
         primaryjoin="Batch.batch_id == foreign(BatchOccupancy.batch_id)", lazy="joined", viewonly=True
     )
@@ -102,9 +64,6 @@ class Batch(db.Model):
             "batch_name": self.batch_name,
             "course": self.course.to_summary(),
             "branch": self.branch.to_summary(),
-            "curriculum_version": {"curriculum_version_id": self.curriculum_version_id,
-                                   "version_label": self.curriculum_version.version_label}
-            if self.curriculum_version else None,
             "delivery_mode": self.delivery_mode,
             "trainer": user_summary(self.trainer),
             "schedule_days": self.schedule_days,
@@ -115,7 +74,9 @@ class Batch(db.Model):
             "capacity": self.capacity,
             "min_students": self.min_students,
             "allocated": occupancy.allocated,
-            "seats_left": occupancy.seats_left,
+            "seats_left": self.lms_seats_left if self.lms_seats_left is not None else occupancy.seats_left,
+            "lms_readiness": self.lms_readiness,
+            "lms_readiness_reason": self.lms_readiness_reason,
             "is_full": occupancy.is_full,
             "location": self.location,
             "status": self.status,

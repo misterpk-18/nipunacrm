@@ -18,7 +18,7 @@ from models import (
 )
 from repositories import invoices as invoices_repo
 from repositories.common import paginate
-from services import audit, lms_sync
+from services import audit, lms_sync, whatsapp_events
 from services import delivery_plans as plans_service
 from services import fees as fees_service
 from services import leads as leads_service
@@ -81,7 +81,8 @@ def course_option(lead: Lead) -> dict:
         "fee_version": {"version_id": version.version_id, "version_no": version.version_no, "status": version.status,
                         "final_payable": version.final_payable} if version else None,
         "fee_discussion_id": discussion.fee_discussion_id if discussion else None,
-        "delivery_plan": {"plan_code": plan.plan_code, "status": plan.status} if plan else None,
+        "delivery_plan": {"plan_code": plan.plan_code, "status": plan.status,
+                          "acceptance_method": plan.acceptance_method} if plan else None,
         "invoice": invoice.to_summary() if invoice else None,
         "eligible": not reasons, "reasons": reasons,
     }
@@ -183,6 +184,7 @@ def create(data: dict) -> Invoice:
                  new={"invoice_number": invoice.invoice_number, "billed_amount": invoice.billed_amount,
                       "lead_ids": [lead.lead_id for lead in leads], "installments": len(schedule)},
                  branch_id=invoice.collecting_branch_id)
+    whatsapp_events.invoice_issued(invoice, split_label([amount for _, amount in schedule], total))
     return invoice
 
 

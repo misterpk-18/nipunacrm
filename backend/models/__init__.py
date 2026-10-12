@@ -24,9 +24,7 @@ from models.invoices import (
 )
 from models.payments import Payment, PaymentAllocation, PaymentCorrectionRequest, UnallocatedAdvance
 from models.admissions import Admission, AdmissionBalance, AdmissionFeeChange, AdmissionTransfer
-from models.academics import (
-    AdmissionCurriculum, Batch, BatchAllocation, BatchAllocationQueue, BatchOccupancy, CurriculumVersion,
-)
+from models.academics import Batch, BatchAllocation, BatchAllocationQueue, BatchOccupancy
 from models.students import Certificate, Document, DocumentChecklist, SupportCase
 from models.refunds import PaymentPromise, RefundCase, RefundCaseReceipt
 from models.operations import (
@@ -39,17 +37,24 @@ from models.management import ReportRun, ScheduledReport, TargetAchievement, Tar
 from models.system import AppSetting, AuditLog, DeletionRequest, Incident, IntegrationStatus
 from models.ai import AiFeedback, AiInsight, AiQuery
 from models.lms import LmsOutbox, LmsPullHold, LmsPullState, LmsSyncVersion
+from models.whatsapp import WhatsappOutbox, WhatsappWebhookLog
+from models.playbook import (
+    AiAction, AiBranchControl, CoursePath, LeadContactCounter, LeadObjection, LeadResponseClock, OfferableBatch,
+    SalesKnowledge,
+)
 
 __all__ = [
-    "LOOKUPS", "ActiveSession", "Admission", "AdmissionBalance", "AdmissionCurriculum", "AdmissionFeeChange",
+    "AiAction", "AiBranchControl", "CoursePath", "LeadContactCounter", "LeadObjection", "LeadResponseClock",
+    "OfferableBatch", "SalesKnowledge",
+    "LOOKUPS", "ActiveSession", "Admission", "AdmissionBalance", "AdmissionFeeChange",
     "AdmissionTransfer", "AiFeedback", "AiInsight", "AiQuery", "Alumni", "AppSetting", "ApplicationEvent", "AuditLog",
     "Batch", "BatchAllocation", "BatchAllocationQueue", "BatchOccupancy", "Branch", "BranchChannel", "BranchShift",
     "Certificate", "ComboCourse", "Communication", "CommunicationInbox", "Company", "ConcessionLimit",
-    "ContactChannel", "Course", "CourseBranch", "CurriculumVersion", "DeletionRequest", "DeliveryPlan", "Demo", "DemoReminder",
+    "ContactChannel", "Course", "CourseBranch", "DeletionRequest", "DeliveryPlan", "Demo", "DemoReminder",
     "Document", "DocumentChecklist", "DocumentType", "Enquiry", "EntryMethod", "FeeDiscussion",
     "FeeDiscussionVersion", "FeeVersionInstallment", "Holiday", "Incident", "Installment", "InstallmentDue",
     "IntegrationStatus", "Invoice",
-    "InvoiceBalance", "InvoiceLine", "InvoiceLineBalance", "JobApplication", "JobOpening", "Lead", "LeadActivity", "LmsOutbox", "LmsPullHold", "LmsPullState", "LmsSyncVersion", "LeadImport", "LeadImportRow", "LeadQualificationReview",
+    "InvoiceBalance", "InvoiceLine", "InvoiceLineBalance", "JobApplication", "JobOpening", "Lead", "LeadActivity", "LmsOutbox", "LmsPullHold", "LmsPullState", "LmsSyncVersion", "WhatsappOutbox", "WhatsappWebhookLog", "LeadImport", "LeadImportRow", "LeadQualificationReview",
     "LeadSource", "LostReason", "Notification", "NotificationRule", "Offer", "OfferBranch",
     "OfferComplimentaryCourse", "OfferCourse", "Payment", "PaymentAllocation", "PaymentCorrectionRequest", "PaymentGap", "PaymentMode",
     "PaymentPlan",

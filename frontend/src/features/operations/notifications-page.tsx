@@ -1,11 +1,14 @@
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { statusTone } from "@/api/whatsapp";
 import { notificationKeys, notificationsApi, NOTIFICATION_TABS, type Notification, type NotificationAction } from "@/api/notifications";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable, Empty, ErrorPanel, LoadingRows, PageHead, Pagination, Status } from "@/components/crm/ui";
 import { dateTime } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
+import { ClaimReviewDialog, useFinanceRoles } from "@/features/finance/shared";
 
 export type NotificationSearch = { tab?: string; page?: number };
 export const ALL_TAB = "My Notifications";
@@ -20,7 +23,7 @@ function EntityLink({ n }: { n: Notification }) {
     case "invoice":
       return <Link to="/invoices/$invoiceId" params={{ invoiceId: id }} className={cls}>Open invoice</Link>;
     case "payment":
-      return <Link to="/payments" className={cls}>Open payments</Link>;
+      return <Link to="/payments" search={{ verify: Number(id) }} className={cls}>Open claim</Link>;
     case "special_closing_request":
       return <Link to="/discount-approval" className={cls}>Open approvals</Link>;
     case "refund_case":
@@ -52,6 +55,8 @@ export function NotificationsPage({ search, onSearch }: { search: NotificationSe
   const rows = notifications.data?.data;
   const unread = notifications.data?.meta.unread;
 
+  const { canVerify } = useFinanceRoles();
+  const [reviewing, setReviewing] = useState<number | null>(null);
   const mark = useApiMutation((v: { id: number; action: NotificationAction }) => notificationsApi.mark(v.id, v.action), {
     success: (n) => (n.action_completed_at ? "Marked complete" : n.acknowledged_at ? "Acknowledged" : "Marked read"),
     invalidate: [notificationKeys.all],
@@ -59,6 +64,11 @@ export function NotificationsPage({ search, onSearch }: { search: NotificationSe
 
   const actions = (n: Notification) => (
     <div className="flex flex-wrap gap-1">
+      {canVerify && n.entity_type === "payment" && n.is_action_required && !n.action_completed_at && n.entity_id && (
+        <Button size="sm" onClick={() => setReviewing(Number(n.entity_id))}>
+          Review &amp; verify
+        </Button>
+      )}
       {!n.read_at && (
         <Button size="sm" variant="outline" disabled={mark.isPending} onClick={() => mark.mutate({ id: n.notification_id, action: "read" })}>
           Mark read
@@ -88,6 +98,15 @@ export function NotificationsPage({ search, onSearch }: { search: NotificationSe
     </span>
   );
 
+  const whatsappCell = (n: Notification) =>
+    n.external_channel && n.external_status ? (
+      <span>
+        <Status kind={n.external_status === "Not sent" ? "warn" : statusTone(n.external_status)}>{n.external_status}</Status>
+        {n.external_reason && <small className="block max-w-[14rem] text-[11px] text-muted-foreground">{n.external_reason}</small>}
+      </span>
+    ) : (
+      <span className="text-muted-foreground">—</span>
+    );
   const threshold = (n: Notification) =>
     n.escalated_at ? (
       <Status kind="danger">Escalated {dateTime(n.escalated_at)}</Status>
@@ -102,6 +121,7 @@ export function NotificationsPage({ search, onSearch }: { search: NotificationSe
 
   return (
     <>
+      {reviewing !== null && <ClaimReviewDialog paymentId={reviewing} onClose={() => setReviewing(null)} />}
       <PageHead title="Notification Centre" description="Delivery, read, acknowledgement and action completion are separate." />
       <div className="panel">
         <div className="mb-3 text-sm" aria-live="polite">
@@ -134,7 +154,7 @@ export function NotificationsPage({ search, onSearch }: { search: NotificationSe
               { header: "Read", cell: (n) => stamp(n.read_at, "Read", "Unread") },
               { header: "Acknowledged", cell: (n) => stamp(n.acknowledged_at, "Acknowledged", "Pending") },
               { header: "Action completed", cell: (n) => (n.is_action_required ? stamp(n.action_completed_at, "Completed", "No") : <span className="text-muted-foreground">No action</span>) },
-              { header: "External WhatsApp / email", cell: (n) => <span>{n.external_channel ? `${n.external_channel} · ` : ""}<Status>{n.external_status}</Status></span> },
+              { header: "Staff WhatsApp", cell: whatsappCell },
               { header: "Threshold", cell: threshold },
               { header: "Actions", cell: actions },
             ]}
@@ -162,7 +182,7 @@ export function NotificationsPage({ search, onSearch }: { search: NotificationSe
         </div>
         <Pagination meta={notifications.data?.meta} onPage={(p) => onSearch({ ...search, page: p })} />
         <p className="mt-3 text-xs text-muted-foreground">
-          Deduplicated by event occurrence + linked record + recipient + purpose. External WhatsApp / email delivery is shown only when a channel reports it.
+          Deduplicated by event occurrence + linked record + recipient + purpose. The Staff WhatsApp column shows the alert sent to the recipient's own phone, if any; messages to learners are on Person 360 and the WhatsApp screen.
         </p>
       </div>
     </>

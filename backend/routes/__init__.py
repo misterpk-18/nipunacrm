@@ -4,6 +4,7 @@ from flask import Flask
 from routes.admissions import admissions_bp
 from routes.ai import ai_bp
 from routes.auth import auth_bp
+from routes.batch_waiting import batch_waiting_bp
 from routes.catalog import catalog_bp
 from routes.demos import demos_bp
 from routes.fees import fees_bp
@@ -14,9 +15,11 @@ from routes.masters import masters_bp
 from routes.operations import operations_bp
 from routes.payments import payments_bp
 from routes.pipeline import pipeline_bp
+from routes.playbook import playbook_bp
 from routes.reference import reference_bp
 from routes.students import students_bp
 from routes.users import users_bp
+from routes.whatsapp import whatsapp_bp
 
 BLUEPRINTS = [
     health_bp,
@@ -31,10 +34,13 @@ BLUEPRINTS = [
     fees_bp,
     payments_bp,
     admissions_bp,
+    batch_waiting_bp,
     students_bp,
     operations_bp,
     management_bp,
     ai_bp,
+    playbook_bp,
+    whatsapp_bp,
 ]
 
 

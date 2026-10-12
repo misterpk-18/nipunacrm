@@ -1,15 +1,15 @@
 """Background jobs (run by `flask jobs run`, scheduled with cron): escalations, demo reminders, collections
 follow-ups, instalments due soon, broken promises, batch-allocation escalation, scheduled reports, clean-up and the
-Nipuna LMS (outbox delivery, status pull, branch finance snapshots).
+Nipuna LMS (outbox delivery, status pull, branch finance snapshots) and WhatsApp messages (whatsapp-send).
 
 Every job is idempotent: system tasks use dedupe keys and notifications deduplicate, so running a job twice in a
-row changes nothing. Jobs never commit; the CLI commits each job on its own — except lms-sync and lms-status-pull,
-which commit each record so no transaction stays open while the LMS answers.
+row changes nothing. Jobs never commit; the CLI commits each job on its own — except lms-sync, lms-status-pull and
+whatsapp-send, which commit each record so no transaction stays open while the other side answers.
 """
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import String, cast, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from config.database import db
@@ -19,8 +19,10 @@ from models import (
 )
 from repositories import settings as settings_repo
 from repositories import users as users_repo
+from services import collections as collections_service
+from services import fees as fees_service
 from services import reports as reports_service
-from services import lms_delivery, lms_finance, lms_pull, payment_alerts, sla, tasks
+from services import batch_waiting, lms_delivery, lms_finance, lms_pull, lms_reconcile, payment_alerts, sla, staff_alerts, tasks, whatsapp, whatsapp_inbound
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,8 @@ def escalate_notifications() -> int:
         .join(NotificationRule, NotificationRule.rule_id == Notification.rule_id)
         .where(Notification.is_action_required, Notification.action_completed_at.is_(None),
                Notification.escalated_at.is_(None), Notification.escalate_at <= func.now(),
-               Notification.escalated_from_id.is_(None))
+               Notification.escalated_from_id.is_(None),
+               Notification.recipient_user_id.not_in(users_repo.admin_user_ids()))  # Founder / Super Admin copies don't escalate
     ).all()
     for note, role_id in due:
         for user_id in users_repo.user_ids_with_role(role_id, note.branch_id) if role_id else []:
@@ -62,14 +65,36 @@ def escalate_notifications() -> int:
             scr = db.session.get(SpecialClosingRequest, int(note.entity_id))
             if scr is not None and scr.status == "Pending" and scr.escalated_at is None:
                 scr.escalated_at = _now()
+                staff_alerts.approval_waiting(scr, escalated=True)  # WhatsApp to Founder / Super Admin too
     db.session.flush()
     return len(due)
 
 
 # ---------------------------------------------------------------- demos
 
+DEMO_REMINDER_LEAD = {"24h student reminder": "24 hours", "1h student + trainer reminder": "1 hour"}
+
+
+def _demo_reminder_on_whatsapp(reminder, demo) -> bool:
+    """WhatsApp is live: the booking confirmation went out when the demo was booked; a 24h / 1h reminder goes to the
+    learner (and the trainer, when staff alerts are on). False when the learner has no WhatsApp number: the task
+    fallback then asks staff to call."""
+    from services import whatsapp_events
+
+    if whatsapp.recipient_phone(demo.lead.person) is None:
+        return False
+    if reminder.reminder_type != "Booking confirmation":
+        starts_in = DEMO_REMINDER_LEAD[reminder.reminder_type]
+        whatsapp_events.demo_reminder(demo, reminder.reminder_id, starts_in)
+        whatsapp_events.demo_trainer_reminder(demo, reminder.reminder_id, starts_in)
+    reminder.state, reminder.sent_at, reminder.note = "Sent", _now(), "Sent on WhatsApp"
+    return True
+
+
 def demo_reminders() -> int:
-    """Due reminders: with no live WhatsApp integration yet, each becomes a task for the lead's owner to send it."""
+    """Due reminders: with WhatsApp live each is queued as a message (the learner, and the trainer for the 24h / 1h
+    ones); otherwise each becomes a task for the lead's owner to send it by hand. A demo that was rescheduled,
+    cancelled or has started never fires: the database settles its reminders and the job skips the rest."""
     rows = db.session.execute(
         select(DemoReminder, Demo).join(Demo, Demo.demo_id == DemoReminder.demo_id)
         .where(DemoReminder.state == "Pending", DemoReminder.due_at <= func.now())
@@ -77,6 +102,8 @@ def demo_reminders() -> int:
     for reminder, demo in rows:
         if not demo.is_open or demo.scheduled_at <= _now():
             reminder.state, reminder.note = "Skipped", "Demo already started or closed"
+            continue
+        if whatsapp.configured() and _demo_reminder_on_whatsapp(reminder, demo):
             continue
         owner = demo.commercial_owner_id or demo.lead.assigned_to
         tasks.create_system_task("DEMO", f"Send {reminder.reminder_type.lower()} · {demo.demo_code} · "
@@ -115,6 +142,7 @@ def collections_reminders() -> int:
             team_role_code="BRANCH_MANAGER" if escalate == "BRANCH_MANAGER" else None,
             dedupe_key=f"collections:{due.installment_id}:{offset}", invoice_id=due.invoice_id,
         )
+    collections_service.send_learner_reminders(today)  # WhatsApp to the learner: -3, due date, +3
     return len(rows)
 
 
@@ -180,7 +208,7 @@ def scheduled_reports() -> int:
 # ---------------------------------------------------------------- clean-up
 
 def cleanup() -> dict:
-    """Close expired / idle sessions, expire lapsed fee versions and offers."""
+    """Close expired / idle sessions, expire lapsed fee versions and offers, drop old WhatsApp callback logs."""
     now = _now()
     idle = settings_repo.get_int("session_idle_minutes", 30)
     sessions = db.session.execute(
@@ -196,19 +224,72 @@ def cleanup() -> dict:
     offers = db.session.execute(
         update(Offer).where(Offer.status == "Active", Offer.valid_to < _today()).values(status="Expired")
     ).rowcount
-    return {"sessions_closed": sessions, "fee_versions_expired": versions, "offers_expired": offers}
+    webhooks = whatsapp_inbound.prune_log()
+    return {"sessions_closed": sessions, "fee_versions_expired": versions, "offers_expired": offers,
+            "whatsapp_callbacks_pruned": webhooks}
+
+
+# ---------------------------------------------------------------- first staff attempt (playbook page 4)
+
+FIRST_ATTEMPT_RULES = (("cover_alert_at", "FIRST_ATTEMPT_COVER", "Front Office cover"),
+                       ("manager_alert_at", "FIRST_ATTEMPT_MANAGER", "Branch Manager"),
+                       ("founder_alert_at", "FIRST_ATTEMPT_FOUNDER", "Founder / CEO"))
+FIRST_ATTEMPT_LOOKBACK_DAYS = 2  # older never-attempted leads appear in the recovery list, not as fresh alerts
+
+
+def first_attempt_alerts() -> int:
+    """New genuine enquiries with no staff attempt: alert cover at 2, the Branch Manager at 10 and the Founder / CEO
+    at 30 staffed minutes after the original capture. Bot / system activity never stops the clock. Alerts close once
+    a staff member contacts the learner. Escalation never changes the owner."""
+    from models import Lead, LeadResponseClock, Person
+    from models.enums import CLOSED_STAGES
+    from services import notifications
+
+    now = _now()
+    rows = db.session.execute(
+        select(LeadResponseClock, Lead).join(Lead, Lead.lead_id == LeadResponseClock.lead_id)
+        .join(Person, Person.person_id == Lead.person_id)
+        .where(LeadResponseClock.is_eligible, LeadResponseClock.attempted_at.is_(None),
+               LeadResponseClock.cover_alert_at <= now, Lead.stage.not_in(CLOSED_STAGES), Lead.converted_at.is_(None),
+               Person.stop_contact_at.is_(None),
+               LeadResponseClock.captured_at >= now - timedelta(days=FIRST_ATTEMPT_LOOKBACK_DAYS))
+    ).all()
+    sent = 0
+    for clock, lead in rows:
+        for column, rule, who in FIRST_ATTEMPT_RULES:
+            if getattr(clock, column) <= now:
+                course = lead.course.course_title if lead.course else "course not chosen"
+                sent += len(notifications.notify(
+                    rule, event_key=f"first-attempt:{rule}", entity_type="lead", entity_id=lead.lead_id,
+                    branch_id=lead.branch_id, purpose="first-attempt",
+                    title=f"No staff attempt yet: {lead.person.full_name} · {course}",
+                    body=f"{lead.lead_code} captured {clock.captured_at:%d %b %H:%M}; first attempt was due "
+                         f"{clock.due_at:%d %b %H:%M}. Owner: {lead.owner.full_name if lead.owner else 'unassigned'}. "
+                         f"For: {who}."))
+    # close the alerts of leads someone has now contacted
+    attempted = select(cast(LeadResponseClock.lead_id, String)).where(LeadResponseClock.attempted_at.is_not(None))
+    db.session.execute(update(Notification).where(
+        Notification.purpose == "first-attempt", Notification.entity_type == "lead",
+        Notification.action_completed_at.is_(None), Notification.is_action_required,
+        Notification.entity_id.in_(attempted)).values(action_completed_at=func.now()))
+    return sent
 
 
 JOBS = {
     "escalations": escalate_notifications,
+    "first-attempt": first_attempt_alerts,
     "demo-reminders": demo_reminders,
     "collections": collections_reminders,
     "dues-due-soon": payment_alerts.due_soon,
     "broken-promises": broken_promises,
+    "fee-expiry": fees_service.expiry_reminders,
     "batch-allocation": batch_allocation_escalation,
+    "batch-delay-alerts": batch_waiting.delay_alerts,
     "scheduled-reports": scheduled_reports,
     "cleanup": cleanup,
     "lms-sync": lms_delivery.deliver,
-    "lms-status-pull": lms_pull.pull,
+    "lms-status-pull": lms_pull.pull_if_due,
     "lms-finance-snapshot": lms_finance.send_snapshots,
+    "lms-reconcile": lms_reconcile.daily,
+    "whatsapp-send": whatsapp.deliver,
 }

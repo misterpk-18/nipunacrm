@@ -1,15 +1,16 @@
 """Collections: coordinated dues per invoice, ageing, promises to pay (kept / broken / cancelled)."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from config.database import db
-from models import Admission, Invoice, PaymentGap, PaymentPromise
+from models import Admission, InstallmentDue, Invoice, PaymentGap, PaymentPromise
 from repositories import collections as collections_repo
 from repositories.common import paginate
 from services import audit
 from services import admissions as admissions_service
 from services import invoices as invoices_service
+from services import whatsapp_events
 from services.context import COUNSELLOR_ROLES, current_user
 from services.errors import BusinessRule, Conflict, Forbidden, NotFound, ValidationError
 
@@ -118,3 +119,37 @@ def resolve_promise(promise_id: int, status: str) -> PaymentPromise:
                      new={"promise_id": promise_id, "amount": promise.promised_amount},
                      branch_id=invoice.collecting_branch_id)
     return promise
+
+
+# ---------------------------------------------------------------- automatic WhatsApp reminders to the learner
+
+REMINDER_STAGES = {-3: "before", 0: "today", 3: "overdue"}  # days after the due date -> stage (the §4.11 schedule)
+
+
+def _reminded_today(invoice_id: int, today: date) -> bool:
+    """Has this invoice already had an instalment reminder on this business (IST) day?"""
+    return db.session.execute(text(
+        "SELECT 1 FROM whatsapp_outbox WHERE source_type = 'invoice_due' AND source_id = :i "
+        "AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = :d LIMIT 1"), {"i": invoice_id, "d": today}).first() is not None
+
+
+def send_learner_reminders(today: date) -> int:
+    """3 days before, on, and 3 days after an instalment's due date, WhatsApp the learner what is still unpaid.
+    Skipped: payments awaiting verification (contact hold), paid instalments, cancelled invoices and Stop contact.
+    One message per instalment per stage, and at most one per invoice per day (the earliest instalment wins)."""
+    dates = {today - timedelta(days=offset): stage for offset, stage in REMINDER_STAGES.items()}
+    rows = db.session.execute(
+        select(InstallmentDue).where(InstallmentDue.balance > 0, InstallmentDue.due_date.in_(dates),
+                                     InstallmentDue.due_position != "Cancelled", InstallmentDue.contact_hold.is_(False))
+        .order_by(InstallmentDue.invoice_id, InstallmentDue.due_date, InstallmentDue.installment_no)).scalars().all()
+    queued, seen = 0, set()
+    for due in rows:
+        if due.invoice_id in seen:
+            continue
+        seen.add(due.invoice_id)
+        invoice = db.session.get(Invoice, due.invoice_id)
+        if invoice.status != "Issued" or due.person.stop_contact_at or _reminded_today(due.invoice_id, today):
+            continue
+        if whatsapp_events.instalment_due_reminder(due, invoice, dates[due.due_date]):
+            queued += 1
+    return queued

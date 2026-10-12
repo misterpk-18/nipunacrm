@@ -10,7 +10,7 @@ from config.database import db
 from models.access import User
 from models.courses import Course
 from models.enums import (
-    ActivityDirection, ActivityType, AppLanguage, CLOSED_STAGES, IntakeStatus, LeadImportRowResult, LeadImportStatus,
+    ActivityDirection, ActivityType, AppLanguage, CLOSED_STAGES, ConsentStatus, ContactState, IntakeStatus, LeadImportRowResult, LeadImportStatus,
     LeadPriority, LeadStage, LeadStatus, QualificationCheck,
 )
 from models.masters import Branch, ContactChannel, EntryMethod, LeadSource, LostReason
@@ -38,6 +38,15 @@ class Person(db.Model):
     whatsapp_number: Mapped[str | None] = mapped_column(String(20))  # NULL = same as mobile
     lms_user_id: Mapped[str | None] = mapped_column(String(100))
     lms_provisioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stop_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # db 031: suppresses outreach
+    stop_contact_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    stop_contact_reason: Mapped[str | None] = mapped_column(Text)
+    preferred_contact_time: Mapped[str | None] = mapped_column(String(100))
+    whatsapp_consent: Mapped[str] = mapped_column(ConsentStatus, default="Not Recorded")  # db 034: marketing templates
+    whatsapp_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    whatsapp_consent_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    whatsapp_consent_source: Mapped[str | None] = mapped_column(String(100))
+    whatsapp_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # db 044
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -56,6 +65,12 @@ class Person(db.Model):
             "city": self.city,
             "highest_qualification": self.highest_qualification,
             "preferred_language": self.preferred_language,
+            "preferred_contact_time": self.preferred_contact_time,
+            "stop_contact": {"at": self.stop_contact_at, "by": self.stop_contact_by, "reason": self.stop_contact_reason}
+            if self.stop_contact_at else None,
+            "whatsapp_notifications": self.whatsapp_notifications,
+            "whatsapp_consent": {"status": self.whatsapp_consent, "at": self.whatsapp_consent_at,
+                                 "by": self.whatsapp_consent_by, "source": self.whatsapp_consent_source},
             "registered_branch": self.registered_branch.to_summary(),
             "created_at": self.created_at,
         }
@@ -153,6 +168,17 @@ class Lead(db.Model):
     qualified_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     converted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # joined the pipeline via Convert
     converted_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
+    learner_goal: Mapped[str | None] = mapped_column(Text)  # db 031: what the learner needs
+    prior_experience: Mapped[str | None] = mapped_column(Text)
+    preferred_timing: Mapped[str | None] = mapped_column(String(150))
+    joining_window: Mapped[str | None] = mapped_column(String(150))
+    open_question: Mapped[str | None] = mapped_column(Text)
+    next_action: Mapped[str | None] = mapped_column(Text)
+    contact_state: Mapped[str | None] = mapped_column(ContactState)
+    contact_state_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_attempt_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set by trigger
+    first_staff_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set by trigger
+    first_staff_attempt_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -198,6 +224,10 @@ class Lead(db.Model):
             "ai_score": self.ai_score,
             "qualified_at": self.qualified_at,
             "converted_at": self.converted_at,
+            "next_action": self.next_action,
+            "contact_state": self.contact_state,
+            "first_attempt_due_at": self.first_attempt_due_at,
+            "first_staff_attempt_at": self.first_staff_attempt_at,
         }
 
     def to_dict(self) -> dict:
@@ -207,6 +237,10 @@ class Lead(db.Model):
             "original_enquiry_id": self.original_enquiry_id,
             "campaign": self.campaign,
             "remarks": self.remarks,
+            "need": {"learner_goal": self.learner_goal, "prior_experience": self.prior_experience,
+                     "preferred_timing": self.preferred_timing, "joining_window": self.joining_window,
+                     "open_question": self.open_question},
+            "contact_state_at": self.contact_state_at,
             "stage_changed_at": self.stage_changed_at,
             "is_open": self.is_open,
             "lost": {
@@ -226,11 +260,11 @@ class LeadQualificationReview(db.Model):
 
     lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("leads.lead_id"), primary_key=True)
     check_code: Mapped[str] = mapped_column(QualificationCheck, primary_key=True)
-    reviewed_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.user_id"))
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))  # NULL = ticked by the system (db 035)
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     notes: Mapped[str | None] = mapped_column(Text)
 
-    reviewer: Mapped[User] = relationship(foreign_keys=[reviewed_by], lazy="joined")
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewed_by], lazy="joined")
 
 
 class LeadActivity(db.Model):

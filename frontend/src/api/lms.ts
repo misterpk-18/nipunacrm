@@ -1,14 +1,14 @@
-/** LMS access (read-only): admissions with their LMS status, from GET /admissions; the status pull's state from
- * GET /lms/sync-status (db 028). */
+/** LMS access (read-only): admissions with their LMS status, from GET /admissions; the sync health (last push / pull,
+ * outbox, held records) from GET /lms/sync-status (db 028, round 3). */
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { get, list, type Query } from "./client";
 import type { DateTime } from "./types";
 import { LMS_STATUSES, type AdmissionFilters, type AdmissionRow } from "./admissions";
 
-export type LmsFilters = Pick<AdmissionFilters, "page" | "per_page" | "branch_id" | "q" | "lms_status" | "curriculum_status" | "enrolment_status">;
+export type LmsFilters = Pick<AdmissionFilters, "page" | "per_page" | "branch_id" | "q" | "lms_status" | "enrolment_status">;
 
 export type LmsSyncStatus = {
-  /** On: batches, allocations, joining, curriculum, completion and certificates come from the LMS (read-only here). */
+  /** On: batches, allocations, joining, completion and certificates come from the LMS (read-only here). */
   academics_managed_in_lms: boolean;
   configured: boolean;
   held: number;
@@ -20,6 +20,16 @@ export type LmsSyncStatus = {
     last_error: string | null;
     last_counts: Record<string, number> | null;
   };
+  /** Events waiting for the LMS (round 3). */
+  outbox: {
+    pending: number;
+    failed: number;
+    oldest_pending_at: DateTime | null;
+    last_delivered_at: DateTime | null;
+    last_error: string | null;
+  };
+  /** Whether the LMS answered the last pull / push; null before the first attempt. */
+  lms_reachable: boolean | null;
 };
 
 export const lmsApi = {
@@ -28,10 +38,11 @@ export const lmsApi = {
 };
 
 export const useLmsSyncStatus = () =>
-  useQuery({ queryKey: ["lms", "sync-status"], queryFn: lmsApi.syncStatus, staleTime: 60_000 });
+  useQuery({ queryKey: lmsKeys.syncStatus, queryFn: lmsApi.syncStatus, staleTime: 30_000 });
 
 /** Keys sit under ["admissions"] so any admission change refreshes this screen too. */
 export const lmsKeys = {
+  syncStatus: ["lms", "sync-status"] as const,
   list: (filters: LmsFilters) => ["admissions", "lms", filters] as const,
 };
 

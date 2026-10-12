@@ -7,6 +7,8 @@ Derived from the prototype at https://nipuna-crm-frozen-demo.nipunatech.chatgpt.
 
 **Core flow (V4, db 019–022):** Enquiry/Lead → Qualify (six checks) → Convert to deal → Counselling → Demo → Fee discussion (offer versions, special closing) → Accepted delivery plan per course → Invoice (one or more courses, 1–3 instalments) → Payment claim → Verification (receipt) → Admission per course (₹1,000 verified) → Collections → Batch/LMS → Placement
 
+Around it: the Front Office playbook (db 031: first-response clock, outcomes, objections, contact rules, approved knowledge, AI action record) and the Nipuna LMS link (db 026–029, 032: outbox, status pull, batch offerability; the CRM holds no curriculum since 043).
+
 Every record is branch-scoped (NIT-GNT Guntur, NIT-VIJ Vijayawada). One canonical **Person** can have many leads and admissions. A lead is **Active** while at New Enquiry; once it is qualified and converted to a deal it is **Inactive** and the person is tracked on a pipeline card (017, 019).
 
 Migration files live in `db/` and are applied in numeric order, each in its own transaction (009 must commit before 010):
@@ -43,10 +45,24 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | Admin refund payout | ✅ Done (dev only) | `025_refund_admin_payout.sql` — an admin may pay out a refund they decided |
 | V4 · Transactions and receipts | ✅ Done (dev only) | `022_transaction_receipts.sql` — TXN numbers on record; receipt numbers only at verification; evidence and cash checks |
 | LMS outbox | ✅ Done (dev only) | `026_lms_outbox.sql` — admission / course / finance events for the Nipuna LMS, written in the same transaction as the change; per-record source versions |
-| LMS status pull | ✅ Done (dev only) | `027_lms_pull_enums.sql`, `028_lms_status_pull.sql` — the CRM mirrors what the LMS owns (login, LMS status, enrolment, curriculum, batches, allocations, completion, certificate register); academic writes read-only while `academics_managed_in_lms` is on; Deferred refused |
+| LMS status pull | ✅ Done (dev only) | `027_lms_pull_enums.sql`, `028_lms_status_pull.sql` — the CRM mirrors what the LMS owns (login, LMS status, enrolment, batches, allocations, completion, certificate register); academic writes read-only while `academics_managed_in_lms` is on; Deferred refused |
+| LMS curriculum mapping | ⛔ Removed by 043 | `030_lms_curriculum_mapping.sql` (superseded) — LMS catalogue on `curriculum_versions` (track, Draft / Active / Retired); CRM mappings pushed to the LMS wait as Pending LMS → Confirmed / Refused; event `AdmissionCurriculumMapped`; daily drift-check marker |
+| Curriculum removal | ✅ Done (dev only) | `043_remove_curriculum.sql` — curriculum versions and mapping dropped; allocation checks course / branch / seat / enrolment status only; Academic Coordinator role merged into Branch Manager |
+| CRM AI sales playbook | ✅ Done (dev only) | `031_sales_playbook.sql` — first-response clock, stop contact, contact outcomes / states, objections, approved sales knowledge and reply templates, course paths, AI branch controls, AI action record |
+| LMS batch offerability | ✅ Done (dev only) | `032_lms_batch_offerability.sql` — the LMS's seats left and readiness on mirrored batches; `offerable_batches` view (what sales may name to a learner) |
+| WhatsApp outbox | ✅ Done (dev only) | `033_whatsapp_outbox.sql` — template messages to learners (Pinbot), written in the same transaction as the payment, refund or invoice they report; Queued → Sent → Delivered → Read, Failed, Skipped |
+| WhatsApp phases 2–4 | ✅ Done (dev only) | `034_whatsapp_phase2_4.sql` — a code for placement applications, WhatsApp marketing consent on persons, a 30-day log of the provider's callbacks |
+| UX · System ticks | ✅ Done (dev only) | `035_qualification_system_ticks.sql` — a qualification tick can be made by the system (`reviewed_by` NULL) |
+| UX · Demo outcome alert | ✅ Done (dev only) | `036_demo_outcome_notification.sql` — notification rule `DEMO_OUTCOME_RECORDED` |
+| UX · Delivery plan | ✅ Done (dev only) | `037_delivery_plan_ux.sql` — preferred batch, how the plan was accepted, WhatsApp confirmation request |
+| UX · Payment alerts | ✅ Done (dev only) | `038_payment_outcome_alerts.sql` — rules `PAYMENT_VERIFIED` / `PAYMENT_FAILED`, setting `whatsapp_staff_alerts_enabled` |
+| UX · Waiting for batch | ✅ Done (dev only) | `039_batch_waiting.sql` — `working_days_between()`, four batch-delay settings, three batch-delay rules |
+| LMS WhatsApp (round 6) | ✅ Done (dev only) | `045_lms_whatsapp.sql` — LMS messages in `whatsapp_outbox` (no person / branch needed), `secret_params` cleared once final, category Authentication, `lms_outbox` accepts `WhatsappStatusUpdated` |
+| WhatsApp notifications switch | ✅ Done (dev and EC2) | `044_whatsapp_notifications_switch.sql` — `persons.whatsapp_notifications` (default true) |
+| Staff WhatsApp alerts | ✅ Done (dev only) | `042_staff_whatsapp_alerts.sql` — `whatsapp_outbox.recipient_user_id`, the guard now freezes it, payment-alert rows back-filled, `whatsapp_staff_alerts_enabled` now true |
 | LMS branch events | ✅ Done (dev only) | `029_lms_branch_events.sql` — outbox accepts `BranchUpserted` and `BranchFinanceSnapshot` (owner decisions D3 / D4); new outbox status Superseded for a snapshot replaced before it was sent |
 
-Phases 0–3 cover the complete sales-to-cash flow and are the MVP. Phases 4–6 can follow as their screens are built.
+Migrations 017–039, 042 and 043 exist only on `nipunacrm-dev` (and the test database); the main `nipunacrm` and the EC2 server are at 016 until a deploy is approved ([DEVELOPMENT.md · Part C](DEVELOPMENT.md#new-migrations)).
 
 > **Read the "Prototype alignment" section at the end.** A full review of the prototype changed several earlier decisions (roles, payments before admission, advisory floor, fee changes). Where a phase section below disagrees with it, the alignment section wins.
 
@@ -57,7 +73,7 @@ Phases 0–3 cover the complete sales-to-cash flow and are the MVP. Phases 4–6
 | Table | Purpose |
 |---|---|
 | `branches` | NIT-GNT, NIT-VIJ; code, name, city, receipt prefix (`GNT`, `VIJ`) |
-| `roles` | Super Admin, Branch Manager, Counsellor, Admissions, Accounts, Academic Coordinator, Placement Team, Trainer |
+| `roles` | Super Admin, Branch Manager, Counsellor, Admissions, Accounts, Placement Team, Trainer |
 | `users` | Staff logins; role, home branch (NULL = company-wide), case-insensitive unique email |
 | `user_branches` | Extra branches a user can work in besides their home branch |
 | `courses` | Standalone courses and combos (`is_combo`), standard fee, status |
@@ -109,7 +125,7 @@ Rules enforced by the database:
 
 | Table / view | Purpose |
 |---|---|
-| `admissions` | `admission_code` auto-generated per branch per year (`NIT-GNT-2026-000001`): person, lead, accepted fee version, course, original vs service branch, delivery mode, final fee, plan, counsellor, enrolment / curriculum / handover / LMS status, cancellation, `first_verified_payment_at` |
+| `admissions` | `admission_code` auto-generated per branch per year (`NIT-GNT-2026-000001`): person, lead, accepted fee version, course, original vs service branch, delivery mode, final fee, plan, counsellor, enrolment / handover / LMS status, cancellation, `first_verified_payment_at` |
 | `installments` | Generated automatically from the payment plan when the admission is created (rounding goes to the last installment) |
 | `payments` | Immutable ledger. Receipts per collecting branch per financial year (`GNT-R-2627-00001`); reversals get `GNT-RV-2627-00001` |
 | `payment_promises` | Collections promise-to-pay (Pending / Kept / Broken / Cancelled) |
@@ -214,7 +230,7 @@ A full text review of the prototype found rules the phase-by-phase build had mis
 ### Changed decisions
 | Area | Before | Now |
 |---|---|---|
-| Roles | One `users.role_id`; invented Counsellor / Admissions | `user_role_scopes`: many role + branch scopes per user, with expiry / revocation. Roles: Founder / CEO, Super Admin, Branch Manager, Sales, Front Office, Accounts, Academic Coordinator, Trainer, Placement Team, HR, Student. `user_has_role(user, roles[], branch)` for checks. `users.role_id`, `home_branch_id` and `user_branches` removed |
+| Roles | One `users.role_id`; invented Counsellor / Admissions | `user_role_scopes`: many role + branch scopes per user, with expiry / revocation. Roles: Founder / CEO, Super Admin, Branch Manager, Sales, Front Office, Accounts, Trainer, Placement Team, HR, Student (Academic Coordinator was merged into Branch Manager by 043). `user_has_role(user, roles[], branch)` for checks. `users.role_id`, `home_branch_id` and `user_branches` removed |
 | Payments vs admission | Payment needed an admission | Payments belong to a **person**; they can be an unallocated advance, allocated to an accepted fee discussion, or to an admission. Each allocation link is set once |
 | Admission | Could be created any time | Needs (1) an accepted confirmed delivery plan on the fee version and (2) a Verified payment allocated to that discussion. Creation links those payments, moves the lead to Admitted and the discussion to Converted |
 | 70% floor | Hard block | Advisory. Below-floor approval needs Founder / CEO or Super Admin **plus** an independent approver on the special closing request |
@@ -228,14 +244,14 @@ A full text review of the prototype found rules the phase-by-phase build had mis
 |---|---|
 | `enquiries` | Every enquiry (`ENQ-00001`) incl. repeats; lead keeps `original_source_id` / `original_channel_id` / `original_entry_method_id` / `original_enquiry_id`; `is_genuine` for "Genuine Enquiries" |
 | `leads.ai_score`, priority "Waiting for Batch / Future Joining" | "Hot · 92" |
-| `demos.demo_type`, `extra_demo_approved_by`, `commercial_follow_up_due_at` | Standard ≤ 45 min, Practical ≤ 60; 3rd demo after 2 attended needs Academic Coordinator / Branch Manager; follow-up due 2 staffed hours after attendance |
+| `demos.demo_type`, `extra_demo_approved_by`, `commercial_follow_up_due_at` | Standard ≤ 45 min, Practical ≤ 60; 3rd demo after 2 attended needs Branch Manager approval (043; before that Academic Coordinator too); follow-up due 2 staffed hours after attendance |
 | `fee_discussions` delivery plan fields, `fee_shared_at` | Accepted confirmed delivery plan (version, mode, seat type, planned start); "Fee Shared" milestone |
 | `special_closing_requests` counteroffer + independent approval | Approve / Counteroffer / Reject; decision due = 5 **staffed** minutes; approver limit = highest across their scopes |
 | `payment_plan_installments.due_days_min/max` | Due-date windows; seeded Two Instalments (50% Day 0 + 50% Day 10–15, default 12) and Three Instalments (50/25/25 Day 0/10/15) |
 | Complimentary admissions | `admissions.complimentary_of_admission_id`, `offer_id`, `access_until`; `offer_complimentary_courses.access_period_days`; needs an active offer, fee threshold and a verified qualifying payment |
 | `admissions.seat_type`, `planned_start_date`, record / finance / academic owners | Confirmed Seat vs Future Plan |
 | `batch_allocation_queue` (view) | Allocate-by (confirmed: 1 working day and before first class; future: 48h before start) and escalate-at (24h before start) |
-| `curriculum_versions`, `admission_curricula` | "Published v2026.1"; `Mapped` needs a mapping |
+| `curriculum_versions`, `admission_curricula` | "Published v2026.1"; `Mapped` needs a mapping. Dropped by 043 |
 | `support_cases`, `support_case_types` | General support cases (`SUP-00001`), optionally linked to a refund case |
 | `ai_insights`, `ai_queries`, `ai_feedback` | Briefs, priority explanations, suggested messages, Ask Nipuna Q&A with sources / scope / freshness; feedback Helpful / Incorrect / Not Useful / Missing Context |
 | `user_sessions`, `active_sessions` (view) | 30-min idle timeout, 12-hour max, fresh-auth flag |
@@ -260,7 +276,7 @@ Source: the Lovable project's code (`prototype/`), checked by running it with Pl
 | Admission | From an accepted fee version + verified payment on the discussion | From an **invoice** (`admissions.invoice_id`): accepted plan on the invoice's version + a verified payment on the invoice. Records `first_qualifying_payment_id`. Parties, fee and plan come from the invoice |
 | Reversals | Inserted directly | Only through `payment_correction_requests`: requested by Accounts / Founder / Super Admin for a Verified, un-reversed receipt; decided by a *distinct* Founder / CEO or Super Admin; approval appends the reversal (`REV-GNT-2627-00001`, verified by the approver) |
 | Fee change | Updated admission + instalments | Also revises the invoice amount (`original_billed_amount`, `revised_at`) |
-| Batch allocation | Any branch; curriculum not checked | Same service branch only; curriculum must be Mapped (and match the batch's curriculum version); Paused / Completed / Cancelled enrolments blocked |
+| Batch allocation | Any branch; curriculum not checked | Same service branch only; Paused / Completed / Cancelled enrolments blocked (curriculum checks were added then removed again by 043) |
 | Demo reminders | Three timestamp columns | `demo_reminders` rows (Booking confirmation / 24h / 1h) created on booking, **Skipped** if already past, **Superseded** on reschedule, **Cleared** on cancel, **Not needed** after attendance / no-show |
 
 ### Added
@@ -273,7 +289,7 @@ Source: the Lovable project's code (`prototype/`), checked by running it with Pl
 | `saved_views` | Lead list saved filters (5 shared views seeded) |
 | `leads.campaign`, `leads.remarks`, `persons.whatsapp_number` | Lead capture fields |
 | `lead_activities.purpose`, `lead_activities.demo_id` | Follow-up log (purpose + response) and demo timeline entries |
-| `batches.curriculum_version_id`, `location`, `min_students`; `batch_occupancy.is_full` | Batch workspace |
+| `batches.location`, `min_students` (and `curriculum_version_id`, dropped by 043); `batch_occupancy.is_full` | Batch workspace |
 | `payments.proof_file_path` | Payment proof |
 | `tasks.invoice_id`, `tasks.correction_request_id` | Task links |
 | Lookups | Source `Meta Ads`, entry method `CSV import`, intake statuses `Invalid-Spam`, `Test` |
@@ -451,12 +467,12 @@ Round 2 of the LMS integration: the LMS owns academic work and the CRM mirrors i
 | Object | Holds / enforces |
 |---|---|
 | `certificate_status` + `Superseded` (027) | A reissued LMS certificate keeps its number; the earlier version becomes Superseded. Own file because 028 uses the value in an index |
-| `app_settings.academics_managed_in_lms` | `true`: batches, allocations, joining dates, curriculum, completion and certificates are read-only in the CRM (the API answers 409 `MANAGED_IN_LMS`) and come from the pull. `false`: the CRM's own academic screens work as before (the test suite runs this way) |
+| `app_settings.academics_managed_in_lms` | `true`: batches, allocations, joining dates, completion and certificates are read-only in the CRM (the API answers 409 `MANAGED_IN_LMS`) and come from the pull. `false`: the CRM's own academic screens work as before (the test suite runs this way) |
 | `lms_pull_state` | One row: `since` (the LMS's last `as_of`, stored exactly as returned), `last_attempt_at`, `last_success_at` ("last synced"), `last_http_status`, `last_error`, `last_counts`, `locked_until` (a running pull's claim) |
 | `lms_pull_holds` | A pulled record that couldn't be applied yet (e.g. an allocation to a batch the pull never sent): `record_key` (`academics:<id>`, `batches:<code>`, `certificates:<number>/<version>` …), the full `payload`, `reason`, `attempts`. Retried on every pull; a newer copy replaces it |
 | `admissions_no_deferred` | CHECK: `enrolment_status` can't be Deferred. The LMS has no such status and the pull overwrites the column; a student who must wait is paused. (The value stays in the enum type: retyping the column would mean rebuilding every view on admissions) |
-| `admissions.completion_authorised_by_email` | The LMS Academic Coordinator who decided the completion (`LMS` when the LMS didn't say). `admissions_completion_authorised` now accepts it instead of a CRM user |
-| `curriculum_versions.lms_mirrored` | A version the LMS runs, matched by course + label and created by the pull as Published with no CRM publisher. Mirrored versions don't count toward `curriculum_versions_one_published` (the LMS can run several versions of a course at once) |
+| `admissions.completion_authorised_by_email` | The LMS user who decided the completion (`LMS` when the LMS didn't say). `admissions_completion_authorised` now accepts it instead of a CRM user |
+| `curriculum_versions.lms_mirrored` (table dropped by 043) | A version the LMS runs, matched by course + label and created by the pull as Published with no CRM publisher. Mirrored versions don't count toward `curriculum_versions_one_published` (the LMS can run several versions of a course at once) |
 | `batches.lms_mirrored`, `lead_trainer_email`, `trainer_emails[]` | A batch from the LMS, keyed by `lms_course_id` (= the LMS `batch_code`, now unique). `trainer_user_id` is set when a CRM user has the lead trainer's email (matched ignoring case). `before_batch_insert` allows a combo course for the sync session (the LMS allocates combo tracks to batches of the combo itself) |
 | `batch_allocations.track_code`, `lms_allocated_on`, `lms_mirrored` | One row per LMS allocation, keyed by admission + course + track + batch + `allocated_on` (`batch_allocations_lms_key`). `batch_allocations_one_active` is now per admission, course and track. In the sync session `before_allocation_insert` keeps the course the LMS names and skips the CRM's checks; `prevent_allocation_rebind` and `sync_enrolment_from_allocation` do nothing (the enrolment status comes with the allocations) |
 | `certificates.version`, `certificate_type`, `holder_name`, `enrolment_code`, `issued_by_email`, `revoked_by_email`, `reissue_reason`, `supersedes_version`, `lms_changed_at`, `lms_mirrored` | The LMS Certificate Register (decision D2: the LMS number series). Unique on `(certificate_number, version)`; one live certificate per admission, course and type (`Revoked` and `Superseded` don't count). Mirrored rows may have no CRM issuer or revoker. In the sync session `before_certificate_issue` keeps the LMS number and dates |
@@ -470,5 +486,150 @@ Owner decisions D3 and D4 (LMS reply `nipuna crm-docs/CRM_ROUND2_LMS_REPLY.md` �
 | `lms_outbox_event_type_valid` | Now also `BranchUpserted` (record and version key `branch:<id>`) and `BranchFinanceSnapshot` (`branch-finance:<id>`) |
 | `lms_outbox_status` + `Superseded` | A snapshot still Pending when the next one for its branch is written: never sent, since each snapshot replaces the previous one in the LMS. Delivered and Superseded snapshots older than 7 days are deleted by the job (the version counter in `lms_sync_versions` keeps counting) |
 
+## Curriculum removal (043) ✅ (applied to `nipunacrm-dev` only)
+
+The CRM no longer tracks curriculum: a course carries none, an admission isn't "mapped", a batch follows no version. The LMS keeps its own. Fee, offer, target and certificate versions are untouched. The sequence goes 042 → 043. **The drop is one-way**: curriculum data on dev is gone (a backup was taken first).
+
+| Change | Detail |
+|---|---|
+| Tables dropped | `curriculum_versions`, `admission_curricula` (with 030's mapping and sync columns and 028's `lms_mirrored`) |
+| Columns dropped | `batches.curriculum_version_id`, `admissions.curriculum_status` |
+| Types dropped | `curriculum_status`, `curriculum_version_status`, `curriculum_lms_status`, `curriculum_lms_sync` |
+| Functions / triggers dropped | `check_curriculum_mapped()` (`trg_admissions_curriculum_mapped`), `check_admission_curriculum()` (`trg_admission_curricula_check`) |
+| `before_allocation_insert()` (replaced) | Allocation checks only: enrolment not Cancelled / Paused / Completed, batch not Completed / Cancelled, batch at the student's service branch, batch course = admission course or a combo component, seat left. The LMS sync session still skips them |
+| `lms_outbox_event_type_valid` | − `AdmissionCurriculumMapped`; the 7 events already written and their `lms_sync_versions` keys (`curriculum:<id>`) were deleted |
+| `check_demo_rules()` (replaced) | The extra (3rd) demo needs a **Branch Manager** of the branch: `Lead already attended N demos; another needs Branch Manager approval` |
+| `guard_course_path()` (replaced) | A course path is approved by a Branch Manager, Founder / CEO or Super Admin |
+| Academic Coordinator role | Users whose only role it was are deactivated (`coordinator.gnt`, `coordinator.vij` on dev) and their sessions revoked; their scopes and the `ACADEMIC_COORDINATOR` row in `roles` are deleted; open tasks queued for the role now queue for `BRANCH_MANAGER`. Open "LMS refused curriculum mapping" tasks are cancelled (reason: curriculum mapping was removed) |
+| `app_settings` | Descriptions of `academics_managed_in_lms`, `batch_delay_coordinator_days` and `batch_delay_future_plan_hours` reworded (the names stay; the first batch-delay alert is now a Branch Manager task) |
+| `lms_pull_state.last_reconcile_at` | Kept: the daily drift check still runs for the LMS user id, LMS status and allocations |
+
+Tests: `backend/tests/test_admissions.py` (allocation checks), `test_lms_pull.py` (curriculum fields from the LMS are ignored), `test_journey.py`.
+
+## LMS curriculum mapping (030) — superseded by 043
+
+> Everything in this section was removed by [043](#curriculum-removal-043--applied-to-nipunacrm-dev-only): the tables, columns, types and the `AdmissionCurriculumMapped` event no longer exist. `lms_pull_state.last_reconcile_at` stays. Kept as history.
+
+Round 3: curriculum mapping is done in the CRM again and pushed to the LMS; the LMS still owns curriculum content and versions, batches, allocation, joining dates, completion and certificates. Brief: `nipuna crm-docs/CRM_ROUND3_BRIEF.md` and `CRM_ROUND3_LMS_CHANGES.md`. How it runs: [API.md · Step 23](API.md#step-23--lms-status-pull--dev-only).
+
+| Object | Holds / enforces |
+|---|---|
+| `curriculum_lms_status` | Draft · Active · Retired (the LMS catalogue) |
+| `curriculum_lms_sync` | Pending LMS · Confirmed · Refused (a CRM mapping pushed to the LMS) |
+| `curriculum_versions.track_code`, `lms_status`, `lms_published_at` | The catalogue from the pull's `curriculum_versions[]`: a version can be mirrored before any student is on it. `curriculum_versions_lms_fields_mirrored`: only mirrored rows carry them. The label is now unique per course + track (`curriculum_versions_course_track_label`, NULLS NOT DISTINCT) instead of per course |
+| `admission_curricula.lms_sync_status`, `lms_outbox_id`, `mapping_reason`, `lms_refusal_reason`, `lms_confirmed_at`, `lms_resent_at` | NULL = not pushed by the CRM. `admission_curricula_refusal_has_reason`, `admission_curricula_confirmed_has_time`. Partial index on Pending LMS rows |
+| `check_curriculum_mapped()` | A Refused mapping no longer counts: curriculum can only be Mapped with a mapping that isn't Refused |
+| `lms_outbox_event_type_valid` | + `AdmissionCurriculumMapped` |
+| `lms_pull_state.last_reconcile_at` | When the daily drift check last ran |
+
 Data: `flask lms drop-crm-batches --yes` (dev / test databases only) deletes the CRM's own batches and every allocation, and resets the watermark so the next pull brings the LMS's (Q5 "drop and mirror").
 
+
+## CRM AI sales playbook (031) ✅ (applied to `nipunacrm-dev` only)
+
+Source: *Nipuna CRM AI Use Cases and Workflows — Developer Specification v2.0* (2 Oct 2026), releases 1 and 3 (release 2 — automatic sending through a provider — needs a live channel). How it is used: [API.md · Step 24](API.md#step-24--crm-ai-sales-playbook--dev-only).
+
+| Object | Holds / enforces |
+|---|---|
+| `persons.stop_contact_at / _by / _reason`, `preferred_contact_time` | Stop contact suppresses all outreach (`persons_stop_contact_reason`: a reason is required). Only a manager clears it (API) |
+| `leads.learner_goal`, `prior_experience`, `preferred_timing`, `joining_window`, `open_question`, `next_action` | What the learner needs and the agreed next action (counselling, spec p.6) |
+| `leads.contact_state` (`contact_state` enum), `contact_state_at` | A clear status when there is no dated next action: Awaiting reply · Later · Not interested · Invalid contact · Stop contact · Next action missing. Not interested is a state, not an automatic Lost |
+| `leads.first_attempt_due_at` (NOT NULL), `first_staff_attempt_at / _by` | First-response clock: due **10 staffed minutes** after the original capture (`lead_capture_at()` = the original enquiry's `received_at`, so a retry / import never restarts it). `trg_lead_activities_first_attempt` stamps the earliest staff contact (`is_staff_contact()`: has a performer, and outbound or a call / meeting — bot / system rows and inbound messages never count). Backfilled from existing timelines |
+| `setting_int(key, default)` | Integer `app_settings` reader for SQL |
+| Settings | `first_attempt_staffed_minutes` 10, `first_attempt_cover_minutes` 2, `first_attempt_manager_minutes` 10, `first_attempt_founder_minutes` 30, `unanswered_call_limit` 5, `unanswered_whatsapp_limit` 3, `unanswered_window_days` 7, `outreach_attempt_limit` 2, `outreach_follow_up_gap_days` 3 |
+| `lead_objections` | The learner's own words (frozen — `guard_lead_objection`), optional category (`objection_category`), action taken, Open → Resolved / Closed unresolved (needs the answer; stamps who / when; never reopened) |
+| `sales_knowledge` | Approved knowledge: syllabus / brochure (need a link), course comparison, branch location, fee and instalment rule, batch availability, placement support, FAQ answer, policy, reply template (needs a `reply_situation`). Course / branch scope (NULL = all), language, `review_due_on` (stale after). Draft → Approved → Retired; approver must be Founder / CEO, Super Admin or a BM of the row's branch (`guard_sales_knowledge`); editing an Approved row makes it a new Draft version; never deleted. Seeded: the spec's six English reply templates, Approved (attributed to the first admin — only seeded when an admin exists) |
+| `course_paths` | Reviewed next-course relationships (benefit, helps when, skip when, prerequisites, suggested question). Approver: Branch Manager, Founder / CEO or Super Admin (`guard_course_path`, Branch Manager since 043); editing an approved path returns it to Draft; never deleted. Seeded as Draft for courses that exist: Power BI → Data Science, Data Science → Python Full Stack, Python Full Stack → Data Science, Graphic Design → Video Editing, Graphic Design → Digital Marketing (MS Office → Excel, Excel → Power BI, Java → full stack have no matching courses) |
+| `ai_branch_controls` | Per branch: execution profile Observe / Assist (default) and a pause switch (reason, who, when). `ai_branch_controls_no_automatic_yet` refuses Approved automatic until a live channel passes the acceptance tests |
+| `ai_actions` | AI action record: type (Next action, Reply draft, Counselling brief, Course suggestion, Recovery, Objection response), action code, evidence fingerprint, lead / person / branch / owner / suggested course, suggestion, reason, evidence (ids), draft, payload, record version, policy / prompt version, model, status Suggested → Used / Edited / Ignored / Snoozed (remind_at) / Expired / Failed (reason), final text, execution result. The suggestion and its evidence are frozen (`guard_ai_action`); a final decision can't change; never deleted |
+| Notification rules | `FIRST_ATTEMPT_COVER` (Front Office, Action Required), `FIRST_ATTEMPT_MANAGER` (Branch Manager, Escalation), `FIRST_ATTEMPT_FOUNDER` (Founder / CEO, Escalation) |
+| `lead_response_clock` (view) | Per lead: captured / due / attempted, `is_eligible` (not Outreach Prospect / Invalid-Spam / Test), cover / manager / founder alert times (staffed minutes from capture), `sla_state` Met · Met Late · Breached · At Risk (5 min before) · Pending · Closed Without Attempt |
+| `lead_contact_counters` (view) | Shared counters for staff and agents: `never_reached` (no inbound, meeting or reached outcome), outbound calls / WhatsApp / all attempts by staff, last outbound / inbound |
+
+## LMS batch offerability (032) ✅ (applied to `nipunacrm-dev` only)
+
+Answers the LMS reply `nipuna crm-docs/CRM_PLAYBOOK_LMS_REPLY.md` (A1 timetable, A2 seats, Q3 Blocked = not public). The timetable fills the existing `batches.schedule_days`, `start_time`, `end_time`, `location` from the pull (null = timing not confirmed; a clear overwrites).
+
+| Object | Holds / enforces |
+|---|---|
+| `batches.lms_seats_left` | The LMS's count (capacity − students holding an active allocation; a combo student counts once per batch). `batches_lms_seats_left_valid`: ≥ 0. Preferred over `batch_occupancy.seats_left` |
+| `batches.lms_readiness`, `lms_readiness_reason` | LMS-owned readiness (e.g. Ready, Pending Verification, Blocked) and why; free text. `batches_lms_offer_fields_mirrored`: only mirrored batches carry the three columns |
+| `offerable_batches` (view) | Per batch: seats left (LMS's, else the CRM count), `is_offerable` = Planned / Open, not Blocked, a seat left; `not_offerable_reason` (Batch is …, Not public yet: <reason>, Full); `timing_confirmed` (days and start time present) |
+
+## WhatsApp outbox (033) ✅ (applied to `nipunacrm-dev` only)
+
+One row per template message to a learner (`backend/services/whatsapp_templates.py` holds the approved wording). A service writes the row in the transaction of the change it reports, so a learner is never told about something the CRM rolled back; the sender posts Queued rows to Pinbot and records the answer. Same pattern as the LMS outbox (026).
+
+| Object | Holds / enforces |
+|---|---|
+| `whatsapp_status` (enum) | Queued · Sent · Delivered · Read · Failed · Skipped |
+| `whatsapp_outbox` | `event_key` (unique: `payment-verified:<id>`, `invoice-issued:<id>`, `refund-approved:<id>`, `refund-declined:<id>`, `refund-paid:<id>`, `invoice-balance-cleared:<invoice>:<payment>` — the same event never makes a second message), `template_name`, `language`, `category` (Utility / Marketing), `person_id`, `branch_id`, `to_phone` (digits with country code, no `+`; NULL = no number on file), `params` (the template's named values), `body_text` (the message as rendered — what the learner received), `source_type` / `source_id` (`payment`, `invoice`, `refund_case`), `status`, `skip_reason`, `attempts`, `next_attempt_at`, `locked_until` (sender claim), `provider_message_id` (Pinbot's `wamid…`), `last_http_status`, `last_error`, `queued_by` (NULL for a job), `sent_at` / `delivered_at` / `read_at` |
+| Constraints | `whatsapp_outbox_phone_format` (`^[1-9][0-9]{9,14}$`), `…_queued_needs_phone`, `…_skipped_needs_reason`, `…_sent_needs_provider_id` (Sent / Delivered / Read carry the provider id and `sent_at`), `…_category_valid`, `…_event_key_unique` |
+| `guard_whatsapp_outbox()` | BEFORE UPDATE: template, language, category, person, branch, `params`, `body_text`, source and `event_key` never change once written (a retry sends the same message); a number can be set once and then never changed; Sent / Delivered / Read only move forward (a late Failed from the provider is allowed) |
+| `forbid_whatsapp_outbox_delete()` | A message is a record of what the learner was told: never deleted |
+| Indexes | `whatsapp_outbox_queue_idx (next_attempt_at, outbox_id) WHERE status = 'Queued'` for the sender; `(person_id, created_at DESC)`; `(source_type, source_id)`; `provider_message_id` |
+
+Tests: a rolled-back script covered every rule above (13 cases); `backend/tests/test_whatsapp.py` (22).
+
+## WhatsApp phases 2–4 (034) ✅ (applied to `nipunacrm-dev` only)
+
+| Object | Holds / enforces |
+|---|---|
+| `job_applications.application_code` | Generated from the id: `PL-00001`, unique (`job_applications_code_unique`). The reference the placement-application messages quote and staff search by |
+| `persons.whatsapp_notifications` (db 044) | `BOOLEAN NOT NULL DEFAULT TRUE`. The Person 360 switch: FALSE = every WhatsApp message to the person is saved as Skipped, never sent. Staff alerts about the learner are not affected |
+| `persons.whatsapp_consent` (`consent_status`: Not Recorded · Explicit Consent · Withdrawn), `whatsapp_consent_at`, `whatsapp_consent_by`, `whatsapp_consent_source` | WhatsApp **marketing** consent. Everyone starts at Not Recorded: the CRM had no consent record before, so marketing templates reach nobody until staff record consent (Person 360 → WhatsApp) or it is imported. `persons_whatsapp_consent_recorded`: anything but Not Recorded needs a time. `by` is NULL when the learner replied themselves (STOP = Withdrawn, source "Reply STOP"). Utility messages (money, admission, enquiry) never need it |
+| `whatsapp_webhook_log` | `received_at`, `kind` (status · message · verification · unknown, `whatsapp_webhook_log_kind_valid`), `payload` (the raw callback body), `result` (what the CRM did with it). Kept 30 days (the `cleanup` job prunes it) so the provider's real format can be checked against what the CRM understood |
+
+Tests: a rolled-back script (5 cases); `backend/tests/test_whatsapp.py` (22) and `test_whatsapp_phases.py` (29).
+
+## UX journey build (035–039) ✅ (applied to `nipunacrm-dev` only)
+
+The smooth lead → batch UX build ([PRODUCT_GUIDE.md](PRODUCT_GUIDE.md), API step 26). Everything else it needed (stage timestamps, `users.phone`) already existed.
+
+| Migration | Object | Holds / enforces |
+|---|---|---|
+| 035 `qualification_system_ticks` | `lead_qualification_reviews.reviewed_by` | Now NULLable: NULL = ticked by the system, like other system actions. The freeze-after-qualified trigger applies to System ticks too. No other change |
+| 036 `demo_outcome_notification` | `notification_rules.DEMO_OUTCOME_RECORDED` | Event `demo.outcome_recorded`, recipient role SALES (fallback; the lead owner is passed explicitly), category Action Required. No schema change |
+| 037 `delivery_plan_ux` | `delivery_plans.preferred_lms_batch_code`, `preferred_lms_batch_label` | The LMS `batch_code` picked as a hint, and its readable label. `…_preferred_batch_label_needs_code`: a label only with a code |
+| | `delivery_plans.acceptance_method` | `in_person` / `call` / `whatsapp`; NULL on plans accepted before 037. `delivery_plans_acceptance_method_valid`; `…_needs_acceptance`: a method only on an accepted plan |
+| | `delivery_plans.confirmation_requested_at` | When the "Reply YES" message was queued; the plan is *awaiting confirmation* while set and not accepted |
+| | `delivery_plans_acceptance_recorded` (relaxed) | Accepted needs `student_accepted AND (accepted_by IS NOT NULL OR acceptance_method = 'whatsapp')` (a WhatsApp YES has no staff user) |
+| | `guard_delivery_plan()` (replaced) | A plan that is not accepted forgets `accepted_by` and `acceptance_method`; reopening also clears `confirmation_requested_at`; accepting clears `confirmation_requested_at` |
+| 038 `payment_outcome_alerts` | `notification_rules.PAYMENT_VERIFIED`, `PAYMENT_FAILED` | Category Information, recipient role SALES as fallback (recipients are passed explicitly) |
+| | `app_settings.whatsapp_staff_alerts_enabled` | `false`. Staff alerts use `users.phone` (digits with country code). Their `whatsapp_outbox` rows: `person_id` = the learner, `to_phone` = the staff member, `source_type` payment, `event_key` `staff-payment-<verified\|failed>:<payment_id>:<user_id>` |
+| 039 `batch_waiting` | `working_days_between(branch, from, to)` | Staffed days (branch shift, not a holiday) in (from, to]; the counterpart of `add_working_days` |
+| | `app_settings` | `batch_delay_coordinator_days` 1, `batch_delay_future_plan_hours` 48, `batch_delay_manager_days` 2, `batch_delay_founder_days` 5 |
+| | `notification_rules` | `BATCH_DELAY_OWNER` (Information, SALES), `BATCH_DELAY_MANAGER` (Action Required, BRANCH_MANAGER), `BATCH_DELAY_FOUNDER` (Escalation, FOUNDER_CEO; the job also addresses Super Admin users). Owner and founder recipients are passed explicitly |
+
+Not stored: the setting `pipeline_stalled_days` (default 7) is read with a default, with no seed row; days in stage uses the existing trigger-maintained `pipeline_entries.stage_changed_at`.
+
+Tests: `backend/tests/test_qualify_autotick.py`, `test_demo_slots.py`, `test_delivery_plan_ux.py`, `test_payment_ux.py`, `test_batch_waiting.py`.
+
+## Staff WhatsApp alerts (042) ✅ (applied to `nipunacrm-dev` only)
+
+The sequence goes 039 → 042: migrations 040 and 041 are not used (the demo / admission / plan and instalment rounds needed no schema change).
+
+| Change | Detail |
+|---|---|
+| `whatsapp_outbox.recipient_user_id` | `INT NULL` FK `users`. Set = a staff message sent to that user's `users.phone`; `person_id` is still the learner it is about (for the manager's `/whatsapp` screen). NULL = a message to the learner. A row with a recipient never appears in the learner's WhatsApp conversation |
+| `whatsapp_outbox_recipient_idx` | Partial index on `recipient_user_id WHERE recipient_user_id IS NOT NULL` |
+| `guard_whatsapp_outbox()` | Replaced: `recipient_user_id` joins the columns that never change once written (the rest of the rule is as in 033) |
+| Back-fill | Rows of `nipuna_staff_payment_status_v1` written by 038 (`event_key` ending `:<user_id>`) get `recipient_user_id` set from that user id |
+| `app_settings.whatsapp_staff_alerts_enabled` | Now `true` (was `false` in 038) and the description lists every staff alert. Messages still only reach `WHATSAPP_TEST_NUMBERS` while that is set, and nothing is sent while `WHATSAPP_ENABLED` is off |
+
+Tests: `backend/tests/test_whatsapp_auto_w3.py`.
+
+## LMS WhatsApp (045) ✅ (applied to `nipunacrm-dev` only)
+
+The LMS sends its WhatsApp messages through the CRM (`POST /lms/whatsapp`, [API.md · Step 28](API.md#step-28--whatsapp-for-the-lms-round-6--dev-only)): each is a `whatsapp_outbox` row with `source_type = 'lms'` and `event_key = 'lms:<dedupe key>'`.
+
+| Change | Detail |
+|---|---|
+| `whatsapp_outbox.person_id`, `branch_id`, `source_id` | Now nullable, for LMS rows only: a staff invite or an unmatched student has no CRM person, and the LMS record has no CRM id. `whatsapp_outbox_crm_needs_person`: `source_type = 'lms'` or all three set |
+| `whatsapp_outbox.secret_params` | `JSONB NULL`. The values that must not stay in the CRM (reset code, activation token), kept only while the row is Queued; `params` / `body_text` hold `[hidden]`. `whatsapp_outbox_secret_only_lms`: LMS rows only |
+| `forget_whatsapp_secrets()` | `trg_whatsapp_outbox_z_forget_secrets` BEFORE INSERT OR UPDATE (after the guard): any status other than Queued sets `secret_params` to NULL |
+| `guard_whatsapp_outbox()` | Replaced: also refuses setting `secret_params` to anything but NULL ("The hidden values of a WhatsApp message can only be cleared"); the rest as in 042 |
+| `whatsapp_outbox_category_valid` | Adds `Authentication` (Meta's one-time-code category, LMS template 1) |
+| `lms_outbox_event_type_valid` | Adds `WhatsappStatusUpdated` (status of an LMS message, back to the LMS) |
+
+Tested in a rolled-back transaction: a CRM row without a person and a secret on a CRM row are refused; an LMS row keeps its secret while Queued and loses it on Sent; an LMS row inserted Skipped has none; a new secret can't be set; bad category refused; the new event type accepted. Tests: `backend/tests/test_lms_whatsapp.py`.

@@ -1,28 +1,35 @@
 """Events for the Nipuna LMS (LMS docs/CRM_INTEGRATION.md §2.1), written to lms_outbox in the same transaction as the
 change (db 026). The CRM owns admissions and money; the LMS keeps a read-only projection built from these events.
 
-Services only say what changed — branch_changed(), course_changed(), admission_qualified(), admission_updated(),
-admission_cancelled(), finance_changed(), person_changed(). The marks collect on the session, and just before the
-transaction commits one event per record is built from the final state and written with the next source_version of
-that record. A rolled-back transaction writes nothing; several changes in one request (verify → two admissions → their
-balances) give one event each, in the order branches → courses → admissions → finance.
+Services only say what changed — branch_changed(), course_changed(), admission_qualified(),
+admission_updated(), admission_cancelled(), finance_changed(), person_changed(). The marks collect on the session, and
+just before the transaction commits one event per record is built from the final state and written with the next
+source_version of that record. A rolled-back transaction writes nothing; several changes in one request (verify → two
+admissions → their balances) give one event each, in the order branches → courses → admissions → finance.
 
-Delivery to the LMS is services/lms_delivery.py; the branch finance snapshot job is services/lms_finance.py.
+After a request commits, the records it wrote are delivered at once in the background (lms_delivery.push_soon); the
+lms-sync job and `flask lms worker` stay as the retry path. Delivery is services/lms_delivery.py; the branch finance
+snapshot job is services/lms_finance.py.
 """
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from flask import current_app, has_request_context
 from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 
-from models import Admission, AdmissionBalance, Branch, Course, InstallmentDue, LmsOutbox, Payment, PaymentAllocation
+from models import (
+    Admission, AdmissionBalance, Branch, Course, InstallmentDue, LmsOutbox, Payment, PaymentAllocation,
+)
 from repositories import settings as settings_repo
+from services import batch_waiting
 
 PENDING_KEY = "lms_pending"
+PUSH_KEY = "lms_push_keys"      # record keys written in this transaction: delivered right after it commits
 
 EVENT_TYPES = ("CourseUpserted", "AdmissionQualified", "AdmissionUpdated", "AdmissionCancelled", "FinanceSummaryUpdated",
-               "BranchUpserted", "BranchFinanceSnapshot")
+               "BranchUpserted", "BranchFinanceSnapshot", "WhatsappStatusUpdated")
 PERSON_FIELDS = ("full_name", "phone", "email", "preferred_language")  # what the LMS keeps about the student
 BRANCH_FIELDS = ("branch_name", "city", "receipt_prefix", "email", "is_active")  # what the LMS keeps about a branch
 
@@ -123,7 +130,7 @@ def _collecting_branch_code(session, admission: Admission) -> str:
 
 def admission_data(session, admission: Admission) -> dict:
     person = admission.person
-    return {
+    data = {
         "person": {"crm_person_id": person.person_id, "person_code": person.person_code,
                    "full_name": person.full_name, "phone": person.phone, "email": person.email,
                    "preferred_language": person.preferred_language},
@@ -139,6 +146,12 @@ def admission_data(session, admission: Admission) -> dict:
             "access_until": _iso(admission.access_until),
         },
     }
+    # Optional, additive (the LMS ignores keys it doesn't know): the counsellor's preferred batch, a preference only;
+    # the Branch Manager still allocates in the LMS. Left out when none was chosen.
+    preferred = batch_waiting.preferred_batch(admission)
+    if preferred:
+        data["admission"]["preferred_batch_code"] = preferred["code"]
+    return data
 
 
 def updated_data(admission: Admission, fields: set[str]) -> dict:
@@ -210,6 +223,7 @@ def emit(session, event_type: str, record_key: str, version_key: str, data: dict
     row = LmsOutbox(event_id=uuid.uuid4(), event_type=event_type, record_key=record_key,
                     source_version=next_version(session, version_key), occurred_at=now, payload=data)
     session.add(row)
+    session.info.setdefault(PUSH_KEY, set()).add(record_key)
     return row
 
 
@@ -227,7 +241,7 @@ def emit_admission(session, event_type: str, admission: Admission, data: dict, n
     # Admission and finance events share one delivery queue per admission (qualified before its balance),
     # but each has its own source_version, as the LMS versions the admission and its finance summary separately
     key = f"admission:{admission.admission_id}"
-    version_key = f"finance:{admission.admission_id}" if event_type == "FinanceSummaryUpdated" else key
+    version_key = {"FinanceSummaryUpdated": f"finance:{admission.admission_id}"}.get(event_type, key)
     return emit(session, event_type, key, version_key, data, now)
 
 
@@ -301,10 +315,21 @@ def _before_commit(session) -> None:
     write_pending(session)
 
 
+@event.listens_for(Session, "after_commit")
+def _after_commit(session) -> None:
+    """Deliver what a request just wrote, without waiting for the job (never blocks or fails the request)."""
+    keys = session.info.pop(PUSH_KEY, None)
+    if keys and has_request_context() and current_app.config.get("LMS_PUSH_ON_COMMIT", True):
+        from services import lms_delivery
+
+        lms_delivery.push_soon(sorted(keys))
+
+
 @event.listens_for(Session, "after_soft_rollback")
 def _after_rollback(session, previous_transaction) -> None:
     if previous_transaction.parent is None:  # the whole transaction was rolled back: its changes never happened
         session.info.pop(PENDING_KEY, None)
+        session.info.pop(PUSH_KEY, None)
 
 
 # ---------------------------------------------------------------- backfill

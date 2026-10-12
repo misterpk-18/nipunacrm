@@ -55,8 +55,27 @@ export type DemoFilters = {
   branch_id?: number;
   trainer_id?: number;
   lead_id?: number;
+  /** Demos of the leads this user owns. */
+  owner_id?: number;
   status?: string;
+  /** Booked demos whose slot has ended and still have no outcome. */
+  outcome_due?: boolean;
 };
+
+/** A trainer's free time for a course (GET /demos/slots): start / end are ISO instants. */
+export type DemoSlot = { start: DateTime; end: DateTime };
+export type SlotTrainer = { user_id: number; full_name: string; teaches_course: boolean; slots: DemoSlot[] };
+export type DemoSlots = {
+  course_id: number;
+  branch_id: number;
+  demo_type: "Standard" | "Practical";
+  duration_minutes: number;
+  from: DateOnly;
+  days: number;
+  timezone: string;
+  trainers: SlotTrainer[];
+};
+export type SlotQuery = { course_id: number; branch_id: number; type: "Standard" | "Practical"; from?: DateOnly; days?: number };
 
 export type DemoOutcome = {
   status: "Attended" | "No Show";
@@ -83,6 +102,7 @@ export const DEMO_OUTCOMES = [
 ];
 
 export const demosApi = {
+  slots: (query: SlotQuery) => get<DemoSlots>("/demos/slots", query as Query),
   list: (filters: DemoFilters) => list<DemoRow>("/demos", filters as Query),
   get: (id: number) => get<Demo>(`/demos/${id}`),
   update: (id: number, body: { trainer_user_id?: number | null; mode?: string; meeting_link?: string | null; duration_minutes?: number }) =>
@@ -100,4 +120,5 @@ export const demoKeys = {
   list: (filters: DemoFilters) => ["demos", "list", filters] as const,
   detail: (id: number) => ["demos", "detail", id] as const,
   reminders: (id: number) => ["demos", "reminders", id] as const,
+  slots: (query: SlotQuery) => ["demos", "slots", query] as const,
 };

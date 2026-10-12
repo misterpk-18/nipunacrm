@@ -354,11 +354,11 @@ def test_third_demo_after_two_attended_needs_approval(client, people, course, ru
         call(client, "post", f"/demos/{demo['demo_id']}/outcome", sravani, json=outcome_body())
 
     blocked = client.post(f"{API}/leads/{lead['lead_id']}/demos", json={"scheduled_at": future()}, headers=sravani)
-    assert blocked.status_code == 422 and "needs Academic Coordinator or Branch Manager approval" in blocked.get_json()["error"]["message"]
+    assert blocked.status_code == 422 and "needs Branch Manager approval" in blocked.get_json()["error"]["message"]
     # naming an approver who isn't one doesn't work either
     book(client, sravani, lead["lead_id"], 422, extra_demo_approved_by=people["nikhil"]["id"])
-    approved = book(client, sravani, lead["lead_id"], extra_demo_approved_by=people["coordinator"]["id"])
-    assert approved["extra_demo_approved_by"] == people["coordinator"]["id"]
+    approved = book(client, sravani, lead["lead_id"], extra_demo_approved_by=people["bm"]["id"])
+    assert approved["extra_demo_approved_by"] == people["bm"]["id"]
     by_bm = book(client, people["bm"]["h"], lead["lead_id"])  # a branch manager booking approves it themselves
     assert by_bm["extra_demo_approved_by"] == people["bm"]["id"]
 
@@ -374,7 +374,7 @@ def test_approve_extra_and_confirm(client, people, course, run_sql):
 
     assert client.post(f"{API}/demos/{pending['demo_id']}/confirm", headers=sravani).status_code == 422
     assert client.post(f"{API}/demos/{pending['demo_id']}/approve-extra", headers=sravani).status_code == 403
-    call(client, "post", f"/demos/{pending['demo_id']}/approve-extra", people["coordinator"]["h"])
+    call(client, "post", f"/demos/{pending['demo_id']}/approve-extra", people["bm"]["h"])
     assert call(client, "post", f"/demos/{pending['demo_id']}/confirm", sravani)["status"] == "Confirmed"
 
 

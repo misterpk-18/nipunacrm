@@ -21,11 +21,11 @@ export function useCan() {
     lmsOwned,
     /** Create admission / complimentary / fee-change request (counsellor or manager). */
     sell: (branchId: number | null | undefined) => manager(branchId) || at(branchId, "SALES", "FRONT_OFFICE"),
-    /** Batches, allocation (Academic Coordinator or Branch Manager). */
-    academic: (branchId: number | null | undefined) => !lmsOwned && (manager(branchId) || at(branchId, "ACADEMIC_COORDINATOR")),
-    /** Curriculum mapping, completion, certificates, closing allocations. */
-    coordinator: (branchId: number | null | undefined) => !lmsOwned && (isAdmin || at(branchId, "ACADEMIC_COORDINATOR")),
-    /** Recording a joining date (coordinator or trainer), while the CRM owns academics. */
-    joining: (branchId: number | null | undefined) => !lmsOwned && (isAdmin || at(branchId, "ACADEMIC_COORDINATOR", "TRAINER")),
+    /** Batches, allocation (Branch Manager). */
+    academic: (branchId: number | null | undefined) => !lmsOwned && manager(branchId),
+    /** Completion, certificates, closing allocations. */
+    completion: (branchId: number | null | undefined) => !lmsOwned && manager(branchId),
+    /** Recording a joining date (Branch Manager or trainer), while the CRM owns academics. */
+    joining: (branchId: number | null | undefined) => !lmsOwned && (manager(branchId) || at(branchId, "TRAINER")),
   };
 }

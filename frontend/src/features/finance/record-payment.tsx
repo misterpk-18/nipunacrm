@@ -1,14 +1,16 @@
 /** Record payment (V4 "Allocate actual payment"): one payer and invoice, money split across its course lines, one
- *  pending transaction per tender. Nothing counts until Accounts verifies; the receipt number comes then. */
+ *  pending transaction per tender. Nothing counts until Accounts verifies; the receipt number comes then.
+ *  RecordPaymentDialog opens it in place (Lead 360, invoice page) with the invoice preselected. */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CircleDollarSign, Plus, Trash2 } from "lucide-react";
-import { invoiceKeys, invoicesApi, useInvoice } from "@/api/invoices";
+import { invoiceKeys, invoicesApi, useInvoice, type InvoiceLine } from "@/api/invoices";
 import { paymentsApi, type Tender } from "@/api/payments";
 import { useLookups } from "@/api/reference";
 import { useBranchFilter } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, NativeSelect, StaffSelect } from "@/components/crm/forms";
@@ -20,13 +22,60 @@ import { FINANCE_INVALIDATE } from "./shared";
 type TenderRow = { payment_mode_id: string; amount: string; reference: string; payment_date: string; exception_approved_by: string };
 const blankTender = (): TenderRow => ({ payment_mode_id: "", amount: "", reference: "", payment_date: todayIST(), exception_approved_by: "" });
 
-export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: number | undefined; onDone?: (invoiceId: number) => void }) {
+const paise = (v: string | number | null | undefined) => Math.round(Number(v ?? 0) * 100);
+const fromPaise = (p: number) => (p / 100).toFixed(2);
+
+/** Spread an amount over the course lines token-first: every course not yet admitted gets what it still needs to reach
+ *  its admission token (less claims already waiting for verification) first, then the rest goes oldest line first; never
+ *  more than what is open on a course. Mirrors the API's default split. */
+export function tokenFirstSplit(lines: InvoiceLine[], amount: string | number): Record<number, string> {
+  let remaining = paise(amount);
+  const gave: Record<number, number> = {};
+  const room = (l: InvoiceLine) => Math.max(paise(l.open_to_allocate), 0);
+  for (const l of lines) {
+    if (l.admission_id !== null) continue;
+    const need = Math.max(paise(l.more_to_admit) - paise(l.pending_verification), 0);
+    const take = Math.min(need, room(l), remaining);
+    gave[l.invoice_line_id] = take;
+    remaining -= take;
+  }
+  for (const l of lines) {
+    const take = Math.min(room(l) - (gave[l.invoice_line_id] ?? 0), remaining);
+    gave[l.invoice_line_id] = (gave[l.invoice_line_id] ?? 0) + Math.max(take, 0);
+    remaining -= Math.max(take, 0);
+  }
+  return Object.fromEntries(lines.map((l) => [l.invoice_line_id, fromPaise(gave[l.invoice_line_id] ?? 0)]));
+}
+
+/** "₹X more verified to admit <course>" — what is still needed after `allocating` is verified (null: nothing to say). */
+export function admitHint(l: Pick<InvoiceLine, "admission_id" | "more_to_admit" | "course">, allocating = 0): string | null {
+  if (l.admission_id !== null) return null;
+  const left = Math.max(paise(l.more_to_admit) - Math.round(allocating * 100), 0);
+  return left > 0 ? `${money(fromPaise(left))} more verified to admit ${l.course.course_title}` : null;
+}
+
+export function RecordPaymentDialog({ invoiceId, open, onOpenChange }: { invoiceId: number; open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] w-[calc(100vw-1.5rem)] max-w-4xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Record payment</DialogTitle>
+          <DialogDescription>Nothing counts until Accounts verifies it; the receipt number comes then.</DialogDescription>
+        </DialogHeader>
+        {open && <RecordPaymentForm invoiceId={invoiceId} lockInvoice onDone={() => onOpenChange(false)} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function RecordPaymentForm({ invoiceId: preset, onDone, lockInvoice = false }: { invoiceId?: number | undefined; onDone?: (invoiceId: number) => void; lockInvoice?: boolean }) {
   const branchId = useBranchFilter();
   const lookups = useLookups();
   const [search, setSearch] = useState("");
   const [invoiceId, setInvoiceId] = useState<number | undefined>(preset);
   const [split, setSplit] = useState(false);
   const [alloc, setAlloc] = useState<Record<number, string>>({});
+  const [amount, setAmount] = useState("");
   const [tenders, setTenders] = useState<TenderRow[]>([blankTender()]);
   const [proof, setProof] = useState<File | null>(null);
   const [notes, setNotes] = useState("");
@@ -40,12 +89,25 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
   const inv = invoiceId ? invoice.data : undefined;
   const lines = useMemo(() => inv?.lines ?? [], [inv]);
 
-  // New invoice: suggest the whole remaining amount on each course
+  // New invoice (or changed balances): suggest the whole remaining amount, split token-first over the courses
+  const linesKey = lines.map((l) => `${l.invoice_line_id}:${l.open_to_allocate}:${l.more_to_admit}`).join("|");
   useEffect(() => {
-    setAlloc(Object.fromEntries(lines.map((l) => [l.invoice_line_id, Number(l.open_to_allocate) > 0 ? l.open_to_allocate : "0.00"])));
+    const open = sumMoney(lines.map((l) => (Number(l.open_to_allocate) > 0 ? l.open_to_allocate : "0")));
+    setAmount(open);
+    setAlloc(tokenFirstSplit(lines, open));
     setTenders([blankTender()]);
     setSplit(false);
-  }, [lines]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linesKey]);
+  const changeAmount = (value: string) => {
+    setAmount(value);
+    setAlloc(tokenFirstSplit(lines, value));
+  };
+  const changeAlloc = (lineId: number, value: string) => {
+    const next = { ...alloc, [lineId]: value };
+    setAlloc(next);
+    setAmount(sumMoney(Object.values(next)));
+  };
 
   const allocated = sumMoney(Object.values(alloc));
   const tendered = sumMoney(split ? tenders.map((t) => t.amount) : [allocated]);
@@ -53,8 +115,11 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
   const rows = split ? tenders : [{ ...tenders[0]!, amount: allocated }];
   const modeOf = (t: TenderRow) => modes.find((m) => String(m.id) === t.payment_mode_id);
   const overLine = lines.find((l) => Number(alloc[l.invoice_line_id] ?? 0) > Number(l.open_to_allocate));
+  const needsProof = rows.some((t) => t.payment_mode_id && modeOf(t)?.code !== "CASH");
+  const openTotal = sumMoney(lines.map((l) => (Number(l.open_to_allocate) > 0 ? l.open_to_allocate : "0")));
   const ready =
     inv &&
+    (!needsProof || proof) &&
     Number(allocated) > 0 &&
     !overLine &&
     tendered === allocated &&
@@ -94,7 +159,12 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
 
   return (
     <div className="grid gap-4">
-      <div className="grid gap-3 sm:grid-cols-2">
+      {lockInvoice && inv && (
+        <p className="text-sm">
+          <b>{inv.invoice_number}</b> · {inv.person.full_name} · {inv.collecting_branch.branch_name}
+        </p>
+      )}
+      <div className={lockInvoice ? "hidden" : "grid gap-3 sm:grid-cols-2"}>
         <Field label="Starting invoice / payer" htmlFor="rp-invoice">
           <NativeSelect
             id="rp-invoice"
@@ -117,6 +187,19 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
       {!invoiceId && <Empty title="Choose the invoice the money is for" />}
       {inv && (
         <>
+          <Field
+            label="Amount received (₹)"
+            htmlFor="rp-amount"
+            hint="Split over the courses token-first: each course not yet admitted gets its admission token first, then the rest oldest first. Change any course below."
+            className="max-w-sm"
+          >
+            <Input id="rp-amount" inputMode="decimal" value={amount} onChange={(e) => changeAmount(e.target.value)} />
+          </Field>
+          {paise(amount) > paise(openTotal) && (
+            <p className="text-xs text-destructive">
+              {money(amount)} is more than the {money(openTotal)} outstanding on this invoice; only {money(openTotal)} can be recorded against it.
+            </p>
+          )}
           <div className="table-wrap">
             <table className="w-full text-left text-sm" aria-label="Allocate to courses">
               <thead>
@@ -137,6 +220,7 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
                         {inv.invoice_number} · {l.line_code}
                         {Number(l.pending_verification) > 0 ? ` · ${money(l.pending_verification)} pending` : ""}
                       </small>
+                      {admitHint(l, Number(alloc[l.invoice_line_id] ?? 0)) && <small className="block font-medium text-primary">{admitHint(l, Number(alloc[l.invoice_line_id] ?? 0))}</small>}
                     </td>
                     <td className="text-right">{money(l.billed_amount)}</td>
                     <td className="text-right">{money(l.verified_paid)}</td>
@@ -146,7 +230,7 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
                         inputMode="decimal"
                         aria-label={`Allocate to ${l.course.course_title}`}
                         value={alloc[l.invoice_line_id] ?? ""}
-                        onChange={(e) => setAlloc({ ...alloc, [l.invoice_line_id]: e.target.value })}
+                        onChange={(e) => changeAlloc(l.invoice_line_id, e.target.value)}
                       />
                     </td>
                   </tr>
@@ -220,7 +304,11 @@ export function RecordPaymentForm({ invoiceId: preset, onDone }: { invoiceId?: n
             {split && tendered !== allocated && <p className="mt-1 text-xs text-destructive">Tenders must add up to the allocated {money(allocated)}.</p>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Proof (optional)" htmlFor="rp-proof" hint="Screenshot or PDF of the transfer / receipt">
+            <Field
+              label={needsProof ? "Proof (required)" : "Proof (not needed for cash)"}
+              htmlFor="rp-proof"
+              hint={needsProof ? "Screenshot or PDF of the transfer / payment link receipt / cheque. Accounts reviews it before verifying." : "Only cash can be recorded without proof."}
+            >
               <Input id="rp-proof" type="file" accept="image/*,application/pdf" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
             </Field>
             <Field label="Notes" htmlFor="rp-notes">

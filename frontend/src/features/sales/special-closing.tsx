@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { Check, Undo2, X } from "lucide-react";
-import { SCR_STATUSES, feeKeys, feesApi, type ScrFilters, type SpecialClosingRequest } from "@/api/fees";
+import { Check, Clock, ShieldAlert, Undo2, X } from "lucide-react";
+import { errorMessage } from "@/api/client";
+import { SCR_STATUSES, feeKeys, feesApi, type FeeVersion, type PricePreview, type ScrFilters, type ScrSummary, type SpecialClosingRequest } from "@/api/fees";
 import { leadKeys } from "@/api/leads";
 import { useAuth, useBranchFilter } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
@@ -265,5 +266,74 @@ function CounterDialog({ scr, onClose }: { scr: SpecialClosingRequest; onClose: 
         <Textarea id="co-reason" {...form.register("decision_reason")} />
       </Field>
     </FormDialog>
+  );
+}
+
+// ---------------------------------------------------------------- on the fee screen: inline limit check + live request status
+
+/** The one-line answer under the concession field, e.g. "Needs approval from Branch Manager (your limit ₹0)". */
+export function ConcessionNotice({ preview, error }: { preview: PricePreview | undefined; error?: unknown }) {
+  if (error) return <p className="text-xs text-destructive">{errorMessage(error)}</p>;
+  if (!preview) return null;
+  if (!preview.needs_approval) return <p className="text-xs text-muted-foreground">{preview.message}</p>;
+  return (
+    <p className={`flex items-start gap-1.5 text-xs font-medium ${preview.below_floor ? "text-destructive" : "text-warning"}`} role="status">
+      <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
+      {preview.message}
+    </p>
+  );
+}
+
+/** Status of the latest approval request on the version — Waiting / Approved / Counteroffer / Rejected with the reason.
+ *  The fee screen polls while a request is waiting, so this changes without a refresh. */
+export function ApprovalStatus({ version, canAct, busy, onAcceptCounter }: { version: FeeVersion; canAct: boolean; busy?: boolean; onAcceptCounter?: (scr: ScrSummary) => void }) {
+  const scr = version.special_closing_requests[version.special_closing_requests.length - 1];
+  if (!scr) return null;
+  const by = scr.decided_by_name ? ` by ${scr.decided_by_name}` : "";
+  const reason = scr.decision_reason ? <span className="mt-1 block text-muted-foreground">Reason: {scr.decision_reason}</span> : null;
+  if (scr.status === "Pending") {
+    return (
+      <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm" role="status">
+        <b className="flex items-center gap-1.5">
+          <Clock className="size-4" />
+          Waiting for approval · {scr.scr_code}
+        </b>
+        {money(scr.requested_extra)} extra requested{scr.decision_due_at ? ` · decision due ${relative(scr.decision_due_at)}` : ""}. This updates here by itself — a timeout never approves.
+      </div>
+    );
+  }
+  if (scr.status === "Approved") {
+    return (
+      <div className="rounded-md border border-success/40 bg-success/10 p-3 text-sm" role="status">
+        <b>Approved{by} · {scr.scr_code}</b> — {money(scr.requested_extra)} extra concession applied.
+        {reason}
+      </div>
+    );
+  }
+  if (scr.status === "Counteroffered") {
+    return (
+      <div className="rounded-md border border-primary/40 bg-primary/10 p-3 text-sm" role="status">
+        <b>Counteroffer{by} · {scr.scr_code}</b> — {money(scr.counter_extra)} extra instead of the {money(scr.requested_extra)} you asked for.
+        {reason}
+        {canAct && onAcceptCounter && (
+          <Button size="sm" className="mt-2" disabled={busy} onClick={() => onAcceptCounter(scr)}>
+            Accept {money(scr.counter_extra)} and send for approval
+          </Button>
+        )}
+      </div>
+    );
+  }
+  if (scr.status === "Rejected") {
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm" role="status">
+        <b>Rejected{by} · {scr.scr_code}</b> — {money(scr.requested_extra)} extra was not approved. Save a new price with a smaller concession (or none).
+        {reason}
+      </div>
+    );
+  }
+  return (
+    <p className="text-sm text-muted-foreground" role="status">
+      {scr.scr_code} · {scr.status}
+    </p>
   );
 }

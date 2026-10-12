@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Filter, Plus, Search } from "lucide-react";
 import {
-  CURRICULUM_STATUSES,
   ENROLMENT_STATUSES,
   PAYMENT_COMPLETION,
   SEAT_TYPES,
@@ -24,7 +23,7 @@ import { useCan } from "./can";
 
 export type AdmissionSearch = Omit<AdmissionFilters, "per_page" | "branch_id"> & { admission?: number };
 
-const FILTER_KEYS: (keyof AdmissionSearch)[] = ["enrolment_status", "curriculum_status", "payment_completion", "seat_type", "course_id"];
+const FILTER_KEYS: (keyof AdmissionSearch)[] = ["enrolment_status", "payment_completion", "seat_type", "course_id"];
 
 export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; onSearch: (next: AdmissionSearch) => void }) {
   const branchId = useBranchFilter();
@@ -35,7 +34,7 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
   const { admission, ...rest } = search;
   const filters: AdmissionFilters = { ...rest, branch_id: branchId, per_page: 25 };
   const admissions = useQuery({ queryKey: admissionKeys.list(filters), queryFn: () => admissionsApi.list(filters), placeholderData: (p) => p });
-  const canQueue = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "ACADEMIC_COORDINATOR");
+  const canQueue = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER");
   const queueQuery = { branch_id: branchId, per_page: 50 };
   const queue = useQuery({ queryKey: admissionKeys.queue(queueQuery), queryFn: () => admissionsApi.queue(queueQuery), enabled: canQueue });
   const canCreate = can.isAdmin || hasRole("BRANCH_MANAGER", "SALES", "FRONT_OFFICE");
@@ -63,7 +62,7 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
                 </Link>
               </Button>
             )}
-            {hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "TRAINER") && (
+            {hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "TRAINER") && (
               <Button asChild variant="outline">
                 <Link to="/batches">Batch Workspace</Link>
               </Button>
@@ -92,7 +91,6 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
               { header: "Course", cell: (r) => <span className="block max-w-56 truncate">{r.admission.course.course_title}</span> },
               { header: "Service branch", cell: (r) => r.admission.service_branch.branch_name },
               { header: "Seat", cell: (r) => `${r.seat_type}${r.planned_start_date ? ` · ${date(r.planned_start_date)}` : ""}` },
-              { header: "Curriculum", cell: (r) => <Status>{r.admission.curriculum_status === "Mapped" ? "Mapped" : "Curriculum Mapping Pending"}</Status> },
               { header: "Allocate by", cell: (r) => <span className={isPast(r.allocate_by) ? "font-medium text-destructive" : undefined}>{dateTime(r.allocate_by)}</span> },
               { header: "Escalates", cell: (r) => dateTime(r.escalate_at) },
             ]}
@@ -117,12 +115,9 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
           </Button>
         </div>
         {showFilters && (
-          <div className="mb-3 grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mb-3 grid gap-2 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Enrolment" htmlFor="af-enrol">
               <NativeSelect id="af-enrol" value={search.enrolment_status ?? ""} placeholder="Any" options={ENROLMENT_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => set({ enrolment_status: e.target.value })} />
-            </Field>
-            <Field label="Curriculum" htmlFor="af-curr">
-              <NativeSelect id="af-curr" value={search.curriculum_status ?? ""} placeholder="Any" options={CURRICULUM_STATUSES.map((s) => ({ value: s, label: s }))} onChange={(e) => set({ curriculum_status: e.target.value })} />
             </Field>
             <Field label="Payment" htmlFor="af-pay">
               <NativeSelect id="af-pay" value={search.payment_completion ?? ""} placeholder="Any" options={PAYMENT_COMPLETION.map((s) => ({ value: s, label: s }))} onChange={(e) => set({ payment_completion: e.target.value })} />
@@ -179,7 +174,6 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
             { header: "Accepted plan", cell: (a) => `${a.seat_type} · ${a.delivery_mode}` },
             { header: "Fee · outstanding", cell: (a) => `${money(a.final_fee)} · ${money(a.outstanding)}` },
             { header: "Payment", cell: (a) => <Status>{a.payment_completion}</Status> },
-            { header: "Curriculum", cell: (a) => <Status>{a.curriculum_status === "Mapped" ? "Mapped" : "Curriculum Mapping Pending"}</Status> },
             { header: "Enrolment", cell: (a) => <Status>{a.enrolment_status}</Status> },
             { header: "LMS", cell: (a) => a.lms_status },
           ]}
@@ -190,7 +184,7 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
         <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Admission detail</SheetTitle>
-            <SheetDescription>Allocation, curriculum, fee changes and lifecycle actions.</SheetDescription>
+            <SheetDescription>Allocation, fee changes and lifecycle actions.</SheetDescription>
           </SheetHeader>
           {admission && <AdmissionPanel key={admission} admissionId={admission} />}
         </SheetContent>

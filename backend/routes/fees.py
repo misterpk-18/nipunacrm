@@ -17,7 +17,7 @@ def route(rule: str, method: str, roles=LEAD_ROLES, fresh=False):
 
 # ---------------------------------------------------------------- discussions
 
-@route("/leads/<int:lead_id>/fee-discussions", "get")
+@route("/leads/<int:lead_id>/fee-discussions", "get", LEAD_ROLES + ("ACCOUNTS",))  # Accounts: read-only Lead 360
 def list_discussions(lead_id: int):
     return fees_controller.list_discussions(lead_id)
 
@@ -37,6 +37,16 @@ def add_version(discussion_id: int):
     return fees_controller.add_version(discussion_id)
 
 
+@route("/fee-discussions/<int:discussion_id>/price-preview", "get")
+def price_preview(discussion_id: int):
+    return fees_controller.price_preview(discussion_id)
+
+
+@route("/fee-discussions/<int:discussion_id>/reissue", "post")
+def reissue(discussion_id: int):
+    return fees_controller.reissue(discussion_id)
+
+
 @route("/fee-discussions/<int:discussion_id>/share", "post")
 def share(discussion_id: int):
     return fees_controller.share(discussion_id)
@@ -44,7 +54,7 @@ def share(discussion_id: int):
 
 # ---------------------------------------------------------------- delivery plan (per course deal)
 
-PLAN_ROLES = LEAD_ROLES + ("ACADEMIC_COORDINATOR", "ACCOUNTS")
+PLAN_ROLES = LEAD_ROLES + ("ACCOUNTS",)
 
 
 @route("/leads/<int:lead_id>/delivery-plan", "get", PLAN_ROLES)
@@ -52,17 +62,27 @@ def get_delivery_plan(lead_id: int):
     return fees_controller.get_delivery_plan(lead_id)
 
 
-@route("/leads/<int:lead_id>/delivery-plan", "put", LEAD_ROLES + ("ACADEMIC_COORDINATOR",))
+@route("/leads/<int:lead_id>/delivery-plan", "put", LEAD_ROLES)
 def save_delivery_plan(lead_id: int):
     return fees_controller.save_delivery_plan(lead_id)
 
 
-@route("/leads/<int:lead_id>/delivery-plan/accept", "post", LEAD_ROLES + ("ACADEMIC_COORDINATOR",))
+@route("/leads/<int:lead_id>/delivery-plan/accept", "post", LEAD_ROLES)
 def accept_delivery_plan(lead_id: int):
     return fees_controller.accept_delivery_plan(lead_id)
 
 
-@route("/leads/<int:lead_id>/delivery-plan/reopen", "post", LEAD_ROLES + ("ACADEMIC_COORDINATOR",))
+@route("/leads/<int:lead_id>/delivery-plan/batches", "get", PLAN_ROLES)
+def delivery_plan_batches(lead_id: int):
+    return fees_controller.delivery_plan_batches(lead_id)
+
+
+@route("/leads/<int:lead_id>/delivery-plan/send-for-confirmation", "post", LEAD_ROLES)
+def send_delivery_plan_for_confirmation(lead_id: int):
+    return fees_controller.send_delivery_plan_for_confirmation(lead_id)
+
+
+@route("/leads/<int:lead_id>/delivery-plan/reopen", "post", LEAD_ROLES)
 def reopen_delivery_plan(lead_id: int):
     return fees_controller.reopen_delivery_plan(lead_id)
 

@@ -81,13 +81,6 @@ Content-Type: application/json
 
 {}
 
-### admissions.map_curriculum
-POST {{base}}/api/v1/admissions/1/curricula
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{}
-
 ### admissions.request_fee_change
 POST {{base}}/api/v1/admissions/1/fee-changes
 Authorization: Bearer {{token}}
@@ -145,24 +138,6 @@ Content-Type: application/json
 ### admissions.allocation_check
 GET {{base}}/api/v1/batches/1/allocation-check
 Authorization: Bearer {{token}}
-
-### admissions.list_curriculum_versions
-GET {{base}}/api/v1/curriculum-versions
-Authorization: Bearer {{token}}
-
-### admissions.create_curriculum_version
-POST {{base}}/api/v1/curriculum-versions
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{}
-
-### admissions.publish_curriculum_version
-POST {{base}}/api/v1/curriculum-versions/1/publish
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{}
 
 # ================================================================ ai
 ### ai.ask
@@ -428,7 +403,6 @@ Content-Type: application/json
 
 {}
 
-
 ### fees.request_special_closing
 POST {{base}}/api/v1/fee-discussion-versions/1/special-closing-requests
 Authorization: Bearer {{token}}
@@ -439,7 +413,6 @@ Content-Type: application/json
 ### fees.get_discussion
 GET {{base}}/api/v1/fee-discussions/1
 Authorization: Bearer {{token}}
-
 
 ### fees.share
 POST {{base}}/api/v1/fee-discussions/1/share
@@ -1513,3 +1486,10 @@ Content-Type: application/json
 ### admissions.admission_eligibility
 GET {{base}}/api/v1/admissions/eligibility
 Authorization: Bearer {{token}}
+
+### whatsapp.lms_send (called by the LMS; X-Service-Key = LMS_SERVICE_KEY from .env)
+POST {{base}}/api/v1/lms/whatsapp
+X-Service-Key: paste-service-key-here
+Content-Type: application/json
+
+{"template": "nipuna_lms_class_cancelled_u_v1", "language": "en", "to": "919392329248", "params": ["Anvitha K.", "Guntur", "Hyperparameter Tuning", "Data Science & Applied AI", "Mon 12 Oct, 10:00 AM IST", "the trainer is unwell", "a replacement class will be scheduled and shared with you"], "dedupe_key": "class-cancelled:412:77", "occurred_at": "2026-10-10T08:30:00+00:00"}

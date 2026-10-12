@@ -77,7 +77,7 @@ def test_documents_upload_review_and_checklist(client, people, course):
 def test_certificates(client, people, course, run_sql):
     flow = admitted(client, people, course)
     aid = flow["admission"]["admission_id"]
-    coordinator = people["coordinator"]["h"]
+    coordinator = people["bm"]["h"]
 
     certificate = call(client, "post", f"/admissions/{aid}/certificates", coordinator, 201, json={})
     assert certificate["status"] == "Eligibility Pending" and certificate["certificate_number"] is None

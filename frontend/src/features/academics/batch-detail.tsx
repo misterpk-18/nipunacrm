@@ -100,7 +100,6 @@ function Schedule({ b }: { b: Batch }) {
   const rows: [string, string][] = [
     ["Branch", b.branch.branch_name],
     ["Course", `${b.course.course_code} · ${b.course.course_title}`],
-    ["Curriculum version", b.curriculum_version?.version_label ?? "Not set"],
     ["Trainer", b.trainer?.full_name ?? "Not assigned"],
     ["Mode", b.delivery_mode],
     ["Start", date(b.start_date)],
@@ -146,8 +145,8 @@ function Allocate({ batchId }: { batchId: number }) {
   if (!b) return null;
   const canAllocate = can.academic(b.branch.branch_id);
   return (
-    <Section title="Allocate admission" subtitle="Checks branch, course, curriculum mapping and capacity" className="min-w-0">
-      {!canAllocate && <Warning>You can view but not allocate. Academic Coordinator, Branch Manager, Founder / CEO or Super Admin allocate.</Warning>}
+    <Section title="Allocate admission" subtitle="Checks branch, course, enrolment status and capacity" className="min-w-0">
+      {!canAllocate && <Warning>You can view but not allocate. Branch Manager, Founder / CEO or Super Admin allocate.</Warning>}
       {canAllocate && (
         <>
           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -221,7 +220,7 @@ function Members({ batchId }: { batchId: number }) {
           </Field>
         </FormDialog>
       )}
-      {x.status === "Active" && can.coordinator(branch) && (
+      {x.status === "Active" && can.completion(branch) && (
         <FormDialog
           title={`Close allocation · ${x.admission_code}`}
           submitLabel="Close allocation"

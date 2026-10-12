@@ -24,7 +24,7 @@ def get_next_actions():
 
 @pipeline_bp.get("/pipeline-entries/<int:entry_id>")
 @login_required
-@require_roles(*LEAD_ROLES)
+@require_roles(*LEAD_ROLES, "ACCOUNTS")  # read-only Lead 360
 def get_pipeline_entry(entry_id: int):
     return pipeline_controller.get_entry(entry_id)
 

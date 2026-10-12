@@ -1,17 +1,33 @@
 import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { GraduationCap, Mail, MessageCircle, Phone, PlusCircle } from "lucide-react";
+import { GraduationCap, Mail, MessageCircle, Phone, PlusCircle, Send } from "lucide-react";
 import { usePersonOverview, type PersonOverview } from "@/api/persons";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable, Empty, ErrorPanel, Facts, LoadingRows, PageHead, Section, Status } from "@/components/crm/ui";
 import { date, dateTime, money, phone } from "@/lib/format";
 import { followUpLabel } from "@/features/leads/leads-list";
 import { NewLeadDialog } from "@/features/leads/new-lead-dialog";
+import { CourseSuggestionsPanel } from "./course-suggestions";
+import { JourneyStrip } from "./journey-strip";
+import { WhatsappTab } from "./whatsapp-tab";
+import { whatsappApi, whatsappInvalidate } from "@/api/whatsapp";
+import { SendNowDialog } from "@/features/leads/send-template-dialog";
+import { useCanRecordConsent } from "@/features/operations/whatsapp-shared";
+import { useApiMutation } from "@/lib/mutation";
 
 /** Person 360: profile, pipeline cards (one per branch), every lead / course and every admission. */
 export function Person360({ personId }: { personId: number }) {
   const overview = usePersonOverview(personId);
   const [another, setAnother] = useState(false);
+  const [tab, setTab] = useState("overview");
+  const [sendNow, setSendNow] = useState(false);
+  const canWhatsapp = useCanRecordConsent();
+  const notify = useApiMutation((enabled: boolean) => whatsappApi.setNotifications(personId, enabled), {
+    success: (r) => (r.notifications ? "WhatsApp notifications switched on" : "WhatsApp notifications switched off"),
+    invalidate: [...whatsappInvalidate(personId), ["persons", "overview", personId]],
+  });
   if (overview.isLoading) return <LoadingRows rows={8} />;
   if (overview.error) return <ErrorPanel error={overview.error} onRetry={() => void overview.refetch()} />;
   const { person: p, pipeline_cards, leads, admissions } = overview.data!;
@@ -36,6 +52,21 @@ export function Person360({ personId }: { personId: number }) {
                 WhatsApp
               </a>
             </Button>
+            {canWhatsapp && (
+              <Button variant="outline" onClick={() => setSendNow(true)}>
+                <Send />
+                Send now
+              </Button>
+            )}
+            <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
+              <Switch
+                checked={p.whatsapp_notifications ?? true}
+                disabled={!canWhatsapp || notify.isPending}
+                onCheckedChange={(on) => notify.mutate(on)}
+                aria-label="WhatsApp notifications"
+              />
+              WhatsApp notifications
+            </label>
             {p.email && (
               <Button variant="outline" asChild>
                 <a href={`mailto:${p.email}`}>
@@ -59,11 +90,23 @@ export function Person360({ personId }: { personId: number }) {
           </>
         }
       />
+      {sendNow && <SendNowDialog person={p} course={leads[0]?.course ?? null} onClose={() => setSendNow(false)} />}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
+        </TabsList>
+        <TabsContent value="whatsapp">
+          <WhatsappTab personId={p.person_id} />
+        </TabsContent>
+        <TabsContent value="overview" className="mt-0">
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="min-w-0 space-y-4 lg:col-span-2">
           <PipelineCards cards={pipeline_cards} />
+          <JourneyStrip leads={leads} />
           <Leads leads={leads} />
           <Admissions admissions={admissions} />
+          {admissions.length > 0 && <CourseSuggestionsPanel person={p} />}
         </div>
         <Section title="Profile" className="h-fit">
           <Facts
@@ -80,6 +123,8 @@ export function Person360({ personId }: { personId: number }) {
           />
         </Section>
       </div>
+        </TabsContent>
+      </Tabs>
       <NewLeadDialog open={another} onOpenChange={setAnother} person={p} />
     </>
   );

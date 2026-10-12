@@ -10,7 +10,6 @@ const SALES_TEAM: RoleCode[] = [...ADMIN_ROLES, "BRANCH_MANAGER", ...COUNSELLOR_
 const FINANCE_TEAM: RoleCode[] = [...SALES_TEAM, "ACCOUNTS"];
 const ALL_STAFF: RoleCode[] = [
   ...FINANCE_TEAM,
-  "ACADEMIC_COORDINATOR",
   "TRAINER",
   "PLACEMENT",
   "HR",
@@ -39,7 +38,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       LEADS,
       PIPELINE,
-      { label: "Demos & counselling", to: "/demos", icon: "CalendarDays", roles: [...SALES_TEAM, "ACADEMIC_COORDINATOR", "TRAINER"] },
+      { label: "Demos & counselling", to: "/demos", icon: "CalendarDays", roles: [...SALES_TEAM, "TRAINER"] },
     ],
   },
   {
@@ -47,7 +46,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Students", to: "/students", icon: "Users", roles: ALL_STAFF },
       { label: "Admissions", to: "/admissions", icon: "GraduationCap", roles: ALL_STAFF },
-      { label: "Batches", to: "/batches", icon: "CalendarRange", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "TRAINER"] },
+      { label: "Batches", to: "/batches", icon: "CalendarRange", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "TRAINER"] },
+      { label: "Waiting for batch", to: "/waiting-for-batch", icon: "Hourglass", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", ...COUNSELLOR_ROLES] },
       { label: "LMS access", to: "/lms-access", icon: "BookMarked", roles: ALL_STAFF },
     ],
   },
@@ -65,7 +65,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Tasks", to: "/tasks", icon: "ListChecks", roles: ALL_STAFF },
       { label: "Communications", to: "/communications", icon: "MessagesSquare", roles: SALES_TEAM },
-      { label: "Placement & alumni", to: "/placement-alumni", icon: "Briefcase", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "PLACEMENT"] },
+      { label: "WhatsApp messages", to: "/whatsapp", icon: "MessageCircle", roles: FINANCE_TEAM },
+      { label: "Placement & alumni", to: "/placement-alumni", icon: "Briefcase", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "PLACEMENT"] },
       { label: "Reports", to: "/reports", icon: "BarChart3", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "ACCOUNTS"] },
     ],
   },
@@ -84,6 +85,7 @@ export const MORE_ITEMS: NavItem[] = [
   { label: "Target Master", to: "/target-master", icon: "Target", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "ACCOUNTS"] },
   { label: "Course Master", to: "/course-master", icon: "BookOpen", roles: ALL_STAFF },
   { label: "Notifications", to: "/notifications", icon: "Bell", roles: ALL_STAFF },
+  { label: "Sales playbook", to: "/sales-playbook", icon: "BookOpenCheck", roles: [...ADMIN_ROLES, "BRANCH_MANAGER"] },
   { label: "Ask Nipuna", to: "/ask-nipuna", icon: "Bot", roles: [...ADMIN_ROLES, "BRANCH_MANAGER"] },
   { label: "Admin / Settings", to: "/admin", icon: "Settings", roles: ADMIN_ROLES },
 ];
@@ -107,8 +109,8 @@ export function mobileNavItems(roles: RoleCode[]): NavItem[] {
   const byRole: [RoleCode[], NavItem[]][] = [
     [SALES_TEAM, [short(LEADS, "Leads"), short(PIPELINE, "Pipeline"), short(PAYMENTS, "Payments"), short(AI_ASSISTANT, "AI")]],
     [["ACCOUNTS"], [{ label: "Invoices", to: "/invoices", icon: "FileText", roles: FINANCE_TEAM }, short(PAYMENTS, "Payments"), { label: "Collections", to: "/collections", icon: "Wallet", roles: FINANCE_TEAM }]],
-    [["ACADEMIC_COORDINATOR", "TRAINER"], [{ label: "Admissions", to: "/admissions", icon: "GraduationCap", roles: ALL_STAFF }, { label: "Batches", to: "/batches", icon: "CalendarRange", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "TRAINER"] }]],
-    [["PLACEMENT"], [{ label: "Placement", to: "/placement-alumni", icon: "Briefcase", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "PLACEMENT"] }]],
+    [["TRAINER"], [{ label: "Admissions", to: "/admissions", icon: "GraduationCap", roles: ALL_STAFF }, { label: "Batches", to: "/batches", icon: "CalendarRange", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "TRAINER"] }]],
+    [["PLACEMENT"], [{ label: "Placement", to: "/placement-alumni", icon: "Briefcase", roles: [...ADMIN_ROLES, "BRANCH_MANAGER", "PLACEMENT"] }]],
   ];
   const picked: NavItem[] = [HOME];
   const add = (item: NavItem) => {
@@ -130,6 +132,8 @@ export function rolesForPath(path: string): RoleCode[] | null {
   const extra: Record<string, RoleCode[]> = {
     "/fee-quote": SALES_TEAM,
   };
+  // Lead 360 (/leads/<id>) opens read-only for Accounts; the Leads list stays sales-only
+  if (/^\/leads\/\d+/.test(path)) return [...SALES_TEAM, "ACCOUNTS"];
   for (const [prefix, roles] of Object.entries(extra)) if (path.startsWith(prefix)) return roles;
   return items.find((i) => path === i.to || path.startsWith(`${i.to}/`))?.roles ?? null;
 }

@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from config.database import db
 from models import Notification
+from repositories import users as users_repo
 from services import jobs
 from tests.helpers import API, call, issued_invoice, record_payment, verify_payment
 
@@ -66,7 +67,7 @@ def test_due_soon_job_alerts_owner_accounts_and_manager(client, people, course):
 
     assert jobs.payment_alerts.due_soon() == 1  # only instalment 2 (due in 2 days) is unpaid and due soon
     notes = db.session.execute(select(Notification).where(Notification.event_key.like("due-soon:%"))).scalars().all()
-    assert {n.recipient_user_id for n in notes} == {people[n]["id"] for n in ("sravani", "accounts", "bm")}
+    assert {n.recipient_user_id for n in notes} == {people[n]["id"] for n in ("sravani", "accounts", "bm")} | set(users_repo.admin_user_ids())
     assert notes[0].title.startswith("Instalment 2 due on ") and "Ananya Rao · ₹15000.00" in notes[0].title
     jobs.payment_alerts.due_soon()  # running again sends nothing new
     assert db.session.execute(select(Notification).where(Notification.event_key.like("due-soon:%"))).scalars().all() \

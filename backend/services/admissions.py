@@ -19,7 +19,7 @@ from repositories import admissions as admissions_repo
 from repositories import invoices as invoices_repo
 from repositories import users as users_repo
 from repositories.common import paginate
-from services import audit, lms_pull, lms_sync, tasks
+from services import audit, lms_pull, lms_sync, tasks, whatsapp_events
 from services import invoices as invoices_service
 from services.context import ADMIN_ROLES, COUNSELLOR_ROLES, current_user
 from services.errors import BusinessRule, Conflict, Forbidden, NotFound, ValidationError
@@ -38,7 +38,7 @@ def get_admission(admission_id: int) -> Admission:
 
 def _check_staff(user_id: int, branch_id: int, field: str) -> None:
     staff = users_repo.user_ids_with_any_role(
-        ADMIN_ROLES + COUNSELLOR_ROLES + ("BRANCH_MANAGER", "ACCOUNTS", "ACADEMIC_COORDINATOR"), branch_id)
+        ADMIN_ROLES + COUNSELLOR_ROLES + ("BRANCH_MANAGER", "ACCOUNTS"), branch_id)
     if user_id not in staff:
         raise ValidationError("Must be active staff at the branch", {field: ["Not staff at this branch"]})
 
@@ -75,6 +75,7 @@ def _insert_admission(line: InvoiceLine, data: dict, created_by: int) -> Admissi
                  branch_id=admission.original_branch_id)
     lms_sync.admission_qualified(admission.admission_id)
     lms_sync.finance_changed(admission_id=admission.admission_id)
+    whatsapp_events.admission_confirmed(admission)
     return admission
 
 
@@ -179,6 +180,7 @@ def add_complimentary(admission_id: int, data: dict) -> Admission:
                  branch_id=admission.original_branch_id)
     lms_sync.admission_qualified(admission.admission_id)
     lms_sync.finance_changed(admission_id=admission.admission_id)
+    whatsapp_events.admission_confirmed(admission)
     return admission
 
 
@@ -193,7 +195,7 @@ def update(admission_id: int, data: dict) -> Admission:
     user = current_user()
     branch_id = admission.service_branch_id
     if not (user.is_manager_of(branch_id)
-            or user.has_role(*COUNSELLOR_ROLES, "ACCOUNTS", "ACADEMIC_COORDINATOR", branch_id=branch_id)):
+            or user.has_role(*COUNSELLOR_ROLES, "ACCOUNTS", branch_id=branch_id)):
         raise Forbidden("You can't update this admission")
     if "lms_status" in data:
         lms_pull.require_crm_academics("LMS statuses")   # the pull writes it from the LMS

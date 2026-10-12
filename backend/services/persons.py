@@ -37,6 +37,24 @@ def search(phone: str | None, email: str | None, name: str | None) -> list[tuple
     return [(p, [lead for lead in open_leads if lead.person_id == p.person_id]) for p in persons]
 
 
+def lookup_by_phone(phone: str) -> dict:
+    """Live duplicate check while a phone is typed: the people with that number the user may see, plus whether the
+    number also exists where they can't see. Never reveals who or what a hidden person is — only that one exists."""
+    branch_ids = current_user().branch_ids()
+    found = leads_repo.search_persons(phone, None, None, limit=10)
+    visible = [p for p in found if leads_repo.person_visible(p.person_id, branch_ids)]
+    leads = leads_repo.leads_for_persons([p.person_id for p in visible], branch_ids)
+    matches = []
+    for person in visible[:5]:
+        courses = {}
+        for lead in leads:
+            if lead.person_id == person.person_id and lead.course is not None:
+                courses[lead.course.course_id] = lead.course.course_title
+        matches.append({"person_id": person.person_id, "person_code": person.person_code, "full_name": person.full_name,
+                        "courses_count": len(courses), "courses": list(courses.values())[:5]})
+    return {"phone": phone, "matches": matches, "other_branch": len(found) > len(visible)}
+
+
 def list_persons(filters: dict, page: int, per_page: int) -> tuple[list[dict], dict]:
     """Persons section rows: the person plus lead counts and open pipeline cards at the user's branches."""
     branch_ids = current_user().branch_ids()

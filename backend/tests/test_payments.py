@@ -9,6 +9,7 @@ from config.database import db
 from models import Admission, Payment, Task
 from tests.helpers import (
     API, call, create_invoice, issued_invoice, mode_id, paid_invoice, ready_deal, record_payment, verify_payment,
+    with_proof,
 )
 
 
@@ -125,12 +126,12 @@ def test_multi_course_allocation_split_tenders_and_line_caps(client, people, cou
     assert mismatch.status_code == 400
 
     # Split checkout: two tenders → two pending transactions, allocated across both courses
-    recorded = call(client, "post", "/payments", sravani, 201, json={
+    recorded = call(client, "post", "/payments", sravani, 201, **with_proof({
         "invoice_id": invoice["invoice_id"],
         "allocations": [{"invoice_line_id": ds["invoice_line_id"], "amount": "3000"},
                         {"invoice_line_id": fnd["invoice_line_id"], "amount": "600"}],
         "tenders": [{"amount": "2000", "payment_mode_id": mode_id("UPI_BANK"), "reference": "UTR-A"},
-                    {"amount": "1600", "payment_mode_id": mode_id("CASH")}]})
+                    {"amount": "1600", "payment_mode_id": mode_id("CASH")}]}))
     first, second_tx = recorded["payments"]
     assert first["transaction_number"] != second_tx["transaction_number"]
     assert [a["amount"] for a in first["allocations"]] == ["2000.00"]
@@ -163,15 +164,15 @@ def test_payment_rules(client, people, course, make_user, login):
     invoice_id = flow["invoice"]["invoice_id"]
     sravani = people["sravani"]["h"]
 
-    no_ref = client.post(f"{API}/payments", headers=sravani, json={
-        "invoice_id": invoice_id, "amount": "1000", "payment_mode_id": mode_id("UPI_BANK")})
+    no_ref = client.post(f"{API}/payments", headers=sravani, **with_proof({
+        "invoice_id": invoice_id, "amount": "1000", "payment_mode_id": mode_id("UPI_BANK")}))
     assert no_ref.status_code == 422 and "requires a reference" in no_ref.get_json()["error"]["message"]
-    cheque = client.post(f"{API}/payments", headers=sravani, json={
-        "invoice_id": invoice_id, "amount": "1000", "payment_mode_id": mode_id("CHEQUE"), "reference": "CHQ-1"})
+    cheque = client.post(f"{API}/payments", headers=sravani, **with_proof({
+        "invoice_id": invoice_id, "amount": "1000", "payment_mode_id": mode_id("CHEQUE"), "reference": "CHQ-1"}))
     assert cheque.status_code == 422 and "needs an approver" in cheque.get_json()["error"]["message"]
-    assert client.post(f"{API}/payments", headers=sravani, json={
+    assert client.post(f"{API}/payments", headers=sravani, **with_proof({
         "invoice_id": invoice_id, "amount": "1000", "payment_mode_id": mode_id("CHEQUE"), "reference": "CHQ-1",
-        "exception_approved_by": people["nikhil"]["id"]}).status_code == 400
+        "exception_approved_by": people["nikhil"]["id"]})).status_code == 400
     approved_cheque = record_payment(client, sravani, invoice_id, "1000", payment_mode_id=mode_id("CHEQUE"),
                                      reference="CHQ-1", exception_approved_by=people["bm"]["id"])
     assert approved_cheque["payment"]["exception_approved_by"] == people["bm"]["id"]

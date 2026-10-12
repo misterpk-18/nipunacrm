@@ -37,13 +37,40 @@ class BaseConfig:
 
     # AI Copilot (step 19): without a key the rule-based fallback is used
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-    AI_MODEL = os.getenv("AI_MODEL", "claude-opus-5")
+    AI_MODEL = os.getenv("AI_MODEL", "claude-opus-5-5")
 
     # Nipuna LMS (db 026): admission / course / finance events are posted there by the lms-sync job.
     # Without both values the events stay Pending in lms_outbox.
     LMS_BASE_URL = os.getenv("LMS_BASE_URL")
     LMS_SERVICE_KEY = os.getenv("LMS_SERVICE_KEY")
+    # The LMS web app (not its API): "Open in LMS" links on the Waiting for batch screen. Empty = no link shown.
+    LMS_WEB_URL = os.getenv("LMS_WEB_URL")
     LMS_TIMEOUT_SECONDS = float(os.getenv("LMS_TIMEOUT_SECONDS", "10"))
+    # Round 3: deliver a request's events right after it commits (background thread, short timeout)
+    LMS_PUSH_ON_COMMIT = os.getenv("LMS_PUSH_ON_COMMIT", "1") not in ("0", "false", "False")
+    LMS_PUSH_TIMEOUT_SECONDS = float(os.getenv("LMS_PUSH_TIMEOUT_SECONDS", "3"))
+    # Round 6 (db 045): tell the LMS when a message it sent through POST /lms/whatsapp is Sent / Delivered / Read /
+    # Failed / Skipped (WhatsappStatusUpdated events). Off until the LMS has its handler, or every event would fail.
+    LMS_WHATSAPP_STATUS_EVENTS = os.getenv("LMS_WHATSAPP_STATUS_EVENTS", "0") in ("1", "true", "True")
+
+    # WhatsApp templates through Pinbot (db 033): queued in whatsapp_outbox, sent by the whatsapp-send job.
+    # Nothing is sent unless WHATSAPP_ENABLED is on and both the URL and the key are set. With WHATSAPP_TEST_NUMBERS
+    # (comma separated) only those numbers are messaged; every other row is Skipped. Rows older than
+    # WHATSAPP_MAX_AGE_HOURS when the sender gets to them are Skipped, so a switched-off period never ends in a flood
+    # of stale news.
+    WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "0") in ("1", "true", "True")
+    WHATSAPP_API_URL = os.getenv("WHATSAPP_API_URL")        # https://partnersv1.pinbot.ai/v3/<number id>/messages
+    WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
+    # POST /api/v1/webhooks/whatsapp (delivery status, learners' replies): header X-Webhook-Token or ?token=. Unset = the
+    # endpoint answers 401 / 404 and nothing is received.
+    WHATSAPP_WEBHOOK_TOKEN = os.getenv("WHATSAPP_WEBHOOK_TOKEN")
+    WHATSAPP_TEST_NUMBERS = os.getenv("WHATSAPP_TEST_NUMBERS", "")
+    WHATSAPP_TIMEOUT_SECONDS = float(os.getenv("WHATSAPP_TIMEOUT_SECONDS", "10"))
+    WHATSAPP_PUSH_ON_COMMIT = os.getenv("WHATSAPP_PUSH_ON_COMMIT", "1") not in ("0", "false", "False")
+    WHATSAPP_PUSH_TIMEOUT_SECONDS = float(os.getenv("WHATSAPP_PUSH_TIMEOUT_SECONDS", "3"))
+    WHATSAPP_MAX_AGE_HOURS = float(os.getenv("WHATSAPP_MAX_AGE_HOURS", "24"))
+    # Invoice-issued wording: "Please review the invoice through <this>" (no learner portal yet)
+    WHATSAPP_INVOICE_CHANNEL = os.getenv("WHATSAPP_INVOICE_CHANNEL", "your Nipuna counsellor")
 
 
 class DevelopmentConfig(BaseConfig):
@@ -62,6 +89,14 @@ class TestingConfig(BaseConfig):
     ANTHROPIC_API_KEY = None  # tests never call the real API
     LMS_BASE_URL = "http://lms.test"  # tests replace the HTTP call
     LMS_SERVICE_KEY = "test-service-key"
+    LMS_WEB_URL = "http://lms-web.test"
+    LMS_PUSH_ON_COMMIT = False        # no background threads inside the test transaction
+    WHATSAPP_ENABLED = True           # tests replace the HTTP call
+    WHATSAPP_API_URL = "http://whatsapp.test/messages"
+    WHATSAPP_API_KEY = "test-api-key"
+    WHATSAPP_TEST_NUMBERS = ""
+    WHATSAPP_WEBHOOK_TOKEN = "test-webhook-token"
+    WHATSAPP_PUSH_ON_COMMIT = False
 
 
 class ProductionConfig(BaseConfig):

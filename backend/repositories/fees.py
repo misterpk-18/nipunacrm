@@ -34,6 +34,17 @@ def applicable_offers(branch_id: int, course_id: int, on_date) -> list[Offer]:
     return list(db.session.execute(stmt).scalars())
 
 
+def offers_by_ids(ids: list[int]) -> list[Offer]:
+    if not ids:
+        return []
+    return list(db.session.execute(select(Offer).where(Offer.offer_id.in_(ids))).scalars())
+
+
+def concession_limits() -> list[ConcessionLimit]:
+    return list(db.session.execute(select(ConcessionLimit).join(Role, Role.role_id == ConcessionLimit.role_id)
+                                   .order_by(Role.role_id)).scalars().unique())
+
+
 def used_offers(person_id: int) -> list[dict]:
     """Offers the person has already used (one row per offer code, earliest admission), from person_offer_redemptions."""
     rows = db.session.execute(text(

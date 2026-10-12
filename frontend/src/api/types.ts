@@ -19,7 +19,6 @@ export type RoleCode =
   | "SALES"
   | "FRONT_OFFICE"
   | "ACCOUNTS"
-  | "ACADEMIC_COORDINATOR"
   | "TRAINER"
   | "PLACEMENT"
   | "HR"

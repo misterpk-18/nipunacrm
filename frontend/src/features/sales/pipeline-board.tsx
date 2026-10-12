@@ -1,7 +1,7 @@
 import { useState, type DragEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, CalendarDays, ClipboardList, Clock3, Columns3, List, Plus, Search, Settings2 } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, ClipboardList, Clock3, Columns3, List, Plus, Search, Settings2 } from "lucide-react";
 import { leadKeys } from "@/api/leads";
 import { MANUAL_STAGES, PROTECTED_STAGES, pipelineApi, pipelineKeys, type NextAction, type PipelineCard, type PipelineFilters } from "@/api/pipeline";
 import { useLookups } from "@/api/reference";
@@ -32,6 +32,56 @@ export const STAGE_DOTS: Record<string, string> = {
 };
 
 type Dialog = { kind: "lost" | "manage"; card: PipelineCard } | null;
+
+const dayKey = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+/** "due today" / "due tomorrow" / "overdue" / "due 12 Oct" (IST calendar days). */
+function dueText(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const today = dayKey(new Date().toISOString());
+  const day = dayKey(iso);
+  if (day === today) return new Date(iso).getTime() < Date.now() ? "due earlier today" : "due today";
+  if (day < today) return "overdue";
+  if (day === dayKey(new Date(Date.now() + 86_400_000).toISOString())) return "due tomorrow";
+  return `due ${date(iso).replace(/ \d{4}$/, "")}`;
+}
+/** Where a card's quick action goes: the Lead 360 opens that action's dialog (`?action=<key>`). */
+const quickActionLink = (leadId: number, action: string) => ({ to: "/leads/$leadId" as const, params: { leadId: String(leadId) }, search: { action } });
+
+/** Next step + due date, days in stage (red when stalled), the blocker and a one-tap quick action. */
+function CardProgress({ card }: { card: PipelineCard }) {
+  const step = card.next_step;
+  if (!step && card.days_in_stage === undefined) return null;
+  const due = step ? dueText(step.due_at) : "";
+  return (
+    <div className="mt-2 space-y-1.5 rounded-md bg-muted/50 p-2 text-xs" data-testid="card-progress">
+      {step && (
+        <div className="flex items-start justify-between gap-2">
+          <span className="min-w-0">
+            <span className="text-muted-foreground">Next: </span>
+            <b>{step.label}</b>
+            {due && <span className={step.overdue ? "font-semibold text-destructive" : "text-muted-foreground"}> · {due}</span>}
+          </span>
+          {card.quick_action && (
+            <Button asChild size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[11px]">
+              <Link {...quickActionLink(card.quick_action.lead_id, card.quick_action.action)} onClick={(e) => e.stopPropagation()}>
+                Do it
+                <ArrowRight className="size-3" />
+              </Link>
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {card.blocker && <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning">{card.blocker}</span>}
+        {card.days_in_stage !== undefined && (
+          <span className={card.stalled ? "font-semibold text-destructive" : "text-muted-foreground"} title="Days in this stage">
+            {card.days_in_stage === 0 ? "Moved today" : `${card.days_in_stage}d in stage`}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function useMoveStage() {
   return useApiMutation((v: { card: PipelineCard; stage: string }) => pipelineApi.moveStage(v.card.pipeline_entry_id, { stage: v.stage }), {
@@ -232,6 +282,7 @@ function DealCard({ card, onManage, onLost, onMove, busy }: { card: PipelineCard
           </li>
         ))}
       </ul>
+      <CardProgress card={card} />
       <div className="mt-2 text-lg font-bold">{money(card.value)}</div>
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Clock3 className="size-3.5" />
@@ -364,6 +415,20 @@ function PipelineTable({ filters, page, onPage }: { filters: PipelineFilters; pa
           { header: "Courses", cell: (c) => <span className="block max-w-56 truncate" title={courseNames(c).join(", ")}>{courseNames(c).join(", ") || "—"}</span> },
           { header: "Value", cell: (c) => money(c.value) },
           { header: "Stage", cell: (c) => <Status>{c.stage}</Status> },
+          {
+            header: "Next step",
+            cell: (c) =>
+              c.next_step ? (
+                <span className="block max-w-56 whitespace-normal">
+                  <b>{c.next_step.label}</b>
+                  <small className={`block font-normal ${c.next_step.overdue ? "text-destructive" : "text-muted-foreground"}`}>
+                    {[dueText(c.next_step.due_at), c.blocker, c.days_in_stage !== undefined ? `${c.days_in_stage}d in stage` : ""].filter(Boolean).join(" · ")}
+                  </small>
+                </span>
+              ) : (
+                "—"
+              ),
+          },
           { header: "Delivery plan", cell: (c) => c.delivery_plan_status },
           { header: "Owner", cell: (c) => c.owner?.full_name ?? <Status kind="warn">Unassigned</Status> },
           { header: "Expected close", cell: (c) => date(c.expected_close_date) },

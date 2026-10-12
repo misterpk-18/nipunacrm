@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { get, list, patch, post, type Query } from "./client";
 import type { BranchRef, CourseRef, DateOnly, UserRef } from "./types";
-import type { Allocation, CurriculumVersion, QueueRow } from "./admissions";
+import type { Allocation, QueueRow } from "./admissions";
 
 export const BATCH_STATUSES = ["Planned", "Open", "In Progress", "Completed", "Cancelled"];
 
@@ -11,7 +11,6 @@ export type Batch = {
   batch_name: string;
   course: CourseRef;
   branch: BranchRef;
-  curriculum_version: { curriculum_version_id: number; version_label: string } | null;
   delivery_mode: string;
   trainer: UserRef | null;
   schedule_days: string | null;
@@ -35,7 +34,6 @@ export type BatchBody = {
   batch_name?: string;
   course_id?: number;
   branch_id?: number;
-  curriculum_version_id?: number | null;
   delivery_mode?: string;
   trainer_user_id?: number | null;
   schedule_days?: string | null;
@@ -65,10 +63,6 @@ export const batchesApi = {
     post<Allocation>(`/batch-allocations/${allocationId}/close`, body),
   setJoiningDate: (allocationId: number, joining_date: DateOnly) =>
     post<Allocation>(`/batch-allocations/${allocationId}/joining-date`, { joining_date }),
-  curriculumVersions: (courseId?: number) => get<CurriculumVersion[]>("/curriculum-versions", { course_id: courseId }),
-  createCurriculumVersion: (body: { course_id: number; version_label: string; notes?: string | null; publish?: boolean }) =>
-    post<CurriculumVersion>("/curriculum-versions", body),
-  publishCurriculumVersion: (id: number) => post<CurriculumVersion>(`/curriculum-versions/${id}/publish`, {}),
 };
 
 export const batchKeys = {
@@ -76,10 +70,6 @@ export const batchKeys = {
   list: (filters: BatchFilters) => ["batches", "list", filters] as const,
   detail: (id: number) => ["batches", "detail", id] as const,
   check: (batchId: number, admissionId: number) => ["batches", "check", batchId, admissionId] as const,
-  curricula: ["curriculum-versions"] as const,
-  curriculaFor: (courseId?: number) => ["curriculum-versions", courseId ?? null] as const,
 };
 
 export const useBatch = (id: number) => useQuery({ queryKey: batchKeys.detail(id), queryFn: () => batchesApi.get(id) });
-export const useCurriculumVersions = (courseId?: number, enabled = true) =>
-  useQuery({ queryKey: batchKeys.curriculaFor(courseId), queryFn: () => batchesApi.curriculumVersions(courseId), enabled });

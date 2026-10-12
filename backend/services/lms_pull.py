@@ -1,6 +1,6 @@
 """The LMS status pull (round 2, db 028): GET {LMS_BASE_URL}/api/v1/integrations/crm/status?since=<watermark>.
 
-The LMS owns the student's login and LMS status, enrolment and curriculum status, batches, batch allocations,
+The LMS owns the student's login and LMS status, enrolment status, batches, batch allocations,
 academic completion and the certificate register; the CRM mirrors them (LMS docs/CRM_INTEGRATION.md §2.2, answers in
 nipuna crm-docs/CRM_ROUND2_LMS_REPLY.md).
 
@@ -14,31 +14,36 @@ Each record is written in its own transaction with app.sync_source = 'LMS', whic
 accept the LMS's facts (allocation checks, combo batches, certificate numbers, enrolment moves). A record that can't be
 applied yet — e.g. an allocation to a batch the pull never sent — is kept in lms_pull_holds and retried on every pull;
 the watermark still moves. Records the CRM doesn't know (LMS-only IDs) are ignored.
+
+The CRM holds no curriculum (db 043): `curriculum_versions[]` and the curriculum fields on batches and academics
+entries are ignored if the LMS still sends them. The job runs each cron minute but skips a pull started less than
+PULL_EVERY ago; refresh_admission() fetches one admission on demand without moving the watermark.
 """
 import logging
 from collections import Counter
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from config.database import db
 from models import (
-    Admission, AdmissionCurriculum, Batch, BatchAllocation, Branch, Certificate, Course, CurriculumVersion,
-    LmsPullHold, LmsPullState, Person,
+    Admission, Batch, BatchAllocation, Branch, Certificate, Course, LmsPullHold, LmsPullState, Person,
 )
 from repositories import settings as settings_repo
 from repositories import users as users_repo
-from services import lms_delivery, tasks
-from services.errors import ManagedInLms
+from services import batch_waiting, lms_delivery, tasks, whatsapp_events
+from services.errors import BusinessRule, ManagedInLms
 from services.lms_sync import business_tz
 
 logger = logging.getLogger(__name__)
 
 CLAIM_MINUTES = 10
 FULL_PULL_SINCE = "1970-01-01T00:00:00+00:00"
-HOLD_TASK_AFTER = 12            # pulls (about an hour at the suggested 5-minute interval)
-KINDS = ("batches", "persons", "admissions", "academics", "certificates")  # batches before the allocations naming them
+HOLD_TASK_AFTER = 12            # pulls
+PULL_EVERY = timedelta(seconds=50)   # the job runs every cron minute; a pull started this recently is enough
+# Batches before the allocations naming them
+KINDS = ("batches", "persons", "admissions", "academics", "certificates")
 
 
 class Held(Exception):
@@ -50,17 +55,24 @@ def lms_owns_academics() -> bool:
 
 
 def require_crm_academics(what: str) -> None:
-    """Refuse academic writes that belong to the LMS (batches, allocation, joining, curriculum, completion,
+    """Refuse academic writes that belong to the LMS (batches, allocation, joining, completion,
     certificates); they reach the CRM through the pull."""
     if lms_owns_academics():
         raise ManagedInLms(f"{what} are managed in the Nipuna LMS and shown read-only here")
 
 
 def sync_status() -> dict:
-    """For the LMS access screen: who owns academics, when the CRM last pulled, and what is waiting."""
+    """For the sync health strip (LMS access, Super Admin dashboard): who owns academics, the last pull and push, what
+    waits in the outbox, what is held, and whether the LMS answered last time."""
     current = state()
+    outbox = lms_delivery.health()
+    reachable = None
+    if current.last_attempt_at is not None:
+        reachable = current.last_http_status is not None and current.last_http_status < 500
+    if (outbox["last_error"] or "").startswith("LMS unreachable"):
+        reachable = False
     return {"academics_managed_in_lms": lms_owns_academics(), "configured": lms_delivery.configured(),
-            "pull": current.to_dict(), "held": len(holds())}
+            "pull": current.to_dict(), "held": len(holds()), "outbox": outbox, "lms_reachable": reachable}
 
 
 # ---------------------------------------------------------------- value helpers
@@ -71,6 +83,11 @@ def _int(value) -> int | None:
 
 def _datetime(value) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
+
+
+def _time(value) -> time | None:
+    """"HH:MM" (IST wall clock) from the LMS timetable."""
+    return time.fromisoformat(value) if value else None
 
 
 def _date(value) -> date | None:
@@ -104,26 +121,17 @@ def _course(code: str | None) -> Course:
     return course
 
 
-def _mirror_version(course_id: int, label: str) -> CurriculumVersion:
-    """The CRM row for an LMS curriculum version (course + label), created as a mirrored Published version."""
-    version = db.session.execute(select(CurriculumVersion).where(
-        CurriculumVersion.course_id == course_id, CurriculumVersion.version_label == label)).scalar_one_or_none()
-    if version is None:
-        version = CurriculumVersion(course_id=course_id, version_label=label, status="Published", lms_mirrored=True,
-                                    published_at=datetime.now(timezone.utc), notes="Mirrored from the LMS")
-        db.session.add(version)
-        db.session.flush()
-    return version
-
-
 # ---------------------------------------------------------------- one record of each kind
 
 def apply_person(entry: dict) -> str:
     person = db.session.get(Person, _int(entry.get("crm_person_id")))
     if person is None:
         return "ignored"
+    first_login = person.lms_provisioned_at is None
     changed = _set(person, lms_user_id=entry.get("lms_user_id"),
                    lms_provisioned_at=_datetime(entry.get("lms_provisioned_at")))
+    if first_login and person.lms_provisioned_at is not None:
+        whatsapp_events.lms_account_activated(person, person.lms_provisioned_at)
     return "applied" if changed else "unchanged"
 
 
@@ -144,16 +152,19 @@ def apply_batch(entry: dict) -> str:
     branch = db.session.execute(select(Branch).where(Branch.branch_code == entry.get("branch_code"))).scalar_one_or_none()
     if branch is None:
         raise Held(f"Branch {entry.get('branch_code')} is not in the CRM")
-    label = entry.get("curriculum_version_label")
     lead_email = entry.get("lead_trainer_email")
     values = dict(
         lms_mirrored=True, course_id=course.course_id, branch_id=branch.branch_id,
         delivery_mode=entry.get("delivery_mode") or "Classroom", status=entry["status"],
         capacity=entry["capacity"], start_date=_date(entry.get("start_date")) or date.today(),
         end_date=_date(entry.get("end_date")),
-        curriculum_version_id=_mirror_version(course.course_id, label).curriculum_version_id if label else None,
         lead_trainer_email=lead_email, trainer_emails=list(entry.get("trainer_emails") or []),
         trainer_user_id=_user_id(lead_email),
+        # timetable and offerability (playbook A1 / A2 / Q3): null = not confirmed, and a clear overwrites
+        schedule_days=entry.get("schedule_days"), start_time=_time(entry.get("start_time")),
+        end_time=_time(entry.get("end_time")), location=entry.get("location"),
+        lms_seats_left=entry.get("seats_left"), lms_readiness=entry.get("readiness"),
+        lms_readiness_reason=entry.get("readiness_reason"),
     )
     batch = db.session.execute(select(Batch).where(Batch.lms_course_id == code)).scalar_one_or_none()
     created = batch is None
@@ -163,23 +174,6 @@ def apply_batch(entry: dict) -> str:
     changed = _set(batch, **values)
     db.session.flush()
     return "applied" if created or changed else "unchanged"
-
-
-def _apply_curriculum(admission: Admission, entry: dict) -> bool:
-    label = entry.get("curriculum_version_label")
-    mapped = entry.get("curriculum_status") == "Mapped" and label
-    keep = _mirror_version(admission.course_id, label).curriculum_version_id if mapped else None
-    changed = False
-    for mapping in db.session.execute(select(AdmissionCurriculum).where(
-            AdmissionCurriculum.admission_id == admission.admission_id)).scalars().all():
-        if mapping.curriculum_version_id != keep:
-            db.session.delete(mapping)
-            changed = True
-    if keep is not None and db.session.get(AdmissionCurriculum, (admission.admission_id, keep)) is None:
-        db.session.add(AdmissionCurriculum(admission_id=admission.admission_id, curriculum_version_id=keep))
-        changed = True
-    db.session.flush()  # the mapping exists before curriculum_status says Mapped (trigger)
-    return _set(admission, curriculum_status="Mapped" if mapped else "Mapping Pending") or changed
 
 
 def _apply_allocations(admission: Admission, items: list[dict]) -> bool:
@@ -208,7 +202,8 @@ def _apply_allocations(admission: Admission, items: list[dict]) -> bool:
         on = _date(item.get("allocated_on"))
         key = (course.course_id, item.get("track_code") or "", batch.batch_id, on)
         allocation = existing.get(key)
-        if allocation is None or not allocation.lms_mirrored:
+        is_new = allocation is None or not allocation.lms_mirrored
+        if is_new:
             allocation = BatchAllocation(admission_id=admission.admission_id, batch_id=batch.batch_id,
                                          course_id=course.course_id, track_code=item.get("track_code"),
                                          lms_allocated_on=on, lms_mirrored=True, allocated_at=_start_of(on))
@@ -220,6 +215,10 @@ def _apply_allocations(admission: Admission, items: list[dict]) -> bool:
                         ended_at=None if status == "Active" else ended or allocation.ended_at or datetime.now(timezone.utc),
                         end_reason=item.get("end_reason"))
         db.session.flush()
+        if is_new:
+            whatsapp_events.batch_allocated(allocation)
+        if status == "Active":
+            batch_waiting.close_alerts(admission.admission_id)  # no longer waiting for a batch
     return changed
 
 
@@ -247,8 +246,7 @@ def apply_academics(entry: dict) -> str:
     admission = db.session.get(Admission, _int(entry.get("crm_admission_id")))
     if admission is None:
         return "ignored"
-    changed = _apply_curriculum(admission, entry)
-    changed |= _apply_allocations(admission, entry.get("allocations") or [])
+    changed = _apply_allocations(admission, entry.get("allocations") or [])
     changed |= _apply_enrolment(admission, entry)
     if changed:
         admission.lms_last_synced_at = datetime.now(timezone.utc)
@@ -389,9 +387,13 @@ def pull() -> dict:
             seen.add(key)
             counts[f"{kind}_{_apply_one(kind, key, entry)}"] += 1
     for hold in db.session.execute(select(LmsPullHold).order_by(LmsPullHold.first_held_at)).scalars().all():
-        if hold.record_key not in seen:                   # still waiting: try the held copy again
+        if hold.record_key.split(":", 1)[0] not in APPLY:  # a kind the CRM no longer takes (curriculum_versions)
+            db.session.delete(hold)
+        elif hold.record_key not in seen:                 # still waiting: try the held copy again
             key, payload = hold.record_key, hold.payload
             counts[f"retried_{_apply_one(key.split(':', 1)[0], key, payload)}"] += 1
+
+    db.session.commit()
 
     current = state()
     current.since = data["as_of"]                        # exactly as returned
@@ -400,6 +402,54 @@ def pull() -> dict:
     current.last_counts = dict(counts)
     current.locked_until = None
     db.session.commit()
+    return dict(counts) or {"unchanged": 0}
+
+
+def pull_if_due() -> dict:
+    """Job lms-status-pull: cron runs the jobs every minute, and `flask lms worker` pulls too; skip when a pull
+    started less than PULL_EVERY ago."""
+    last = state().last_attempt_at
+    db.session.commit()
+    if last is not None and datetime.now(timezone.utc) - last < PULL_EVERY:
+        return {"skipped": "pulled less than a minute ago"}
+    return pull()
+
+
+def _for_admission(kind: str, entry: dict, admission: Admission, batch_codes: set[str]) -> bool:
+    if kind == "persons":
+        return _int(entry.get("crm_person_id")) == admission.person_id
+    if kind == "batches":
+        return entry.get("lms_course_id") in batch_codes
+    return _int(entry.get("crm_admission_id")) == admission.admission_id
+
+
+def fetch_admission(admission: Admission) -> tuple[dict | None, lms_delivery.Answer]:
+    """The LMS's full state for one admission: its person, academics, certificates, and the batches its allocations name.
+    Filtered by the LMS when it supports it (Q5), otherwise here."""
+    answer = lms_delivery.pull_status_for(FULL_PULL_SINCE, crm_admission_id=admission.admission_id)
+    data = (answer.body or {}).get("data") if answer.status == 200 else None
+    if not isinstance(data, dict):
+        return None, answer
+    batch_codes = {a.get("lms_course_id") for e in data.get("academics") or []
+                   if _int(e.get("crm_admission_id")) == admission.admission_id for a in e.get("allocations") or []}
+    return {kind: [e for e in _entries(kind, data) if _for_admission(kind, e, admission, batch_codes)]
+            for kind in KINDS}, answer
+
+
+def refresh_admission(admission_id: int) -> dict:
+    """"Refresh from LMS" on Student 360 / Admission: apply that admission's current LMS state now. The watermark
+    doesn't move (the next pull still brings everything else)."""
+    admission = db.session.get(Admission, admission_id)
+    if not lms_delivery.configured():
+        return {"skipped": "LMS_BASE_URL / LMS_SERVICE_KEY not set"}
+    db.session.commit()                                  # nothing held open while the LMS answers
+    data, answer = fetch_admission(admission)
+    if data is None:
+        raise BusinessRule(f"The LMS didn't answer: {lms_delivery.error_text(answer)}")
+    counts: Counter = Counter()
+    for kind in KINDS:
+        for entry in data[kind]:
+            counts[f"{kind}_{_apply_one(kind, record_key(kind, entry), entry)}"] += 1
     return dict(counts) or {"unchanged": 0}
 
 

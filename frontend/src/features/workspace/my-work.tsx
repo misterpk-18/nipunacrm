@@ -18,16 +18,20 @@ import { NewLeadDialog } from "@/features/leads/new-lead-dialog";
 import { LinkedRecord } from "@/features/operations/linked-record";
 import { TaskDialog, conditionLabel } from "@/features/operations/task-dialogs";
 import { QUEUES, type QueueKey } from "@/features/sales/counsellor-workspace";
+import { DemoOutcomeDue } from "@/features/sales/demos-page";
 import { dateTime, isPast, relative } from "@/lib/format";
 import { CourseSource, LeadContact, LeadIdentity, LeadMobileCard } from "./lead-parts";
+import { HandoverList, TodayQueue } from "./today";
 
-export type MyWorkSearch = { queue?: QueueKey; q?: string; page?: number };
+export type MyWorkView = "today" | "queues" | "handover";
+export type MyWorkSearch = { view?: MyWorkView; queue?: QueueKey; q?: string; page?: number };
 
 export function MyWorkPage({ search, onSearch }: { search: MyWorkSearch; onSearch: (next: MyWorkSearch) => void }) {
-  const { hasRole, isCounsellor, branches, branchId } = useAuth();
+  const { hasRole, isCounsellor, branches, branchId, profile } = useAuth();
   const [newOpen, setNewOpen] = useState(false);
   const sales = hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "SALES", "FRONT_OFFICE");
   const mine = isCounsellor && !hasRole("BRANCH_MANAGER", "FOUNDER_CEO", "SUPER_ADMIN");
+  const view: MyWorkView = search.view ?? (search.queue || search.q ? "queues" : "today");
   const scope = branchId ? branches.find((b) => b.branch_id === branchId)?.branch_name : branches.length > 1 ? "All Branches" : branches[0]?.branch_name;
   return (
     <>
@@ -45,8 +49,20 @@ export function MyWorkPage({ search, onSearch }: { search: MyWorkSearch; onSearc
         }
       />
       <div className="space-y-5">
-        {sales && <LeadQueue search={search} onSearch={onSearch} mine={mine} />}
-        <MyTasks />
+        {sales && (
+          <Tabs value={view} onValueChange={(v) => onSearch({ view: v as MyWorkView })}>
+            <TabsList aria-label="My work view">
+              <TabsTrigger value="today">Today</TabsTrigger>
+              <TabsTrigger value="queues">Queues</TabsTrigger>
+              <TabsTrigger value="handover">Handover</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
+        {sales && view === "today" && <TodayQueue mine={mine} />}
+        {sales && view === "queues" && <LeadQueue search={search} onSearch={onSearch} mine={mine} />}
+        {sales && view === "handover" && <HandoverList />}
+        {hasRole("TRAINER") && <DemoOutcomeDue trainerId={profile?.user.user_id} />}
+        {(!sales || view !== "handover") && <MyTasks />}
       </div>
       {sales && <NewLeadDialog open={newOpen} onOpenChange={setNewOpen} />}
     </>
@@ -77,7 +93,7 @@ function LeadQueue({ search, onSearch, mine }: { search: MyWorkSearch; onSearch:
 
   return (
     <>
-      <Tabs value={queue} onValueChange={(v) => onSearch({ ...search, queue: v as QueueKey, page: undefined })}>
+      <Tabs value={queue} onValueChange={(v) => onSearch({ ...search, view: "queues", queue: v as QueueKey, page: undefined })}>
         <TabsList aria-label="Queues" className="w-full">
           {QUEUES.map((q, i) => (
             <TabsTrigger key={q.key} value={q.key}>

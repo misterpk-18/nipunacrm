@@ -8,7 +8,6 @@ export const Route = createFileRoute("/admissions/")({
       page: num(s["page"]),
       q: str(s["q"]),
       enrolment_status: str(s["enrolment_status"]),
-      curriculum_status: str(s["curriculum_status"]),
       payment_completion: str(s["payment_completion"]),
       seat_type: str(s["seat_type"]),
       course_id: num(s["course_id"]),

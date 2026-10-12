@@ -19,6 +19,7 @@ export const Route = createFileRoute("/payments")({
       tab: TABS.includes(tab as (typeof TABS)[number]) ? (tab as PaymentSearch["tab"]) : undefined,
       cstatus: str(s["cstatus"]),
       invoice: num(s["invoice"]),
+      verify: num(s["verify"]),
     };
     return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as PaymentSearch;
   },

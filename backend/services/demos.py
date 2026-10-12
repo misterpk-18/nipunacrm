@@ -12,12 +12,12 @@ from repositories import demos as demos_repo
 from repositories import settings as settings_repo
 from repositories import users as users_repo
 from repositories.common import paginate
-from services import audit, tasks
+from services import audit, demo_slots, notifications, tasks, whatsapp_events
 from services import leads as leads_service
 from services.context import COUNSELLOR_ROLES, current_user
 from services.errors import BusinessRule, Forbidden, NotFound, ValidationError
 
-EXTRA_APPROVER_ROLES = ("ACADEMIC_COORDINATOR", "BRANCH_MANAGER")
+EXTRA_APPROVER_ROLES = ("BRANCH_MANAGER",)
 DEFAULT_DURATION = {"Standard": 45, "Practical": 60}
 
 
@@ -88,6 +88,9 @@ def schedule(lead_id: int, data: dict) -> Demo:
         _check_trainer(data["trainer_user_id"], lead.branch_id)
 
     demo_type = data.get("demo_type", "Standard")
+    duration = data.get("duration_minutes") or DEFAULT_DURATION[demo_type]
+    if data.get("trainer_user_id"):
+        demo_slots.ensure_trainer_free(data["trainer_user_id"], data["scheduled_at"], duration)
     approved_by = data.get("extra_demo_approved_by")
     if approved_by is None and user.has_role(*EXTRA_APPROVER_ROLES, branch_id=lead.branch_id):
         attended = demos_repo.attended_counts([lead.lead_id]).get(lead.lead_id, 0)
@@ -96,7 +99,7 @@ def schedule(lead_id: int, data: dict) -> Demo:
 
     demo = Demo(
         lead_id=lead.lead_id, course_id=course_id, branch_id=lead.branch_id, scheduled_at=data["scheduled_at"],
-        duration_minutes=data.get("duration_minutes") or DEFAULT_DURATION[demo_type], demo_type=demo_type,
+        duration_minutes=duration, demo_type=demo_type,
         mode=data.get("mode", "In-person"), meeting_link=data.get("meeting_link"),
         trainer_user_id=data.get("trainer_user_id"), extra_demo_approved_by=approved_by, created_by=user.user_id,
     )
@@ -111,6 +114,7 @@ def schedule(lead_id: int, data: dict) -> Demo:
     if approved_by:
         audit.record("EXTRA_DEMO_APPROVED", "demo", demo.demo_id, new={"approved_by": approved_by},
                      branch_id=demo.branch_id)
+    whatsapp_events.demo_booked(demo)
     return demo
 
 
@@ -118,6 +122,10 @@ def update(demo_id: int, data: dict) -> Demo:
     demo = _bookable(demo_id)
     if data.get("trainer_user_id"):
         _check_trainer(data["trainer_user_id"], demo.branch_id)
+    trainer_id = data.get("trainer_user_id", demo.trainer_user_id)
+    if trainer_id and (trainer_id != demo.trainer_user_id or data.get("duration_minutes", demo.duration_minutes) != demo.duration_minutes):
+        demo_slots.ensure_trainer_free(trainer_id, demo.scheduled_at, data.get("duration_minutes", demo.duration_minutes),
+                                       exclude_demo_id=demo.demo_id)
     for field, value in data.items():
         setattr(demo, field, value)
     db.session.flush()
@@ -139,6 +147,8 @@ def reschedule(demo_id: int, scheduled_at: datetime, reason: str) -> Demo:
     old = _bookable(demo_id)
     if scheduled_at <= datetime.now(timezone.utc):
         raise ValidationError("A demo must be in the future", {"scheduled_at": ["Must be in the future"]})
+    if old.trainer_user_id:
+        demo_slots.ensure_trainer_free(old.trainer_user_id, scheduled_at, old.duration_minutes, exclude_demo_id=old.demo_id)
     old.status = "Rescheduled"
     old.reschedule_reason = reason
     db.session.flush()
@@ -155,6 +165,7 @@ def reschedule(demo_id: int, scheduled_at: datetime, reason: str) -> Demo:
     leads_service.log_activity(old.lead, "Note", f"Demo {old.demo_code} rescheduled to {new.demo_code} · {reason}",
                                demo_id=new.demo_id)
     db.session.flush()
+    whatsapp_events.demo_rescheduled(new)
     return new
 
 
@@ -165,6 +176,7 @@ def cancel(demo_id: int, reason: str) -> Demo:
     leads_service.log_activity(demo.lead, "Note", f"Demo {demo.demo_code} cancelled · {reason}", demo_id=demo.demo_id)
     db.session.flush()
     db.session.refresh(demo)
+    whatsapp_events.demo_cancelled(demo)
     return demo
 
 
@@ -215,6 +227,12 @@ def record_outcome(demo_id: int, data: dict) -> Demo:
     if data["next_follow_up_at"] != demo.commercial_follow_up_due_at and task.revised_due_at is None:
         task.revised_due_at = data["next_follow_up_at"]
         task.revision_reason = "Next follow-up agreed at the demo"
+    if not _is_sales_side(demo.branch_id):  # the trainer recorded it: tell the owner counsellor the next step is the fee discussion
+        title = f"{lead.person.full_name}: demo attended · start the fee discussion" if demo.status == "Attended" \
+            else f"{lead.person.full_name}: demo no-show · follow up to rebook"
+        notifications.notify(
+            "DEMO_OUTCOME_RECORDED", event_key=f"demo.outcome:{demo.demo_code}", entity_type="lead", entity_id=lead.lead_id,
+            title=title, branch_id=lead.branch_id, body=summary, recipient_user_ids=[owner_id] if owner_id else None)
     db.session.flush()
     return demo
 
@@ -223,7 +241,7 @@ def approve_extra(demo_id: int) -> Demo:
     demo = get_demo(demo_id)
     user = current_user()
     if not user.has_role(*EXTRA_APPROVER_ROLES, branch_id=demo.branch_id):
-        raise Forbidden("Only an Academic Coordinator or Branch Manager of this branch can approve extra demos")
+        raise Forbidden("Only a Branch Manager of this branch can approve extra demos")
     if not demo.is_open:
         raise BusinessRule(f"Demo {demo.demo_code} is {demo.status}")
     demo.extra_demo_approved_by = user.user_id

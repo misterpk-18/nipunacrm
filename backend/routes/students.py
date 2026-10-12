@@ -8,7 +8,7 @@ from services.context import ADMIN_ROLES, FINANCE_ROLES, MANAGER_ROLES, STAFF_RO
 
 students_bp = Blueprint("students", __name__)
 REFUND_ROLES = MANAGER_ROLES + ("ACCOUNTS",)
-CERTIFICATE_ROLES = ADMIN_ROLES + ("ACADEMIC_COORDINATOR",)
+CERTIFICATE_ROLES = MANAGER_ROLES
 
 
 def route(rule: str, method: str, roles, fresh=False):

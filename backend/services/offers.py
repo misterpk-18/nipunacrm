@@ -1,10 +1,12 @@
 """Offer Master: versioned campaigns. Draft / Configured versions are editable; Active ones are replaced by a new version."""
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import func, select
 
 from config.database import db
-from models import Branch, Course, Offer, OfferBranch, OfferComplimentaryCourse, OfferCourse
+from models import Admission, Branch, Course, Offer, OfferBranch, OfferComplimentaryCourse, OfferCourse
+from repositories import fees as fees_repo
 from services import audit
 from services.context import current_user
 from services.errors import BusinessRule, Conflict, NotFound, ValidationError
@@ -185,3 +187,82 @@ def _require_ids(model, column, ids: list[int], field: str) -> None:
     missing = set(ids) - found
     if missing:
         raise ValidationError(f"Unknown {field}", {field: [f"Not found: {sorted(missing)}"]})
+
+
+# ---------------------------------------------------------------- eligibility for a fee discussion
+
+CENT = Decimal("0.01")
+
+
+def discount_for(offer: Offer, standard_fee: Decimal) -> Decimal:
+    """Rupees an offer takes off the standard fee (a complimentary course takes nothing off this fee)."""
+    if offer.benefit_type == "Discount Amount":
+        return min(offer.discount_amount, standard_fee)
+    if offer.benefit_type == "Discount Percent":
+        return (standard_fee * offer.discount_percent / 100).quantize(CENT)
+    return Decimal("0.00")
+
+
+def _held_course_ids(person_id: int) -> set[int]:
+    """Courses the person already has an admission for (cancelled ones don't count — same rule as the database)."""
+    return set(db.session.execute(select(Admission.course_id).where(
+        Admission.person_id == person_id, Admission.enrolment_status != "Cancelled")).scalars())
+
+
+def _why_not(offer: Offer, branch_id: int, course_id: int, on_date: date, used: dict[str, dict]) -> str | None:
+    """Plain-words reason the offer can't be applied to this deal today, or None if it can."""
+    if offer.valid_from and offer.valid_from > on_date:
+        return f"Starts on {offer.valid_from:%d %b %Y}"
+    if offer.valid_to and offer.valid_to < on_date:
+        return f"Ended on {offer.valid_to:%d %b %Y}"
+    if not offer.applies_to_all_branches and branch_id not in {link.branch_id for link in offer.branch_links}:
+        return "Not offered at this branch"
+    if not offer.applies_to_all_courses and course_id not in {link.course_id for link in offer.course_links}:
+        return "Doesn't apply to this course"
+    if offer.offer_code in used:
+        return (f"Already used by this learner on {used[offer.offer_code]['admission_code']} "
+                "(an offer can be used only once per person)")
+    return None
+
+
+def options_for(branch_id: int, course_id: int, person_id: int, standard_fee: Decimal, on_date: date) -> dict:
+    """Every Active offer sorted into eligible (with its saving and the final price) and unavailable (with the reason).
+
+    The best offer is the eligible discount with the largest saving that still leaves the learner at or above the
+    70% floor (an offer below the floor would need a special closing, so it is never auto-picked). Complimentary-course
+    offers save nothing on this fee, so they are listed but never auto-picked; one is eligible only while the learner
+    lacks at least one of its courses.
+    """
+    used = {u["offer_code"]: u for u in fees_repo.used_offers(person_id)}
+    held = _held_course_ids(person_id)
+    floor = (standard_fee * Decimal("0.70")).quantize(CENT)
+    active = db.session.execute(select(Offer).where(Offer.status == "Active").order_by(Offer.offer_code)).scalars()
+
+    eligible, unavailable = [], []
+    for offer in active:
+        reason = _why_not(offer, branch_id, course_id, on_date, used)
+        compl = []
+        if reason is None and offer.benefit_type == "Complimentary Course":
+            compl = [c for c in offer.complimentary_courses if c.course_id not in held]
+            if not compl:
+                reason = "The learner already has every complimentary course this offer gives"
+        if reason is not None:
+            unavailable.append({"offer_id": offer.offer_id, "offer_code": offer.offer_code,
+                                "offer_name": offer.offer_name, "reason": reason})
+            continue
+        saving = discount_for(offer, standard_fee)
+        final = standard_fee - saving
+        eligible.append({
+            "offer_id": offer.offer_id, "offer_code": offer.offer_code, "offer_name": offer.offer_name,
+            "benefit_type": offer.benefit_type, "discount_amount": offer.discount_amount,
+            "discount_percent": offer.discount_percent, "valid_to": offer.valid_to,
+            "saving": saving, "final_price": final, "below_floor": final < floor, "is_best": False,
+            "complimentary_courses": [{"course_id": c.course_id, "course_title": c.course.course_title,
+                                       "min_final_fee": c.min_final_fee} for c in compl],
+        })
+
+    eligible.sort(key=lambda o: (-o["saving"], o["offer_code"]))
+    best = next((o for o in eligible if o["saving"] > 0 and not o["below_floor"]), None)
+    if best is not None:
+        best["is_best"] = True
+    return {"eligible": eligible, "unavailable": unavailable, "best_offer_id": best["offer_id"] if best else None}

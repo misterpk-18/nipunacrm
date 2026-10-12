@@ -13,7 +13,7 @@ import {
   type AdmissionDetail,
   type Allocation,
 } from "@/api/admissions";
-import { batchKeys, batchesApi, useCurriculumVersions } from "@/api/batches";
+import { batchKeys, batchesApi } from "@/api/batches";
 import { useBranches, useCourses } from "@/api/reference";
 import { studentKeys } from "@/api/students";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import { ConfirmAction, DataTable, ErrorPanel, Facts, LoadingRows, Section, Stat
 import { date, dateTime, money, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { useCan } from "./can";
-import { CheckResult, FormDialog, LmsOwnedNote } from "./shared";
+import { CheckResult, FormDialog, LmsOwnedNote, LmsRefreshButton } from "./shared";
 
 const INVALIDATE = [admissionKeys.all, batchKeys.all, studentKeys.all, ["tasks"], ["invoices"]];
 
@@ -39,7 +39,6 @@ export function AdmissionPanel({ admissionId }: { admissionId: number }) {
       <Summary a={a} />
       <Actions a={a} />
       <Allocations a={a} />
-      <Curriculum a={a} />
       <FeeChanges a={a} />
     </div>
   );
@@ -47,10 +46,13 @@ export function AdmissionPanel({ admissionId }: { admissionId: number }) {
 
 function Summary({ a }: { a: AdmissionDetail }) {
   return (
-    <Section title="Admission and enrolment" subtitle={`${a.admission_code} · admitted ${date(a.admission_date)}`}>
+    <Section
+      title="Admission and enrolment"
+      subtitle={`${a.admission_code} · admitted ${date(a.admission_date)}`}
+      action={<LmsRefreshButton admissionId={a.admission_id} />}
+    >
       <div className="mb-3 flex flex-wrap gap-2">
         <Status>{a.enrolment_status}</Status>
-        <Status>{a.curriculum_status === "Mapped" ? "Curriculum Mapped" : "Curriculum Mapping Pending"}</Status>
         <Status>{`Payment ${a.payment_completion}`}</Status>
         {a.complimentary_of_admission_id && <Status kind="neutral">Complimentary</Status>}
       </div>
@@ -78,6 +80,16 @@ function Summary({ a }: { a: AdmissionDetail }) {
             a.invoice ? (
               <Link to="/invoices/$invoiceId" params={{ invoiceId: String(a.invoice.invoice_id) }} className="text-primary">
                 {a.invoice.invoice_number}
+              </Link>
+            ) : (
+              "—"
+            ),
+          ],
+          [
+            "Lead",
+            a.lead_id !== null ? (
+              <Link to="/leads/$leadId" params={{ leadId: String(a.lead_id) }} className="text-primary">
+                Open lead
               </Link>
             ) : (
               "—"
@@ -114,7 +126,7 @@ function Actions({ a }: { a: AdmissionDetail }) {
   const [transfer, setTransfer] = useState({ to_branch_id: "", reason: "", effective_date: "" });
   const [comp, setComp] = useState({ offer_id: "", course_id: "" });
 
-  const canEdit = can.manager(svc) || can.at(svc, "SALES", "FRONT_OFFICE", "ACCOUNTS", "ACADEMIC_COORDINATOR");
+  const canEdit = can.manager(svc) || can.at(svc, "SALES", "FRONT_OFFICE", "ACCOUNTS");
   const canComp = can.sell(a.original_branch.branch_id) && !a.complimentary_of_admission_id;
   const offers = useQuery({ queryKey: ["offers", "active"], queryFn: admissionsApi.activeOffers, enabled: canComp, retry: false });
 
@@ -249,7 +261,7 @@ function Actions({ a }: { a: AdmissionDetail }) {
           </Field>
         </FormDialog>
       )}
-      {can.coordinator(svc) && a.enrolment_status === "In Progress" && (
+      {can.completion(svc) && a.enrolment_status === "In Progress" && (
         <ConfirmAction
           title="Authorise academic completion?"
           description="Closes the active allocation as Completed, marks the learner as alumni and starts the support window."
@@ -366,7 +378,7 @@ function Allocations({ a }: { a: AdmissionDetail }) {
     ) : null;
 
   const closeAction = (x: Allocation) =>
-    x.status === "Active" && can.coordinator(svc) ? (
+    x.status === "Active" && can.completion(svc) ? (
       <FormDialog
         title={`Close allocation · ${x.batch_code}`}
         submitLabel="Close allocation"
@@ -447,53 +459,6 @@ function Allocations({ a }: { a: AdmissionDetail }) {
             </Button>
           </div>
           {check.data && <CheckResult ok={check.data.ok} reason={check.data.reason} owner={check.data.recovery_owner} />}
-        </div>
-      )}
-    </Section>
-  );
-}
-
-function Curriculum({ a }: { a: AdmissionDetail }) {
-  const can = useCan();
-  const allowed = can.coordinator(a.service_branch.branch_id);
-  const versions = useCurriculumVersions(a.course.course_id, allowed || can.at(null, "TRAINER", "BRANCH_MANAGER"));
-  const [versionId, setVersionId] = useState("");
-  const map = useApiMutation(() => admissionsApi.mapCurriculum(a.admission_id, Number(versionId)), {
-    success: "Curriculum mapped",
-    invalidate: INVALIDATE,
-    onSuccess: () => setVersionId(""),
-  });
-  const published = (versions.data ?? []).filter((v) => v.status === "Published" && !a.curricula.some((m) => m.curriculum_version_id === v.curriculum_version_id));
-  return (
-    <Section title="Curriculum mapping" subtitle={a.curriculum_status === "Mapped" ? "Mapped" : `Curriculum Mapping Pending · recovery: Academic Coordinator (${a.service_branch.branch_code})`}>
-      <div className="mb-3">
-        <LmsOwnedNote what="Curriculum mappings" />
-      </div>
-      <DataTable
-        rows={a.curricula}
-        rowKey={(c) => c.curriculum_version_id}
-        empty={<p className="text-sm text-muted-foreground">No curriculum version mapped yet.</p>}
-        columns={[
-          { header: "Course", cell: (c) => c.course.course_title },
-          { header: "Version", cell: (c) => c.version_label },
-          { header: "Status", cell: (c) => <Status>{c.status}</Status> },
-          { header: "Mapped", cell: (c) => dateTime(c.mapped_at) },
-        ]}
-      />
-      {allowed && !["Cancelled", "Completed"].includes(a.enrolment_status) && (
-        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
-          <Field label="Published curriculum version" htmlFor={`cv-${a.admission_id}`}>
-            <NativeSelect
-              id={`cv-${a.admission_id}`}
-              value={versionId}
-              placeholder={published.length ? "Choose version…" : "No other published version"}
-              options={published.map((v) => ({ value: v.curriculum_version_id, label: `${v.course.course_title} · ${v.version_label}` }))}
-              onChange={(e) => setVersionId(e.target.value)}
-            />
-          </Field>
-          <Button variant="outline" disabled={!versionId || map.isPending} onClick={() => map.mutate(undefined)}>
-            Map curriculum
-          </Button>
         </div>
       )}
     </Section>

@@ -7,7 +7,7 @@ Claude writes the text as schema-validated JSON; otherwise (or if the call fails
 """
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 from sqlalchemy import select
@@ -284,3 +284,93 @@ def feedback(data: dict) -> AiFeedback:
     db.session.add(row)
     db.session.flush()  # one feedback per user per insight / query
     return row
+
+
+# ---------------------------------------------------------------- counselling brief (playbook page 6)
+
+COUNSELLING_PROMPT_VERSION = "counselling-v1"
+
+
+def counselling_brief(lead_id: int, language: str | None):
+    """Understood need, one useful question, up to three suitable course options (only courses this branch offers),
+    approved information to share (only Approved knowledge ids) and one next action. Unknown fee, timetable or
+    academic claims are flagged for the responsible reviewer, never invented. Stored as an AI action record."""
+    from models import AiAction, Course, CourseBranch, LeadObjection
+    from services import playbook
+
+    lead = playbook._contactable(lead_id)
+    playbook.require_drafts(lead.branch_id)
+    language = language or lead.person.preferred_language
+    offered = list(db.session.execute(
+        select(Course).join(CourseBranch, CourseBranch.course_id == Course.course_id)
+        .where(CourseBranch.branch_code == lead.branch.branch_code, Course.status == "Active")
+        .order_by(Course.course_title)).scalars())
+    content = playbook.approved_content(lead)
+    objections = db.session.execute(select(LeadObjection).where(LeadObjection.lead_id == lead.lead_id,
+                                                                LeadObjection.status == "Open")).scalars().all()
+    facts = {**lead_facts(lead),
+             "need": {f: getattr(lead, f) for f in ("learner_goal", "prior_experience", "preferred_timing",
+                                                    "joining_window", "open_question")},
+             "missing": playbook.missing_need(lead),
+             "open_objections": [{"words": o.learner_words, "category": o.category} for o in objections],
+             "courses_offered_here": [{"course_code": c.course_code, "title": c.course_title} for c in offered],
+             "offerable_batches": [{"batch": b.batch_code, "starts": b.start_date, "timing": b.timing(),
+                                    "mode": b.delivery_mode, "seats_left": b.seats_left}
+                                   for b in playbook.batches_for(lead.course_id, lead.branch_id) if b.is_offerable],
+             "approved_information": [{"id": k.knowledge_id, "kind": k.kind, "title": k.title, "body": k.body,
+                                       "link": k.link_url} for k in content]}
+    schema = {"type": "object", "additionalProperties": False,
+              "required": ["understood_need", "useful_question", "course_options", "info_to_share", "next_action",
+                           "missing_checks"],
+              "properties": {
+                  "understood_need": {"type": "string"}, "useful_question": {"type": "string"},
+                  "course_options": {"type": "array", "items": _schema(course_code="string", why="string")},
+                  "info_to_share": {"type": "array", "items": {"type": "integer"}},
+                  "next_action": {"type": "string"},
+                  "missing_checks": {"type": "array", "items": {"type": "string"}}}}
+    task = (f"Prepare a counselling brief in {language}" + (" (Telugu script)" if language == "Telugu" else "") +
+            " for the staff member about to talk to this learner. Ask only what is missing: give ONE useful question. "
+            "Suggest up to three course options only from courses_offered_here and only if they fit the stated goal; "
+            "never recommend a course because its fee is higher, and say none fits if none does. info_to_share may only "
+            "contain ids from approved_information. If a fee, timetable, batch or academic fact is not in the facts, "
+            "add it to missing_checks for the responsible reviewer instead of stating it. Only offerable_batches may be "
+            "named, and only with their recorded timing; a batch whose timing is not confirmed is not a match. No invented urgency, "
+            "last-seat claims, deadlines, discounts or job guarantees. One next action that ends in a commitment "
+            "(a callback time, a demo slot, a syllabus share or an invoice request).")
+    data, model = _claude(task, facts, schema)
+    codes = {c.course_code: c for c in offered}
+    allowed_ids = {k.knowledge_id for k in content}
+    if data is None:
+        first_missing = facts["missing"][0] if facts["missing"] else None
+        card = playbook.recommend(lead)
+        data = {"understood_need": lead.learner_goal or f"Interested in {lead.course.course_title if lead.course else 'a course'}"
+                                                         f"; goal not recorded yet",
+                "useful_question": playbook.NEED_QUESTIONS[first_missing] if first_missing else
+                "What do you need to decide? Would a syllabus, counselling call, parent discussion or demo help?",
+                "course_options": [{"course_code": lead.course.course_code, "why": "The course they enquired about"}]
+                if lead.course else [],
+                "info_to_share": [k.knowledge_id for k in content if k.course_id == lead.course_id][:2],
+                "next_action": card["suggestion"] if card else "Agree one next step with a date",
+                "missing_checks": [] if any(b.is_offerable and b.timing_confirmed for b in
+                                            playbook.batches_for(lead.course_id, lead.branch_id))
+                else ["No offerable batch with confirmed timing yet: check with the Branch Manager"]}
+    options = [o for o in data["course_options"] if o["course_code"] in codes][:3]
+    shared = [i for i in data["info_to_share"] if i in allowed_ids]
+    dropped = len(data["course_options"]) - len(options) + len(data["info_to_share"]) - len(shared)
+    payload = {"understood_need": data["understood_need"], "useful_question": data["useful_question"],
+               "course_options": [{**o, "title": codes[o["course_code"]].course_title,
+                                   "course_id": codes[o["course_code"]].course_id} for o in options],
+               "info_to_share": [k.to_dict() for k in content if k.knowledge_id in shared],
+               "missing_checks": data["missing_checks"], "language": language,
+               "dropped_unverified_items": dropped}
+    action = AiAction(action_type="Counselling brief", action_code="counselling_brief",
+                      fingerprint=playbook.fingerprint(facts), lead_id=lead.lead_id, person_id=lead.person_id,
+                      branch_id=lead.branch_id, owner_user_id=lead.assigned_to, suggestion=data["next_action"],
+                      reason=data["understood_need"], evidence=[s for s in _sources(lead)] +
+                      [{"type": "sales_knowledge", "id": k.knowledge_id, "version": k.version} for k in content],
+                      payload=json.loads(json.dumps(payload, default=str)), record_version=lead.updated_at,
+                      model=model, prompt_version=COUNSELLING_PROMPT_VERSION, policy_version=playbook.POLICY_VERSION,
+                      expires_at=datetime.now(timezone.utc) + timedelta(hours=24), created_by=current_user().user_id)
+    db.session.add(action)
+    db.session.flush()
+    return action

@@ -1,4 +1,4 @@
-"""Admissions & academics (sidebar #5): admissions, transfers, fee changes, batches, allocation, curriculum."""
+"""Admissions & academics (sidebar #5): admissions, transfers, fee changes, batches, allocation."""
 from flask import Blueprint
 
 from controllers import admissions as admissions_controller
@@ -66,6 +66,11 @@ def resume_admission(admission_id: int):
 @route("/lms/sync-status", "get", ADMISSION_READERS)
 def lms_sync_status():
     return admissions_controller.lms_sync_status()
+
+
+@route("/admissions/<int:admission_id>/lms-refresh", "post", ADMISSION_READERS)
+def lms_refresh(admission_id: int):
+    return admissions_controller.lms_refresh(admission_id)
 
 
 @route("/admissions/<int:admission_id>/transfers", "post", ADMIN_ROLES + ("BRANCH_MANAGER",))
@@ -140,28 +145,8 @@ def set_joining_date(allocation_id: int):
     return admissions_controller.set_joining_date(allocation_id)
 
 
-# ---------------------------------------------------------------- curriculum / completion
+# ---------------------------------------------------------------- completion
 
-@route("/curriculum-versions", "get", ACADEMIC_ROLES + ("TRAINER",))
-def list_curriculum_versions():
-    return admissions_controller.list_curriculum_versions()
-
-
-@route("/curriculum-versions", "post", ADMIN_ROLES + ("ACADEMIC_COORDINATOR",))
-def create_curriculum_version():
-    return admissions_controller.create_curriculum_version()
-
-
-@route("/curriculum-versions/<int:version_id>/publish", "post", ADMIN_ROLES + ("ACADEMIC_COORDINATOR",))
-def publish_curriculum_version(version_id: int):
-    return admissions_controller.publish_curriculum_version(version_id)
-
-
-@route("/admissions/<int:admission_id>/curricula", "post", ADMIN_ROLES + ("ACADEMIC_COORDINATOR",))
-def map_curriculum(admission_id: int):
-    return admissions_controller.map_curriculum(admission_id)
-
-
-@route("/admissions/<int:admission_id>/complete", "post", ADMIN_ROLES + ("ACADEMIC_COORDINATOR",))
+@route("/admissions/<int:admission_id>/complete", "post", ACADEMIC_ROLES)
 def complete_admission(admission_id: int):
     return admissions_controller.complete_admission(admission_id)

@@ -331,13 +331,6 @@ test("placement team adds a company and job, updates a profile, and moves an app
   await shot(page, "placement");
 });
 
-test("academic coordinator sees alumni only", async ({ page }) => {
-  await login(page, USERS.coordGnt);
-  await page.goto("/placement-alumni");
-  await expect(page.getByRole("heading", { name: "Alumni and support" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "New job opening" })).toHaveCount(0);
-});
-
 test("sales cannot open placement", async ({ page }) => {
   await login(page, USERS.salesGnt);
   await page.goto("/placement-alumni");

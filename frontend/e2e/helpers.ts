@@ -13,7 +13,6 @@ export const USERS = {
   foGnt: "fo.gnt@nipuna.test",
   accountsGnt: "accounts.gnt@nipuna.test",
   accountsVij: "accounts.vij@nipuna.test",
-  coordGnt: "coordinator.gnt@nipuna.test",
   trainerG1: "trainer.g1@nipuna.test",
   placementGnt: "placement.gnt@nipuna.test",
 } as const;

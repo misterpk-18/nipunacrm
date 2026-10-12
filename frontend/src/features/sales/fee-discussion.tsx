@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { ArrowRight, BadgeCheck, FileText, IndianRupee, Search, Send, ShieldAlert } from "lucide-react";
+import { ArrowRight, BadgeCheck, FileText, IndianRupee, RefreshCw, Search, Send, ShieldAlert } from "lucide-react";
 import { ApiError } from "@/api/client";
-import { CLOSED_MILESTONES, feeKeys, feesApi, type FeeDiscussion, type FeeVersion, type Offer } from "@/api/fees";
+import { dealKeys, dealsApi } from "@/api/deals";
+import { CLOSED_MILESTONES, feeKeys, feesApi, type FeeDiscussion, type FeeVersion, type ScrSummary } from "@/api/fees";
 import { leadKeys, leadsApi, useLead } from "@/api/leads";
 import { LEAD_OWNER_ROLES } from "@/api/reference";
 import { useAuth, useBranchFilter } from "@/auth/auth";
@@ -16,7 +17,11 @@ import { DataTable, Empty, ErrorPanel, Facts, LoadingRows, PageHead, QueryView, 
 import { date, dateTime, money, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { CreateInvoiceDialog } from "@/features/finance/create-invoice";
+import { DeliveryPlanPanel } from "./deal-panels";
+import { FeeValidity } from "./fee-validity";
 import { FormDialog, SALES_SIDE } from "./shared";
+import { ApprovalStatus, ConcessionNotice } from "./special-closing";
+import { usePricePreview } from "./use-price-preview";
 
 const INVALIDATE = [feeKeys.all, feeKeys.scr, leadKeys.all, ["pipeline"], ["invoices"], ["dashboard"]];
 
@@ -196,15 +201,36 @@ function LeadDiscussions({ leadId }: { leadId: number }) {
   );
 }
 
-// ---------------------------------------------------------------- one discussion
+// ---------------------------------------------------------------- one discussion: step 1 price, step 2 delivery plan, then invoice
 
 function DiscussionView({ discussionId }: { discussionId: number }) {
-  const q = useQuery({ queryKey: feeKeys.detail(discussionId), queryFn: () => feesApi.get(discussionId) });
+  const q = useQuery({
+    queryKey: feeKeys.detail(discussionId),
+    queryFn: () => feesApi.get(discussionId),
+    // a request waiting for a manager's decision updates this screen by itself
+    refetchInterval: (query) => (query.state.data?.current_version?.status === "Pending Approval" ? 8000 : false),
+  });
   const { hasRole } = useAuth();
   const [dialog, setDialog] = useState<null | "scr" | "invoice">(null);
+  const leadId = q.data?.lead.lead_id ?? 0;
+  const lead = useQuery({ queryKey: leadKeys.detail(leadId), queryFn: () => leadsApi.get(leadId), enabled: leadId > 0 });
+  const plan = useQuery({ queryKey: dealKeys.deliveryPlan(leadId), queryFn: () => dealsApi.deliveryPlan(leadId), enabled: leadId > 0 });
 
   const approve = useApiMutation((versionId: number) => feesApi.approveVersion(versionId), { success: (v) => `Version ${v.version_no} approved`, invalidate: INVALIDATE });
   const share = useApiMutation(() => feesApi.share(discussionId), { success: "Approved fee marked as shared", invalidate: INVALIDATE });
+  const reissue = useApiMutation(() => feesApi.reissue(discussionId), {
+    success: (x) => `Re-issued as version ${x.version_no} at ${money(x.final_payable)}`,
+    invalidate: INVALIDATE,
+  });
+  const acceptCounter = useApiMutation(
+    (scr: ScrSummary) =>
+      feesApi.addVersion(discussionId, {
+        offer_id: q.data?.current_version?.offer?.offer_id ?? null,
+        extra_concession: scr.counter_extra ?? "0",
+        request_reason: `Accepting the counteroffer on ${scr.scr_code}`,
+      }),
+    { success: (x) => `Version ${x.version_no} saved and sent for approval`, invalidate: INVALIDATE },
+  );
 
   if (q.isLoading) return <LoadingRows rows={8} />;
   if (q.error) return <ErrorPanel error={q.error} onRetry={() => void q.refetch()} />;
@@ -214,7 +240,10 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
   const canInvoice = hasRole(...SALES_SIDE, "ACCOUNTS");
   const closed = CLOSED_MILESTONES.includes(d.milestone);
   const workable = salesSide && !closed;
-  const pendingScr = v?.special_closing_requests.find((s) => s.status === "Pending");
+  const expired = v?.validity?.state === "expired";
+  const approved = v?.status === "Approved" && !expired;
+  const planAccepted = plan.data?.plan?.status === "Accepted";
+  const reissueInfo = d.reissue;
 
   return (
     <>
@@ -238,8 +267,9 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
       />
       <div className="grid gap-4 lg:grid-cols-3">
         <Section
-          title={v?.status === "Approved" ? "Approved commercial discussion" : "Commercial discussion"}
-          subtitle="Default validity: 7 calendar days or offer expiry, whichever comes first"
+          title={`Step 1 · ${v?.status === "Approved" ? "Price agreed" : "Agree the price"}`}
+          subtitle="A version is valid for 7 calendar days or until the offer ends, whichever comes first"
+          action={<FeeValidity validity={v?.validity} />}
           className="min-w-0 lg:col-span-2"
         >
           {v ? (
@@ -254,32 +284,52 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
                 ["Extra concession", money(v.extra_concession)],
                 ["Final payable amount", <b key="fp">{money(v.final_payable)}</b>],
                 ["Minimum payable floor (70%)", money(v.minimum_floor)],
-                ["Validity", date(v.valid_until)],
+                ["Valid until", date(v.valid_until)],
                 ["Counsellor", d.counsellor?.full_name ?? "—"],
                 ["Fee shared", d.fee_shared_at ? dateTime(d.fee_shared_at) : "Not yet"],
               ]}
             />
           ) : (
-            <Empty title="No version yet">Save the first version below — standard fee, offer and any extra concession.</Empty>
+            <Empty title="No version yet">Choose the offer and any extra concession below, then save the price.</Empty>
           )}
           <div className="mt-4 flex flex-wrap gap-2">
             <Status>{`${d.milestone} · milestone`}</Status>
             {v && <Status>{`Version ${v.version_no} · ${v.status}`}</Status>}
             {v?.below_floor && <Status kind="danger">Below floor</Status>}
             {v?.needs_special_closing && v.status !== "Approved" && <Status kind="warn">Needs special closing</Status>}
-            {v?.special_closing_requests.map((s) => (
-              <Status key={s.scr_id}>{`${s.scr_code} · ${s.status}${s.counter_extra ? ` · counter ${money(s.counter_extra)}` : ""}`}</Status>
-            ))}
           </div>
-          {pendingScr && (
+          {v && (
             <div className="mt-4">
-              <Warning>
-                Special closing {pendingScr.scr_code} for {money(pendingScr.requested_extra)} is waiting for a manager's decision (5 staffed-minute target; a timeout
-                never approves).
-              </Warning>
+              <ApprovalStatus version={v} canAct={workable && !expired} busy={acceptCounter.isPending} onAcceptCounter={(scr) => acceptCounter.mutate(scr)} />
             </div>
           )}
-          {v && workable && (
+          {expired && reissueInfo?.available && workable && (
+            <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm" role="status">
+              <b>This price has expired.</b>{" "}
+              {reissueInfo.same_price ? (
+                <>
+                  The same offer and price are still available: {money(reissueInfo.new_final_payable)}.
+                  <div className="mt-2">
+                    <Button size="sm" disabled={reissue.isPending} onClick={() => reissue.mutate(undefined)}>
+                      <RefreshCw />
+                      Re-issue at same price
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  It can't be re-issued at the same price because things changed:
+                  <ul className="mt-1 list-disc pl-5">
+                    {reissueInfo.changes.map((c) => (
+                      <li key={c}>{c}</li>
+                    ))}
+                  </ul>
+                  Save a new price below.
+                </>
+              )}
+            </div>
+          )}
+          {v && workable && !expired && (
             <div className="mt-5 flex flex-wrap gap-2">
               {["Discussion Saved", "Counteroffered"].includes(v.status) && !v.needs_special_closing && (
                 <Button disabled={approve.isPending} onClick={() => approve.mutate(v.version_id)}>
@@ -301,20 +351,6 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
               )}
             </div>
           )}
-          {v && v.status === "Approved" && canInvoice && !closed && ["Approved", "Fee Shared"].includes(d.milestone) && (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button onClick={() => setDialog("invoice")}>
-                <FileText />
-                Create invoice
-              </Button>
-              <Button variant="outline" asChild>
-                <Link to="/leads/$leadId" params={{ leadId: String(d.lead.lead_id) }}>
-                  Delivery plan on the deal
-                </Link>
-              </Button>
-              <span className="text-xs text-muted-foreground">The course needs an accepted delivery plan; the payment schedule is set on the invoice.</span>
-            </div>
-          )}
         </Section>
         <Section title="Version history" className="min-w-0">
           {d.versions.length ? (
@@ -324,7 +360,15 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
               columns={[
                 { header: "Version", cell: (x) => `v${x.version_no}${x.version_id === v?.version_id ? " · Current" : ""}` },
                 { header: "Final payable", cell: (x) => money(x.final_payable) },
-                { header: "Status", cell: (x) => <Status>{x.status}</Status> },
+                {
+                  header: "Status",
+                  cell: (x) => (
+                    <span className="flex flex-wrap items-center gap-1">
+                      <Status>{x.status}</Status>
+                      {x.version_id === v?.version_id && <FeeValidity validity={x.validity} />}
+                    </span>
+                  ),
+                },
               ]}
             />
           ) : (
@@ -332,14 +376,36 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
           )}
         </Section>
         {workable && d.milestone !== "Invoice Issued" && (
-          <Section title={v ? "New version / counteroffer" : "First version"} subtitle="Amounts are frozen once saved; a new version supersedes the open one." className="min-w-0 lg:col-span-2">
-            <VersionForm discussion={d} />
+          <Section
+            title={v ? "New version / counteroffer" : "Offer and price"}
+            subtitle="The best eligible offer is applied for you — switch or remove it. Amounts are frozen once saved; a new version supersedes the open one."
+            className="min-w-0 lg:col-span-2"
+          >
+            <PriceForm discussion={d} />
           </Section>
         )}
         <Section title="Invoices for this lead" className="min-w-0">
           <LeadInvoices leadId={d.lead.lead_id} />
         </Section>
       </div>
+      {approved && (
+        <div className="mt-4 grid gap-3">
+          <div>
+            <h2 className="text-foreground">Step 2 · Delivery plan</h2>
+            <p className="mt-1 text-sm text-muted-foreground">The price is agreed. Confirm how and where the learner will study, then create the invoice.</p>
+          </div>
+          {lead.data && <DeliveryPlanPanel lead={lead.data} />}
+          {canInvoice && !closed && ["Approved", "Fee Shared"].includes(d.milestone) && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button disabled={!planAccepted} onClick={() => setDialog("invoice")}>
+                <FileText />
+                Create invoice
+              </Button>
+              {!planAccepted && <span className="text-xs text-muted-foreground">Accept the delivery plan above to unlock the invoice; the payment schedule is set on the invoice.</span>}
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-4">
         <Warning>After the first verified payment, fee changes require Founder / CEO or Super Admin approval plus an Accounts correction. No self-approval.</Warning>
       </div>
@@ -349,86 +415,157 @@ function DiscussionView({ discussionId }: { discussionId: number }) {
   );
 }
 
-type VersionValues = { offer_id: string; extra_concession: string; valid_until: string; notes: string };
+type VersionValues = { offer_id: string; extra_concession: string; valid_until: string; notes: string; request_reason: string };
 
-function offerDiscount(offer: Offer, standard: number) {
-  if (offer.benefit_type === "Discount Amount") return Math.min(Number(offer.discount_amount ?? 0), standard);
-  if (offer.benefit_type === "Discount Percent") return Math.round(standard * Number(offer.discount_percent ?? 0)) / 100;
-  return 0;
-}
-
-/** A version is the price only (standard fee − offer − extra concession); the 1–3 instalments are set on the invoice. */
-function VersionForm({ discussion }: { discussion: FeeDiscussion }) {
+/** Offer (best one pre-selected, others and "why not" listed) + extra concession with the live limit check. A price that
+ *  needs no approval is saved and approved in one click; one that does is saved and sent for approval in one click. */
+function PriceForm({ discussion }: { discussion: FeeDiscussion }) {
   const current = discussion.current_version;
-  const form = useForm<VersionValues>({ defaultValues: { offer_id: "", extra_concession: "0", valid_until: "", notes: "" } });
-  const offers = discussion.applicable_offers ?? [];
-  const used = discussion.used_offers ?? [];
+  const options = discussion.offer_options ?? { eligible: [], unavailable: [], best_offer_id: null };
+  const form = useForm<VersionValues>({ defaultValues: { offer_id: "", extra_concession: "0", valid_until: "", notes: "", request_reason: "" } });
   const standard = Number(current?.standard_fee ?? discussion.course.standard_fee);
-  const [offerId, extra] = form.watch(["offer_id", "extra_concession"]);
-  const offer = offers.find((o) => String(o.offer_id) === offerId);
-  const finalPayable = Math.max(standard - (offer ? offerDiscount(offer, standard) : 0) - Number(extra || 0), 0);
+  const [offerId, extra, reason] = form.watch(["offer_id", "extra_concession", "request_reason"]);
+  const chosen = options.eligible.find((o) => String(o.offer_id) === offerId);
+  const preview = usePricePreview(discussion.fee_discussion_id, chosen?.offer_id ?? null, extra || "0");
+  const p = preview.data;
+  const finalPayable = p ? Number(p.final_payable) : Math.max(standard - Number(chosen?.saving ?? 0) - Number(extra || 0), 0);
+  const needsApproval = p?.needs_approval ?? Number(extra || 0) > 0;
+  const used = discussion.used_offers ?? [];
 
+  // Auto-apply: a fresh price starts from the version's own offer, or the best eligible offer when there is none yet.
   useEffect(() => {
+    const keep = current?.offer && options.eligible.some((o) => o.offer_id === current.offer!.offer_id) ? current.offer.offer_id : null;
     form.reset({
-      offer_id: current?.offer ? String(current.offer.offer_id) : "",
+      offer_id: String(keep ?? (current ? "" : (options.best_offer_id ?? ""))),
       extra_concession: current ? String(Number(current.extra_concession)) : "0",
       valid_until: "",
       notes: "",
+      request_reason: "",
     });
-  }, [current, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the saved version (or the best offer) changes
+  }, [current?.version_id, options.best_offer_id, form]);
 
   const save = useApiMutation(
-    (v: VersionValues) =>
-      feesApi.addVersion(discussion.fee_discussion_id, {
+    async (mode: "draft" | "approve" | "request") => {
+      const v = form.getValues();
+      const saved = await feesApi.addVersion(discussion.fee_discussion_id, {
         offer_id: v.offer_id ? Number(v.offer_id) : null,
         extra_concession: v.extra_concession || "0",
         valid_until: v.valid_until || null,
         notes: v.notes || null,
-      }),
+        request_reason: mode === "request" ? v.request_reason : null,
+      });
+      return mode === "approve" ? feesApi.approveVersion(saved.version_id) : saved;
+    },
     {
-      success: (x) => `Version ${x.version_no} saved · final payable ${money(x.final_payable)}${x.needs_special_closing ? " · needs special closing" : ""}`,
+      success: (x) =>
+        x.status === "Approved"
+          ? `Price approved · version ${x.version_no} · ${money(x.final_payable)}`
+          : x.status === "Pending Approval"
+            ? `Version ${x.version_no} saved and sent for approval`
+            : `Version ${x.version_no} saved · final payable ${money(x.final_payable)}`,
       invalidate: INVALIDATE,
       silentValidation: true,
       onError: (e) => applyServerErrors(form, e),
     },
   );
   const e = form.formState.errors;
-  const offerHint = [
-    offers.length ? null : "No active offer for this course and branch today",
-    used.length ? `Already used by this learner (one use per person): ${used.map((u) => `${u.offer_code} on ${u.admission_code}`).join(", ")}` : null,
-  ].filter(Boolean).join(" · ");
   return (
-    <form className="grid gap-3 sm:grid-cols-2" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
-      <Field label="Offer" htmlFor="v-offer" hint={offerHint || undefined} error={e.offer_id?.message}>
-        <NativeSelect
-          id="v-offer"
-          placeholder="No offer"
-          options={offers.map((o) => ({
-            value: o.offer_id,
-            label: `${o.offer_name} · ${o.benefit_type === "Discount Amount" ? money(o.discount_amount) : o.benefit_type === "Discount Percent" ? `${Number(o.discount_percent)}%` : "complimentary course"}`,
-          }))}
-          {...form.register("offer_id")}
-        />
-      </Field>
-      <Field label="Extra concession (₹)" htmlFor="v-extra" hint="Any extra concession needs a special closing approval" error={e.extra_concession?.message}>
-        <Input id="v-extra" type="number" min={0} step="1" inputMode="numeric" {...form.register("extra_concession")} />
-      </Field>
-      <Field label="Valid until (optional)" htmlFor="v-valid" hint="Defaults to 7 days or the offer's end" error={e.valid_until?.message}>
-        <Input id="v-valid" type="date" min={todayIST()} {...form.register("valid_until")} />
-      </Field>
-      <Field label="Notes" htmlFor="v-notes">
-        <Textarea id="v-notes" rows={2} {...form.register("notes")} />
-      </Field>
-      <div className="sm:col-span-2">
-        <p className="mb-2 text-xs text-muted-foreground">
-          Standard fee {money(standard)} · final payable about {money(finalPayable)} — the final payable, 70% floor and validity are confirmed when saved. The
-          payment schedule (1–3 instalments) is agreed when the invoice is created.
+    <form className="grid gap-4" onSubmit={(ev) => ev.preventDefault()}>
+      <fieldset className="grid gap-2">
+        <legend className="mb-1 text-sm font-medium">Offer</legend>
+        <OfferChoice selected={offerId === ""} onSelect={() => form.setValue("offer_id", "")} title="No offer" detail={`Standard fee ${money(standard)}`} />
+        {options.eligible.map((o) => (
+          <OfferChoice
+            key={o.offer_id}
+            selected={offerId === String(o.offer_id)}
+            onSelect={() => form.setValue("offer_id", String(o.offer_id))}
+            title={o.offer_name}
+            badge={o.is_best ? "Best saving" : undefined}
+            detail={
+              o.benefit_type === "Complimentary Course"
+                ? `Complimentary course: ${o.complimentary_courses.map((c) => c.course_title).join(" or ")} · no change to this fee`
+                : `Saves ${money(o.saving)} → ${money(o.final_price)}${o.below_floor ? " · below the 70% floor, needs special closing" : ""}`
+            }
+          />
+        ))}
+        {e.offer_id?.message && <p className="text-xs text-destructive">{e.offer_id.message}</p>}
+        {(options.unavailable.length > 0 || used.length > 0) && (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Why other offers aren't available ({options.unavailable.length})</summary>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5">
+              {options.unavailable.map((u) => (
+                <li key={u.offer_id}>
+                  <b>{u.offer_name}</b> — {u.reason}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {options.eligible.length === 0 && options.unavailable.length === 0 && <p className="text-xs text-muted-foreground">No active offer for this course and branch today.</p>}
+      </fieldset>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Extra concession (₹)" htmlFor="v-extra" error={e.extra_concession?.message}>
+          <Input id="v-extra" type="number" min={0} step="1" inputMode="numeric" {...form.register("extra_concession")} />
+          <div className="mt-1 min-h-4">
+            <ConcessionNotice preview={p} error={preview.error} />
+          </div>
+        </Field>
+        <Field label="Valid until (optional)" htmlFor="v-valid" hint="Defaults to 7 days or the offer's end" error={e.valid_until?.message}>
+          <Input id="v-valid" type="date" min={todayIST()} {...form.register("valid_until")} />
+        </Field>
+        <Field label="Notes" htmlFor="v-notes" className="sm:col-span-2">
+          <Textarea id="v-notes" rows={2} {...form.register("notes")} />
+        </Field>
+        {needsApproval && (
+          <Field label="Why does the learner need this concession?" htmlFor="v-reason" hint="Sent to the approver with the request" error={e.request_reason?.message} className="sm:col-span-2">
+            <Textarea id="v-reason" rows={2} {...form.register("request_reason")} />
+          </Field>
+        )}
+      </div>
+      <div>
+        <p className="mb-2 text-sm">
+          Final payable <b>{money(finalPayable)}</b>
+          <span className="text-xs text-muted-foreground">
+            {" "}
+            · standard {money(standard)}
+            {chosen ? ` − offer ${money(chosen.saving)}` : ""}
+            {Number(extra) > 0 ? ` − extra ${money(extra)}` : ""}. The 1–3 instalments are agreed when the invoice is created.
+          </span>
         </p>
-        <Button type="submit" variant="outline" disabled={save.isPending}>
-          Save discussion
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {needsApproval ? (
+            <Button type="button" disabled={save.isPending || !reason.trim() || preview.isError} onClick={() => save.mutate("request")}>
+              <ShieldAlert />
+              Request approval
+            </Button>
+          ) : (
+            <Button type="button" disabled={save.isPending || preview.isError} onClick={() => save.mutate("approve")}>
+              <BadgeCheck />
+              Save and approve price
+            </Button>
+          )}
+          <Button type="button" variant="outline" disabled={save.isPending || preview.isError} onClick={() => save.mutate("draft")}>
+            Save as draft
+          </Button>
+        </div>
       </div>
     </form>
+  );
+}
+
+function OfferChoice({ selected, onSelect, title, detail, badge }: { selected: boolean; onSelect: () => void; title: string; detail: string; badge?: string | undefined }) {
+  return (
+    <label className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${selected ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}>
+      <input type="radio" name="offer" className="mt-1" checked={selected} onChange={onSelect} />
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2 font-medium">
+          {title}
+          {badge && <Status kind="good">{badge}</Status>}
+        </span>
+        <span className="block text-xs text-muted-foreground">{detail}</span>
+      </span>
+    </label>
   );
 }
 

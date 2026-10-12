@@ -93,10 +93,10 @@ def test_brief_with_claude_uses_structured_output(client, people, course, fake_c
     lead = create_lead(client, people["sravani"]["h"], course_id=course)
     body = call(client, "post", f"/leads/{lead['lead_id']}/ai/brief", people["sravani"]["h"], 201, json={})
 
-    assert body["brief"]["content"] == "Ananya is keen on Data Science." and body["brief"]["model"] == "claude-opus-5"
+    assert body["brief"]["content"] == "Ananya is keen on Data Science." and body["brief"]["model"] == "claude-opus-5-5"
     assert body["brief"]["suggested_message"] == "Hi Ananya!"
     request = messages.calls[0]
-    assert request["model"] == "claude-opus-5" and request["fallbacks"] == "default"
+    assert request["model"] == "claude-opus-5-5" and request["fallbacks"] == "default"
     assert request["betas"] == ["server-side-fallback-2026-07-01"]
     schema = request["output_config"]["format"]["schema"]
     assert schema["required"] == ["brief", "priority_explanation", "whatsapp_message"] and not schema["additionalProperties"]
@@ -127,7 +127,9 @@ def test_escalation_job(app, client, people, course, run_sql):
     assert db.session.get(SpecialClosingRequest, scr["scr_id"]).escalated_at is not None
 
 
-def test_demo_reminder_job_creates_tasks(client, people, course, run_sql):
+def test_demo_reminder_job_creates_tasks(client, people, course, run_sql, monkeypatch):
+    from services import whatsapp
+    monkeypatch.setattr(whatsapp, "configured", lambda: False)  # WhatsApp off: the owner gets a task (live: test_whatsapp_auto_w1)
     lead = create_deal(client, people["sravani"]["h"], course_id=course)
     demo = call(client, "post", f"/leads/{lead['lead_id']}/demos", people["sravani"]["h"], 201,
                 json={"scheduled_at": future(48)})

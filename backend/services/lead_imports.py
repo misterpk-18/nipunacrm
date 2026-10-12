@@ -176,7 +176,7 @@ def run_import(import_id: int) -> LeadImport:
                           created_by=user.user_id)
         db.session.add(enquiry)
         db.session.flush()
-        lead = leads_service.create_from_enquiry(enquiry, person, {"course_id": row.course_id, "intake_status": intake})
+        lead = leads_service.create_from_enquiry(enquiry, person, {"course_id": row.course_id, "intake_status": intake, "imported": True})
         row.lead_id, row.enquiry_id, row.result = lead.lead_id, enquiry.enquiry_id, "Imported"
 
     batch.status = "Imported"

@@ -1,10 +1,14 @@
 /** Small building blocks shared by the academics screens. */
 import { useState, type ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useLmsSyncStatus } from "@/api/lms";
+import { admissionKeys, admissionsApi } from "@/api/admissions";
+import { lmsKeys, useLmsSyncStatus } from "@/api/lms";
+import { studentKeys } from "@/api/students";
 import { Warning } from "@/components/crm/ui";
 import { dateTime } from "@/lib/format";
+import { useApiMutation } from "@/lib/mutation";
 
 /** A button that opens a small form dialog; `onSubmit` returns a promise, the dialog closes when it resolves. */
 export function FormDialog({
@@ -103,5 +107,21 @@ export function LmsOwnedNote({ what }: { what: string }) {
     <Warning>
       {what} are managed in the Nipuna LMS and mirrored here read-only{synced ? ` · last synced ${dateTime(synced)}` : " · not synced yet"}.
     </Warning>
+  );
+}
+
+/** "Refresh from LMS": apply this admission's current LMS state now instead of waiting for the next pull. */
+export function LmsRefreshButton({ admissionId }: { admissionId: number }) {
+  const status = useLmsSyncStatus();
+  const refresh = useApiMutation(() => admissionsApi.lmsRefresh(admissionId), {
+    success: "Refreshed from the LMS",
+    invalidate: [admissionKeys.all, studentKeys.all, lmsKeys.syncStatus],
+  });
+  if (!status.data?.configured) return null;
+  return (
+    <Button variant="outline" size="sm" disabled={refresh.isPending} onClick={() => refresh.mutate(undefined)}>
+      <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
+      Refresh from LMS
+    </Button>
   );
 }

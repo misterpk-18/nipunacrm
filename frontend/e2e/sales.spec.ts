@@ -232,12 +232,11 @@ test("counsellor books a demo for a deal from Lead 360", async ({ page, request 
   const lead = await createDeal(request, `Deal Demo ${Date.now().toString(36)}`);
   await login(page, USERS.salesGnt);
   await page.goto(`/leads/${lead.lead_id}`);
-  await page.getByRole("button", { name: /Schedule demo/ }).click();
+  await page.getByRole("button", { name: /Book demo/ }).first().click();
   const dialog = page.getByRole("dialog");
-  const at = new Date(Date.now() + 2 * 86400_000).toISOString().slice(0, 11) + "12:00";
-  await dialog.getByLabel("Demo date and time").fill(at);
-  await dialog.getByRole("button", { name: "Schedule" }).click();
-  await expect(page.locator("[data-sonner-toast]").getByText(/Demo DM-GNT-\d+ scheduled/)).toBeVisible();
+  await dialog.locator("button[aria-pressed]").first().click(); // the first free trainer slot
+  await dialog.getByRole("button", { name: "Book demo" }).click();
+  await expect(page.locator("[data-sonner-toast]").getByText(/Demo DM-GNT-\d+ booked/)).toBeVisible();
   await page.goto("/demos");
   await expect(page.getByRole("article").filter({ hasText: lead.name }).first()).toBeVisible();
 });

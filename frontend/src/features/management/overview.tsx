@@ -12,14 +12,16 @@ import { list } from "@/api/client";
 import { leadsApi, type LeadRow } from "@/api/leads";
 import { useOverview, type Overview } from "@/api/overview";
 import type { PaymentRow } from "@/api/payments";
-import { useBranchFilter } from "@/auth/auth";
+import { useAuth, useBranchFilter } from "@/auth/auth";
 import { Avatar, Empty, ErrorPanel, KpiCard, LeadChip, LoadingRows, QueryView, Section, Status } from "@/components/crm/ui";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { date, dateTime, isPast, money, relative, sumMoney, todayIST } from "@/lib/format";
+import { LmsSyncHealth } from "@/features/workspace/lms-sync-health";
 import { useCanOpen } from "./shared";
 
 export function OverviewTab() {
+  const { hasRole } = useAuth();
   const branchId = useBranchFilter();
   const overview = useOverview({ branch_id: branchId });
   const canOpen = useCanOpen();
@@ -30,6 +32,7 @@ export function OverviewTab() {
   if (overview.error) return <ErrorPanel error={overview.error} onRetry={() => void overview.refetch()} />;
   return (
     <div className="space-y-4 lg:space-y-6">
+      {hasRole("SUPER_ADMIN") && <LmsSyncHealth />}
       <div className="dash-kpis" aria-label="Key figures">
         <KpiCard
           label="Open enquiries"

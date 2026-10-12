@@ -146,3 +146,29 @@ def invoice_outstanding(invoice_ids: set[int]) -> dict[int, object]:
     rows = db.session.execute(select(InvoiceBalance.invoice_id, InvoiceBalance.outstanding)
                               .where(InvoiceBalance.invoice_id.in_(invoice_ids))).all()
     return dict(rows)
+
+
+def lead_open_demos(lead_ids: list[int]) -> dict[int, Demo]:
+    """Each course's next open demo (Scheduled / Confirmed), the earliest first."""
+    if not lead_ids:
+        return {}
+    rows = db.session.execute(select(Demo).where(Demo.lead_id.in_(lead_ids), Demo.status.in_(Demo.OPEN_STATUSES))
+                              .order_by(Demo.scheduled_at.desc())).unique().scalars()
+    return {demo.lead_id: demo for demo in rows}  # descending, so the earliest wins
+
+
+def lead_fee_state(lead_ids: list[int]) -> dict[int, dict]:
+    """Each course's live fee discussion: its current version's status and whether it needs special closing."""
+    if not lead_ids:
+        return {}
+    state = {}
+    discussions = db.session.execute(
+        select(FeeDiscussion).where(FeeDiscussion.lead_id.in_(lead_ids),
+                                    FeeDiscussion.milestone.not_in(("Expired", "Cancelled")))
+        .order_by(FeeDiscussion.fee_discussion_id)).unique().scalars()
+    for discussion in discussions:
+        version = discussion.current_version
+        state[discussion.lead_id] = {"milestone": discussion.milestone,
+                                     "status": version.status if version else None,
+                                     "needs_special_closing": bool(version and version.needs_special_closing)}
+    return state

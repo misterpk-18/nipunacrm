@@ -2,7 +2,7 @@
 import json
 from decimal import Decimal
 
-from flask import request
+from flask import request, send_file
 
 from controllers.common import Validator, created, get_page_params, json_body, ok, paginated
 from models.enums import CORRECTION_REQUEST_STATUSES, PAYMENT_ENTRY_TYPES, PAYMENT_VERIFICATIONS
@@ -78,6 +78,11 @@ def record_payment():
 
 def get_payment(payment_id: int):
     return ok(payments_service.get_payment(payment_id).to_dict())
+
+
+def payment_proof(payment_id: int):
+    path, name = payments_service.proof_file(payment_id)
+    return send_file(path, download_name=name, as_attachment=False)
 
 
 def verify_payment(payment_id: int):

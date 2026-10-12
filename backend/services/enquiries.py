@@ -3,7 +3,7 @@ from config.database import db
 from models import Enquiry, Person
 from repositories import leads as leads_repo
 from repositories.common import paginate
-from services import audit
+from services import audit, whatsapp_events
 from services import leads as leads_service
 from services import persons as persons_service
 from services.context import current_user
@@ -82,4 +82,6 @@ def convert_to_lead(enquiry_id: int, data: dict):
             raise ValidationError("A name and phone are needed to create the person", {"person": ["Name and phone required"]})
         person = persons_service.create_person({**details, "registered_branch_id": enquiry.branch_id})
 
-    return leads_service.create_from_enquiry(enquiry, person, data)
+    lead = leads_service.create_from_enquiry(enquiry, person, data)
+    whatsapp_events.enquiry_received(lead)
+    return lead

@@ -1,4 +1,6 @@
 """LMS outbox (db 026): events written with the change, source versions, delivery to the LMS and the backfill."""
+from datetime import datetime, timezone
+
 from sqlalchemy import select, text
 
 from config.database import db
@@ -202,6 +204,24 @@ def test_unreachable_lms_stops_the_run(client, people, course, monkeypatch):
     monkeypatch.setattr(lms_delivery, "post_event", FakeLms(lambda body: lms_delivery.Answer(None, None, "LMS unreachable: refused")))
     assert lms_delivery.deliver() == {"stop": 1, "not_attempted": 1}
     assert [r.attempts for r in rows() if r.event_type == "AdmissionQualified"] == [1, 0]
+
+
+def test_rows_backed_off_by_an_outage_go_as_soon_as_the_lms_answers(client, people, course, monkeypatch):
+    """Joint test step 6 (2026-10-02): a long backoff must not delay delivery once the LMS is back."""
+    admitted(client, people, course)
+    monkeypatch.setattr(lms_delivery, "post_event", FakeLms(lambda body: lms_delivery.Answer(None, None, "LMS unreachable: refused")))
+    lms_delivery.deliver()
+    waiting = [r for r in rows() if r.event_type == "AdmissionQualified"][0]
+    assert waiting.status == "Pending" and waiting.next_attempt_at > datetime.now(timezone.utc)
+
+    monkeypatch.setattr(lms_delivery, "lms_reachable", lambda: False)
+    monkeypatch.setattr(lms_delivery, "post_event", FakeLms())
+    assert lms_delivery.deliver() == {"delivered": 0}          # still down: nothing released, nothing sent
+    monkeypatch.setattr(lms_delivery, "lms_reachable", lambda: True)
+    result = lms_delivery.deliver()
+    assert result["released_after_outage"] >= 1 and result["delivered"] >= 1
+    db.session.refresh(waiting)
+    assert waiting.status == "Delivered"
 
 
 def test_not_configured_keeps_rows_pending(app, client, people, course):

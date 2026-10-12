@@ -168,7 +168,19 @@ def mode_id(code):
 def record_payment(client, headers, invoice_id, amount, expected=201, **extra):
     body = {"invoice_id": invoice_id, "amount": str(amount), "payment_mode_id": mode_id("UPI_BANK"),
             "reference": "UTR123456", **extra}
-    return call(client, "post", "/payments", headers, expected, json=body)
+    if body["payment_mode_id"] == mode_id("CASH"):
+        return call(client, "post", "/payments", headers, expected, json=body)
+    return call(client, "post", "/payments", headers, expected, **with_proof(body))
+
+
+def with_proof(body):
+    """The request for a payment body as multipart with a proof file: every mode except cash needs one."""
+    import io
+    import json
+
+    form = {key: json.dumps(value) if isinstance(value, (list, dict, bool)) else str(value)
+            for key, value in body.items() if value is not None}
+    return {"content_type": "multipart/form-data", "data": {**form, "proof": (io.BytesIO(b"proof"), "proof.png")}}
 
 
 def verify_payment(client, headers, payment_id, expected=200, **checks):

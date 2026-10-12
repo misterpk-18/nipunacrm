@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "@tanstack/react-router";
 import { DELIVERY_MODES } from "@/api/admissions";
-import { BATCH_STATUSES, batchKeys, batchesApi, useCurriculumVersions, type Batch, type BatchBody } from "@/api/batches";
+import { BATCH_STATUSES, batchKeys, batchesApi, type Batch, type BatchBody } from "@/api/batches";
 import { useCourses } from "@/api/reference";
 import { useAuth } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,6 @@ type Values = {
   batch_name: string;
   branch_id: string;
   course_id: string;
-  curriculum_version_id: string;
   delivery_mode: string;
   trainer_user_id: string;
   schedule_days: string;
@@ -35,7 +34,6 @@ const fromBatch = (b: Batch): Values => ({
   batch_name: b.batch_name,
   branch_id: String(b.branch.branch_id),
   course_id: String(b.course.course_id),
-  curriculum_version_id: b.curriculum_version ? String(b.curriculum_version.curriculum_version_id) : "",
   delivery_mode: b.delivery_mode,
   trainer_user_id: b.trainer ? String(b.trainer.user_id) : "",
   schedule_days: b.schedule_days ?? "",
@@ -50,7 +48,7 @@ const fromBatch = (b: Batch): Values => ({
   lms_course_id: b.lms_course_id ?? "",
 });
 
-/** Create a batch (Academic Coordinator / Branch Manager) or edit one. */
+/** Create a batch (Branch Manager) or edit one. */
 export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOpenChange: (o: boolean) => void; batch?: Batch }) {
   const { branches, branchId } = useAuth();
   const navigate = useNavigate();
@@ -59,7 +57,6 @@ export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOp
     batch_name: "",
     branch_id: String(branchId ?? (branches.length === 1 ? branches[0]!.branch_id : "")),
     course_id: "",
-    curriculum_version_id: "",
     delivery_mode: "Classroom",
     trainer_user_id: "",
     schedule_days: "Mon, Tue, Wed, Thu, Fri",
@@ -83,7 +80,6 @@ export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOp
   const branch = watch("branch_id");
   const course = watch("course_id");
   const branchCode = useBranchCode(branch);
-  const versions = useCurriculumVersions(course ? Number(course) : undefined, !!course);
 
   const save = useApiMutation(
     (body: BatchBody) => (batch ? batchesApi.update(batch.batch_id, body) : batchesApi.create(body)),
@@ -102,7 +98,6 @@ export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOp
   const submit = handleSubmit((v) => {
     const full: BatchBody = {
       batch_name: v.batch_name.trim(),
-      curriculum_version_id: v.curriculum_version_id ? Number(v.curriculum_version_id) : null,
       delivery_mode: v.delivery_mode,
       trainer_user_id: v.trainer_user_id ? Number(v.trainer_user_id) : null,
       schedule_days: v.schedule_days || null,
@@ -117,8 +112,6 @@ export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOp
     if (v.start_time) full.start_time = v.start_time;
     if (v.end_time) full.end_time = v.end_time;
     if (!batch) {
-      // Omit an unset curriculum so the server picks the course's published version.
-      if (!v.curriculum_version_id) delete full.curriculum_version_id;
       save.mutate({ ...full, branch_id: Number(v.branch_id), course_id: Number(v.course_id) });
       return;
     }
@@ -143,7 +136,7 @@ export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOp
       <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{batch ? `Edit ${batch.batch_code}` : "New batch"}</DialogTitle>
-          <DialogDescription>Standalone courses only. The course's published curriculum version is used unless you choose one.</DialogDescription>
+          <DialogDescription>Standalone courses only.</DialogDescription>
         </DialogHeader>
         <form id="batch-form" onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
           <Field label="Batch name" error={err("batch_name")} htmlFor="bt-name">
@@ -158,17 +151,8 @@ export function BatchDialog({ open, onOpenChange, batch }: { open: boolean; onOp
               disabled={!!batch}
               placeholder="Select course…"
               options={courseOptions}
-              {...register("course_id", { ...required, onChange: () => setValue("curriculum_version_id", "") })}
+              {...register("course_id", required)}
               value={course}
-            />
-          </Field>
-          <Field label="Curriculum version" error={err("curriculum_version_id")} htmlFor="bt-cv">
-            <NativeSelect
-              id="bt-cv"
-              placeholder={batch ? "None" : "Course's published version"}
-              options={(versions.data ?? []).filter((x) => x.status === "Published").map((x) => ({ value: x.curriculum_version_id, label: x.version_label }))}
-              {...register("curriculum_version_id")}
-              value={watch("curriculum_version_id")}
             />
           </Field>
           <Field label="Delivery mode" htmlFor="bt-mode">

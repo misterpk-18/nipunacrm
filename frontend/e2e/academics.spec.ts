@@ -3,7 +3,6 @@ import { PASSWORD, USERS, login, qualifyAndConvert, uniquePhone } from "./helper
 
 const SHOTS = "/private/tmp/claude-501/-Users-manojtungala-nipuna-crm/3aa0633b-0a9a-4dca-89e8-f5788c3e5648/scratchpad/shots";
 const BASE = process.env["E2E_BASE_URL"] ?? "http://localhost:5173";
-const COORD_VIJ = "coordinator.vij@nipuna.test";
 const AWS = { id: 4, label: "AWS with DevOps (NIT-CRS-007)" };
 
 // ---------------------------------------------------------------- API helpers (seed data for UI tests)
@@ -50,11 +49,10 @@ async function paidInvoice(name: string, courseId = AWS.id) {
   const payment = await sales.call<{ payment: { payment_id: number } }>("POST", "/payments", {
     invoice_id: invoice.invoice_id,
     amount: invoice.billed_amount,
-    payment_mode_id: id("payment_modes", "UPI_BANK"),
-    reference: `UTR${Date.now()}`,
+    payment_mode_id: id("payment_modes", "CASH"), // a UPI / bank payment needs a proof file; cash doesn't
   });
   const verified = await accounts.call<{ admissions_created: { admission_id: number; admission_code: string }[] }>(
-    "POST", `/payments/${payment.payment.payment_id}/verify`, { evidence_reviewed: true });
+    "POST", `/payments/${payment.payment.payment_id}/verify`, { evidence_reviewed: true, cash_checked: true });
   await sales.ctx.dispose();
   await accounts.ctx.dispose();
   return { lead, invoice, personId: lead.person.person_id, admission: verified.admissions_created[0]! };
@@ -142,7 +140,7 @@ test("person without an admission opens from Lead 360 with basics and opportunit
   await expect(page.getByRole("link", { name: lead.lead_code })).toBeVisible();
 });
 
-test("course master: admin creates a course, sets branches, adds and publishes a curriculum; others are read-only", async ({ page }) => {
+test("course master: admin creates a course and sets its branches; others are read-only", async ({ page }) => {
   test.setTimeout(90_000);
   const code = `NIT-E2E-${String(Date.now()).slice(-6)}`;
   await login(page, USERS.admin);
@@ -175,23 +173,6 @@ test("course master: admin creates a course, sets branches, adds and publishes a
   await expect(row).toContainText("₹12,500");
   await shot(page, "course-master");
 
-  // Curriculum for the new course (Batch Workspace), as the Guntur coordinator
-  await logout(page);
-  await login(page, USERS.coordGnt);
-  await page.goto("/batches");
-  await page.getByRole("button", { name: "New version" }).click();
-  dialog = page.getByRole("dialog", { name: "New curriculum version" });
-  await dialog.getByLabel("Course").selectOption({ label: `E2E Course ${code} (${code})` });
-  await dialog.getByLabel("Version label").fill("v1");
-  await dialog.getByRole("button", { name: "Create version" }).click();
-  await expect(page.getByText("Curriculum v1 created")).toBeVisible();
-  await page.getByLabel("Filter by course").selectOption({ label: `E2E Course ${code} (${code})` });
-  const cvRow = page.getByRole("row", { name: /v1/ });
-  await expect(cvRow).toContainText("Draft");
-  await cvRow.getByRole("button", { name: "Publish" }).click();
-  await page.getByRole("dialog", { name: "Publish v1?" }).getByRole("button", { name: "Publish" }).click();
-  await expect(cvRow).toContainText("Published");
-
   // Read-only for a trainer
   await logout(page);
   await login(page, USERS.trainerG1);
@@ -210,7 +191,7 @@ test("course master: admin creates a course, sets branches, adds and publishes a
   await expect(page.getByRole("row", { name: new RegExp(code) })).toContainText("Inactive");
 });
 
-test("admission lifecycle: create from a paid invoice, map, batch, allocate, join, documents, certificate, fee change, case", async ({ page }) => {
+test("admission lifecycle: create from a paid invoice, batch, allocate, join, documents, certificate, fee change, case", async ({ page }) => {
   test.setTimeout(180_000);
   const name = `E2E Learner ${String(Date.now()).slice(-6)}`;
   const flow = await paidInvoice(name);
@@ -271,9 +252,9 @@ test("admission lifecycle: create from a paid invoice, map, batch, allocate, joi
   await expect(sheet.getByRole("row", { name: /internship module/ })).toContainText("Applied");
   await expect(sheet.getByText("₹23,000").first()).toBeVisible();
 
-  // 5. Coordinator: verify document, create a batch starting today, map curriculum, allocate, record joining
+  // 5. Branch Manager: verify document, create a batch starting today, allocate, record joining
   await logout(page);
-  await login(page, USERS.coordGnt);
+  await login(page, USERS.bmGnt);
   await page.goto(`/students/${personId}`);
   await page.getByRole("tab", { name: "Documents" }).click();
   await page.getByRole("button", { name: "Verify" }).click();
@@ -299,24 +280,11 @@ test("admission lifecycle: create from a paid invoice, map, batch, allocate, joi
   await dialog.getByRole("button", { name: "Create batch" }).click();
   await expect(page.getByRole("heading", { name: new RegExp(batchName) })).toBeVisible();
   await expect(page.getByText("0/5 · 5 seats left")).toBeVisible();
-  await expect(page.getByText("v2026.1")).toBeVisible(); // course's published curriculum
   const batchUrl = page.url();
 
   await page.getByRole("button", { name: "Open for allocation" }).click();
   await page.getByRole("dialog", { name: "Open for allocation?" }).getByRole("button", { name: "Open for allocation" }).click();
   await expect(page.getByText(/is now Open/)).toBeVisible();
-
-  // Pre-check blocks until the curriculum is mapped
-  const firstPick = page.getByLabel("Admission to allocate");
-  await firstPick.selectOption((await firstPick.locator("option", { hasText: code }).getAttribute("value"))!);
-  await expect(page.getByRole("status").filter({ hasText: "Curriculum Mapping Pending" })).toBeVisible();
-
-  await page.goto(`/admissions?q=${encodeURIComponent(code)}`);
-  await page.getByRole("button", { name: new RegExp(code) }).click();
-  sheet = page.getByRole("dialog", { name: "Admission detail" });
-  await sheet.getByLabel("Published curriculum version").selectOption({ label: "AWS with DevOps · v2026.1" });
-  await sheet.getByRole("button", { name: "Map curriculum" }).click();
-  await expect(sheet.getByText("Curriculum Mapped")).toBeVisible();
 
   await page.goto(batchUrl);
   const pick = page.getByLabel("Admission to allocate");
@@ -372,16 +340,15 @@ test("admission lifecycle: create from a paid invoice, map, batch, allocate, joi
   await shot(page, "student360-new");
 });
 
-test("branch manager cancels an admission with a reason; coordinator can't cancel or create", async ({ page }) => {
+test("branch manager cancels an admission with a reason; sales can't cancel", async ({ page }) => {
   test.setTimeout(90_000);
   const { admission } = await paidInvoice(`E2E Cancel ${String(Date.now()).slice(-6)}`);
 
-  await login(page, USERS.coordGnt);
+  await login(page, USERS.salesGnt);
   await page.goto(`/admissions?admission=${admission.admission_id}`);
   let sheet = page.getByRole("dialog", { name: "Admission detail" });
   await expect(sheet.getByText(admission.admission_code).first()).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Cancel admission" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Create Admission" })).toHaveCount(0); // the eligibility review is for sales / accounts
 
   await logout(page);
   await login(page, USERS.bmGnt);
@@ -394,8 +361,8 @@ test("branch manager cancels an admission with a reason; coordinator can't cance
   await expect(sheet.getByText(/Cancelled .* Student relocated before start/)).toBeVisible();
 });
 
-test("Vijayawada coordinator sees only Vijayawada batches; sales can't open batches", async ({ page }) => {
-  await login(page, COORD_VIJ);
+test("Vijayawada branch manager sees only Vijayawada batches; sales can't open batches", async ({ page }) => {
+  await login(page, USERS.bmVij);
   await page.goto("/batches");
   await expect(page.getByRole("heading", { name: "Batch Workspace" })).toBeVisible();
   await expect(page.getByRole("link", { name: /VIJ-B-/ }).first()).toBeVisible();

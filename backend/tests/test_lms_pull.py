@@ -4,10 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from config.database import db
-from models import (
-    Admission, AdmissionCurriculum, Batch, BatchAllocation, Certificate, CurriculumVersion, LmsOutbox, LmsPullHold,
-    Person, Task, User,
-)
+from models import Admission, Batch, BatchAllocation, Certificate, LmsOutbox, LmsPullHold, Person, Task, User
 from services import lms_delivery, lms_pull
 from tests.helpers import API, admitted, call
 
@@ -98,9 +95,9 @@ def test_pull_writes_login_and_status_and_moves_watermark(client, people, course
     assert status["pull"]["since"] == AS_OF and status["held"] == 0
 
 
-# ---------------------------------------------------------------- §5.2 allocation, joining, curriculum
+# ---------------------------------------------------------------- §5.2 allocation, joining
 
-def test_allocation_joining_and_curriculum_are_mirrored(client, people, course, fake_pull, lms_owned):
+def test_allocation_and_joining_are_mirrored(client, people, course, fake_pull, lms_owned):
     aid = admitted(client, people, course)["admission"]["admission_id"]
     trainer = email_of(people["trainer"]["id"]).upper()     # matched ignoring case
     fake_pull({
@@ -114,16 +111,13 @@ def test_allocation_joining_and_curriculum_are_mirrored(client, people, course, 
     batch = db.session.execute(select(Batch).where(Batch.lms_course_id == "NIT-GNT-BAT-2026-000101")).scalar_one()
     assert batch.lms_mirrored and batch.batch_code.startswith("GNT-B-") and batch.status == "Open"
     assert batch.trainer_user_id == people["trainer"]["id"] and batch.trainer_emails[1] == "guest@lms.test"
-    assert batch.curriculum_version.version_label == "CV 5.1" and batch.curriculum_version.lms_mirrored
 
     allocations = db.session.execute(select(BatchAllocation).where(BatchAllocation.admission_id == aid)
                                      .order_by(BatchAllocation.track_code)).scalars().all()
     assert [(a.track_code, a.status, str(a.joining_date)) for a in allocations] == [
         ("NIT-CRS-018/T1", "Active", "2026-10-06"), ("NIT-CRS-018/T2", "Active", "2026-10-06")]
     admission = fresh(Admission, aid)
-    assert (admission.enrolment_status, admission.curriculum_status) == ("In Progress", "Mapped")
-    mapped = db.session.execute(select(AdmissionCurriculum).where(AdmissionCurriculum.admission_id == aid)).scalars().all()
-    assert [m.curriculum_version.version_label for m in mapped] == ["CV 5.1"]
+    assert admission.enrolment_status == "In Progress"
 
     # A move: T1's allocation closes, a new one opens on another batch — the full history replaces the old set
     fake_pull({
@@ -140,17 +134,21 @@ def test_allocation_joining_and_curriculum_are_mirrored(client, people, course, 
         ("NIT-CRS-018/T1", "101", "Moved"), ("NIT-CRS-018/T1", "102", "Active"), ("NIT-CRS-018/T2", "101", "Active")]
 
 
-def test_curriculum_mapping_pending_then_mapped(client, people, course, fake_pull):
+def test_curriculum_fields_from_the_lms_are_ignored(client, people, course, fake_pull):
+    """The CRM holds no curriculum (db 043): a pull that still carries a catalogue and curriculum fields applies
+    cleanly, writes nothing curriculum-shaped, and a stale curriculum hold is dropped."""
     aid = admitted(client, people, course)["admission"]["admission_id"]
-    fake_pull({"academics": [academics_entry(aid, curriculum_status="Mapping Pending", curriculum_version_label=None)]},
-              {"academics": [academics_entry(aid, curriculum_version_label="CV 3.0")]})
-    lms_pull.pull()
-    assert fresh(Admission, aid).curriculum_status == "Mapping Pending"
-    lms_pull.pull()
-    assert fresh(Admission, aid).curriculum_status == "Mapped"
-    # The LMS runs several versions of a course: mirrored ones don't take the CRM's one-published slot
-    labels = db.session.execute(select(CurriculumVersion.version_label).where(CurriculumVersion.lms_mirrored)).scalars().all()
-    assert labels == ["CV 3.0"]
+    db.session.add(LmsPullHold(record_key="curriculum_versions:NIT-CRS-018//CV 2.0", reason="old",
+                               payload={"course_code": "NIT-CRS-018", "version_label": "CV 2.0"}))
+    db.session.commit()
+    fake_pull({"curriculum_versions": [{"course_code": "NIT-CRS-018", "track_code": None, "version_label": "CV 5.1",
+                                        "status": "Active"}],
+               "batches": [batch_entry(curriculum_version_label="CV 5.1")],
+               "academics": [academics_entry(aid, curriculum_status="Mapped", curriculum_version_label="CV 5.1")]})
+    assert lms_pull.pull() == {"batches_applied": 1, "academics_unchanged": 1}
+    assert db.session.get(LmsPullHold, "curriculum_versions:NIT-CRS-018//CV 2.0", populate_existing=True) is None
+    assert not hasattr(fresh(Admission, aid), "curriculum_status")
+    assert db.session.execute(select(Batch).where(Batch.lms_course_id == "NIT-GNT-BAT-2026-000101")).scalar_one().lms_mirrored
 
 
 # ---------------------------------------------------------------- §5.3 idempotent
@@ -182,7 +180,7 @@ def certificate(aid, pid, version=1, status="Issued", **overrides):
 def test_completion_and_certificate_register(client, people, course, fake_pull):
     flow = admitted(client, people, course)
     aid, pid = flow["admission"]["admission_id"], flow["admission"]["person"]["person_id"]
-    coordinator = email_of(people["coordinator"]["id"])
+    coordinator = email_of(people["bm"]["id"])
     fake_pull(
         {"academics": [academics_entry(aid, enrolment_status="Completed", academic_completed_at="2026-12-19T17:00:00+05:30",
                                        completion_authorised_by_email=coordinator)],
@@ -196,7 +194,7 @@ def test_completion_and_certificate_register(client, people, course, fake_pull):
     lms_pull.pull()
     admission = fresh(Admission, aid)
     assert admission.enrolment_status == "Completed" and admission.support_until is not None
-    assert admission.completion_authorised_by == people["coordinator"]["id"]
+    assert admission.completion_authorised_by == people["bm"]["id"]
     assert admission.completion_authorised_by_email == coordinator
 
     lms_pull.pull()
@@ -208,7 +206,7 @@ def test_completion_and_certificate_register(client, people, course, fake_pull):
     assert certs[1].reissue_reason is None and certs[1].revoke_reason == "Issued in error"
     assert certs[1].revoked_by is None and certs[1].revoked_by_email == "sa@lms.test"
 
-    tab = call(client, "get", f"/students/{pid}/academic", people["coordinator"]["h"])
+    tab = call(client, "get", f"/students/{pid}/academic", people["bm"]["h"])
     assert "NIT-CERT-2026-000007" in str(tab)
 
 
@@ -219,9 +217,9 @@ def test_academic_writes_are_refused_while_the_lms_owns_them(client, people, cou
     for method, url, body, headers in [
         ("patch", f"/admissions/{aid}", {"lms_status": "Active"}, people["bm"]["h"]),
         ("post", "/batches", {"course_id": course, "branch_id": 1, "batch_name": "B", "start_date": "2026-11-01",
-                              "capacity": 10}, people["coordinator"]["h"]),
-        ("post", f"/admissions/{aid}/complete", {}, people["coordinator"]["h"]),
-        ("post", f"/admissions/{aid}/certificates", {}, people["coordinator"]["h"]),
+                              "capacity": 10}, people["bm"]["h"]),
+        ("post", f"/admissions/{aid}/complete", {}, people["bm"]["h"]),
+        ("post", f"/admissions/{aid}/certificates", {}, people["bm"]["h"]),
     ]:
         response = client.open(f"{API}{url}", method=method.upper(), json=body, headers=headers)
         assert (response.status_code, response.get_json()["error"]["code"]) == (409, "MANAGED_IN_LMS"), url
@@ -277,7 +275,7 @@ def test_lms_withdrawal_asks_the_branch_manager(client, people, course, fake_pul
 def test_pause_and_resume_reach_the_lms(client, people, course):
     aid = admitted(client, people, course)["admission"]["admission_id"]
     assert client.post(f"{API}/admissions/{aid}/pause", json={"reason": "Exams"},
-                       headers=people["coordinator"]["h"]).status_code == 403
+                       headers=people["sravani"]["h"]).status_code == 403
     paused = call(client, "post", f"/admissions/{aid}/pause", people["bm"]["h"], json={"reason": "Exams"})
     assert paused["enrolment_status"] == "Paused"
     resumed = call(client, "post", f"/admissions/{aid}/resume", people["bm"]["h"], json={})

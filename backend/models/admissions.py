@@ -9,9 +9,7 @@ from config.database import db
 from models.access import User
 from models.commercials import PaymentPlan
 from models.courses import Course
-from models.enums import (
-    CurriculumStatus, DeliveryMode, EnrolmentStatus, FeeChangeStatus, HandoverStatus, LmsStatus, SeatType,
-)
+from models.enums import DeliveryMode, EnrolmentStatus, FeeChangeStatus, HandoverStatus, LmsStatus, SeatType
 from models.leads import Person, user_summary
 from models.masters import Branch
 
@@ -47,7 +45,6 @@ class Admission(db.Model):
     first_qualifying_payment_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("payments.payment_id"))
     first_verified_payment_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enrolment_status: Mapped[str] = mapped_column(EnrolmentStatus, default="Awaiting Batch Allocation")
-    curriculum_status: Mapped[str] = mapped_column(CurriculumStatus, default="Mapping Pending")
     handover_status: Mapped[str] = mapped_column(HandoverStatus, default="Pending")
     lms_status: Mapped[str] = mapped_column(LmsStatus, default="Not Created")
     lms_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -95,7 +92,6 @@ class Admission(db.Model):
             "delivery_mode": self.delivery_mode,
             "final_fee": self.final_fee,
             "admission_date": self.admission_date,
-            "curriculum_status": self.curriculum_status,
             "handover_status": self.handover_status,
             "lms_status": self.lms_status,
             "complimentary_of_admission_id": self.complimentary_of_admission_id,

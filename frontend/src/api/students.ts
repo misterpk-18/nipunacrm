@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { get, list, patch, post, upload, type Query } from "./client";
 import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef, UserRef } from "./types";
-import type { Admission, AdmissionRow, Allocation, Balance, MappedCurriculum } from "./admissions";
+import type { Admission, AdmissionRow, Allocation, Balance } from "./admissions";
 
 export const SUPPORT_CASE_STATUSES = ["Open", "In Progress", "Waiting on Student", "Resolved", "Closed"];
 export const CERTIFICATE_DECISIONS = ["Eligibility Pending", "Eligible", "Not Eligible"];
@@ -169,7 +169,6 @@ export type StudentTabs = {
   academic: {
     admissions: { admission_id: number; admission_code: string; course: CourseRef; enrolment_status: string }[];
     allocations: Allocation[];
-    curricula: MappedCurriculum[];
     certificates: Certificate[];
   };
   documents: { documents: StudentDocument[]; checklist: ChecklistRow[] };

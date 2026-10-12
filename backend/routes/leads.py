@@ -15,11 +15,27 @@ def lead_route(rule: str, method: str):
     return decorator
 
 
+# Lead 360 is read-only for Accounts (they reach it from invoices, admissions and payments);
+# branch scoping is the same, and every write above stays on LEAD_ROLES.
+LEAD_READ_ROLES = LEAD_ROLES + ("ACCOUNTS",)
+
+
+def lead_read_route(rule: str):
+    def decorator(view):
+        return leads_bp.get(rule)(login_required(require_roles(*LEAD_READ_ROLES)(view)))
+    return decorator
+
+
 # ---------------------------------------------------------------- persons
 
 @lead_route("/persons/search", "get")
 def search_persons():
     return leads_controller.search_persons()
+
+
+@lead_route("/persons/lookup", "get")
+def lookup_person():
+    return leads_controller.lookup_person()
 
 
 @lead_route("/persons", "get")
@@ -96,9 +112,18 @@ def bulk_assign():
     return leads_controller.bulk_assign()
 
 
-@lead_route("/leads/<int:lead_id>", "get")
+@lead_read_route("/leads/<int:lead_id>")
 def get_lead(lead_id: int):
     return leads_controller.get_lead(lead_id)
+
+
+@leads_bp.get("/leads/<int:lead_id>/journey")
+@login_required
+@require_roles(*LEAD_READ_ROLES)
+def get_journey(lead_id: int):
+    """The next-step bar: steps, the one next action, money and the post-admission trail. Accounts see it read-only;
+    branch scoping is the same as the lead's."""
+    return leads_controller.get_journey(lead_id)
 
 
 @lead_route("/leads/<int:lead_id>", "patch")
@@ -131,6 +156,11 @@ def reactivate(lead_id: int):
     return leads_controller.reactivate(lead_id)
 
 
+@lead_route("/leads/staffed-time", "get")
+def staffed_time():
+    return leads_controller.staffed_time()
+
+
 @lead_route("/leads/<int:lead_id>/qualification", "get")
 def get_qualification(lead_id: int):
     return leads_controller.get_qualification(lead_id)
@@ -151,7 +181,7 @@ def convert_lead(lead_id: int):
     return leads_controller.convert_lead(lead_id)
 
 
-@lead_route("/leads/<int:lead_id>/activities", "get")
+@lead_read_route("/leads/<int:lead_id>/activities")
 def list_activities(lead_id: int):
     return leads_controller.list_activities(lead_id)
 
@@ -161,7 +191,7 @@ def add_activity(lead_id: int):
     return leads_controller.add_activity(lead_id)
 
 
-@lead_route("/leads/<int:lead_id>/enquiries", "get")
+@lead_read_route("/leads/<int:lead_id>/enquiries")
 def list_lead_enquiries(lead_id: int):
     return leads_controller.list_lead_enquiries(lead_id)
 

@@ -92,7 +92,7 @@ def test_delivery_plan_draft_accept_reopen(client, people, course):
     reopened = call(client, "post", f"{url}/reopen", sravani, json={"reason": "Student prefers weekends"})["plan"]
     assert reopened["status"] == "Draft" and reopened["student_accepted"] is False
 
-    coordinator = people.get("coordinator")
+    coordinator = people.get("bm")
     if coordinator:
         assert call(client, "get", url, coordinator["h"])["plan"]["plan_code"] == "DP-00001"
 

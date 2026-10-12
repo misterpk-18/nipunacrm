@@ -19,9 +19,12 @@ type Row = { due_date: string; amount: string };
 export function CreateInvoiceDialog({ leadId, onClose }: { leadId: number; onClose: () => void }) {
   const navigate = useNavigate();
   const q = useQuery({ queryKey: dealKeys.invoiceOptions(leadId), queryFn: () => dealsApi.invoiceOptions(leadId) });
-  const [picked, setPicked] = useState<number[]>([leadId]);
+  const [chosen, setChosen] = useState<number[] | null>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const eligible = useMemo(() => (q.data?.courses ?? []).filter((c) => c.eligible), [q.data]);
+  // Opens with every eligible course of this learner at this branch ticked; the user's own ticks replace that
+  const picked = useMemo(() => chosen ?? eligible.map((c) => c.lead.lead_id), [chosen, eligible]);
+  const setPicked = (next: number[]) => setChosen(next);
   const total = sumMoney(eligible.filter((c) => picked.includes(c.lead.lead_id)).map((c) => c.amount));
   const schedule = rows ?? presetSchedule(total, 1, todayIST());
   const scheduled = sumMoney(schedule.map((r) => r.amount || "0"));
@@ -36,7 +39,8 @@ export function CreateInvoiceDialog({ leadId, onClose }: { leadId: number; onClo
       invalidate: [invoiceKeys.all, ["deals"], ["pipeline"], ["fee-discussions"], ["leads"]],
       onSuccess: (r) => {
         onClose();
-        void navigate({ to: "/invoices/$invoiceId", params: { invoiceId: String(r.invoice_id) } });
+        // the invoice page then offers "Continue: record payment"
+        void navigate({ to: "/invoices/$invoiceId", params: { invoiceId: String(r.invoice_id) }, search: { next: "record-payment" } });
       },
     },
   );
@@ -89,7 +93,7 @@ export function CreateInvoiceDialog({ leadId, onClose }: { leadId: number; onClo
                         aria-label={c.course?.course_title ?? c.lead.lead_code}
                         checked={on}
                         disabled={!c.eligible}
-                        onCheckedChange={(v) => setPicked((prev) => (v === true ? [...prev, c.lead.lead_id] : prev.filter((x) => x !== c.lead.lead_id)))}
+                        onCheckedChange={(v) => setPicked(v === true ? [...picked, c.lead.lead_id] : picked.filter((x) => x !== c.lead.lead_id))}
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-semibold">{c.course?.course_title ?? "No course"}</span>

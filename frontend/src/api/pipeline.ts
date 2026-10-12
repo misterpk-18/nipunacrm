@@ -29,7 +29,15 @@ export type PipelineCard = {
   courses: CardCourse[];
   value?: Money;
   delivery_plan_status?: string;
+  /** What happens next on the card, why it waits, and how long it has sat in this stage (open cards only). */
+  next_step?: CardNextStep | null;
+  blocker?: string | null;
+  quick_action?: { action: string; label: string; lead_id: number } | null;
+  days_in_stage?: number;
+  stalled?: boolean;
 };
+
+export type CardNextStep = { label: string; action: string | null; lead_id: number; due_at: DateTime | null; overdue: boolean };
 
 export type PipelineEntry = PipelineCard & {
   is_open: boolean;

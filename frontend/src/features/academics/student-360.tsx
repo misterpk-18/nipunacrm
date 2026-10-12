@@ -26,7 +26,7 @@ import { NewLeadDialog } from "@/features/leads/new-lead-dialog";
 import { date, dateTime, money, phone, sumMoney } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { useCan } from "./can";
-import { FormDialog } from "./shared";
+import { FormDialog, LmsRefreshButton } from "./shared";
 
 export function Student360({ personId }: { personId: number }) {
   const student = useQuery({ queryKey: studentKeys.detail(personId), queryFn: () => studentsApi.get(personId), retry: false });
@@ -230,7 +230,6 @@ function AdmissionsTab({ personId }: { personId: number }) {
             { header: "Course", cell: (a) => <span className="block max-w-56 truncate">{a.course.course_title}</span> },
             { header: "Original / service", cell: (a) => `${a.original_branch.branch_code} / ${a.service_branch.branch_code}` },
             { header: "Accepted plan", cell: (a) => `${a.seat_type} · ${a.delivery_mode} · ${a.payment_plan?.plan_name ?? ""}` },
-            { header: "Curriculum", cell: (a) => (a.curriculum_status === "Mapped" ? "Mapped" : <span>Curriculum Mapping Pending · recovery: Academic Coordinator ({a.service_branch.branch_code})</span>) },
             { header: "Enrolment", cell: (a) => <Status>{a.enrolment_status}</Status> },
             {
               header: "Batch",
@@ -247,6 +246,7 @@ function AdmissionsTab({ personId }: { personId: number }) {
             },
             { header: "Joining date", cell: (a) => date(allocationsOf(a.admission_id).find((x) => x.joining_date)?.joining_date) },
             { header: "Support until", cell: (a) => date(a.support_until) },
+            { header: "", cell: (a) => (a.enrolment_status === "Cancelled" ? null : <LmsRefreshButton admissionId={a.admission_id} />) },
           ]}
         />
       )}
@@ -329,10 +329,10 @@ function AcademicTab({ personId }: { personId: number }) {
   const issue = useApiMutation(studentsApi.issueCertificate, { success: (c) => `Certificate ${c.certificate_number ?? ""} issued`, invalidate });
   const revoke = useApiMutation((v: { id: number; reason: string }) => studentsApi.revokeCertificate(v.id, v.reason), { success: "Certificate revoked", invalidate });
   const serviceOf = (admissionId: number) => admissions.data?.find((a) => a.admission_id === admissionId)?.service_branch.branch_id;
-  const manageable = (admissions.data ?? []).filter((a) => can.coordinator(a.service_branch.branch_id));
+  const manageable = (admissions.data ?? []).filter((a) => can.completion(a.service_branch.branch_id));
 
   const certActions = (c: Certificate) => {
-    const allowed = can.coordinator(serviceOf(c.admission_id));
+    const allowed = can.completion(serviceOf(c.admission_id));
     return (
       <div className="flex gap-1">
         {allowed && ["Eligibility Pending", "Eligible", "Not Eligible"].includes(c.status) && (
@@ -381,7 +381,7 @@ function AcademicTab({ personId }: { personId: number }) {
         <div className="space-y-4">
           <Section
             title="Certificates"
-            subtitle={can.lmsOwned ? "From the LMS Certificate Register: a reissue keeps the number with a new version" : "Eligibility is decided by the Academic Coordinator; issue assigns the number"}
+            subtitle={can.lmsOwned ? "From the LMS Certificate Register: a reissue keeps the number with a new version" : "Eligibility is decided by the Branch Manager; issue assigns the number"}
             action={
               manageable.length ? (
                 <FormDialog
@@ -431,19 +431,6 @@ function AcademicTab({ personId }: { personId: number }) {
               ]}
             />
           </Section>
-          <Section title="Curriculum mapping">
-            <DataTable
-              rows={d.curricula}
-              rowKey={(c) => `${c.admission_id}-${c.curriculum_version_id}`}
-              empty={<p className="text-sm text-muted-foreground">No curriculum mapped.</p>}
-              columns={[
-                { header: "Admission", cell: (c) => d.admissions.find((a) => a.admission_id === c.admission_id)?.admission_code ?? `#${c.admission_id}` },
-                { header: "Course", cell: (c) => c.course.course_title },
-                { header: "Version", cell: (c) => c.version_label },
-                { header: "Mapped", cell: (c) => dateTime(c.mapped_at) },
-              ]}
-            />
-          </Section>
         </div>
       )}
     </QueryView>
@@ -466,7 +453,7 @@ function DocumentsTab({ s }: { s: Student }) {
     invalidate,
   });
   const reg = s.registered_branch.branch_id;
-  const canReview = can.isAdmin || can.at(reg, "BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "FRONT_OFFICE");
+  const canReview = can.isAdmin || can.at(reg, "BRANCH_MANAGER", "FRONT_OFFICE");
   const typeLabel = (id: number) => lookups.data?.document_types.find((t) => t.id === id);
 
   return (

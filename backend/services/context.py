@@ -10,13 +10,13 @@ ADMIN_ROLES = ("FOUNDER_CEO", "SUPER_ADMIN")
 COUNSELLOR_ROLES = ("SALES", "FRONT_OFFICE")
 LEAD_ROLES = ADMIN_ROLES + ("BRANCH_MANAGER",) + COUNSELLOR_ROLES
 MANAGER_ROLES = ADMIN_ROLES + ("BRANCH_MANAGER",)
-# Demos: lead roles plus the academic side (trainers record outcomes, coordinators approve extra demos)
-DEMO_ROLES = LEAD_ROLES + ("TRAINER", "ACADEMIC_COORDINATOR")
+# Demos: lead roles plus trainers, who record outcomes (Branch Managers approve extra demos)
+DEMO_ROLES = LEAD_ROLES + ("TRAINER",)
 # Money: invoices, payments, collections
 FINANCE_ROLES = LEAD_ROLES + ("ACCOUNTS",)
-ACADEMIC_ROLES = MANAGER_ROLES + ("ACADEMIC_COORDINATOR",)
+ACADEMIC_ROLES = MANAGER_ROLES
 # Anyone on staff (everyone except students)
-STAFF_ROLES = FINANCE_ROLES + ("ACADEMIC_COORDINATOR", "TRAINER", "PLACEMENT", "HR")
+STAFF_ROLES = FINANCE_ROLES + ("TRAINER", "PLACEMENT", "HR")
 
 
 @dataclass(frozen=True)

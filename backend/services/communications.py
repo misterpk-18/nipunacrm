@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from config.database import db
-from models import BranchChannel, Communication, ContactChannel, Lead, Notification, NotificationRule, Role
+from models import BranchChannel, Communication, ContactChannel, Lead, Notification, NotificationRule, Role, WhatsappOutbox
 from repositories import communications as comms_repo
 from repositories import leads as leads_repo
 from repositories import settings as settings_repo
@@ -186,6 +186,34 @@ def update_channel(channel_id: int, data: dict) -> BranchChannel:
 
 def my_notifications(tab: str | None, page: int, per_page: int):
     return paginate(comms_repo.notifications_stmt(current_user().user_id, tab), page, per_page)
+
+
+def notification_dicts(notifications: list[Notification]) -> list[dict]:
+    """The notifications as the API shows them, with the WhatsApp alert that went with each (db 042). The bell
+    notification and its staff WhatsApp are written in one transaction, so they share the recipient and the creation
+    time; the message's own status (Queued, Sent, Delivered, Read, Failed, Skipped) is what the page shows. No message
+    means no WhatsApp channel (the learner's own messages are on Person 360 and the WhatsApp screen, not here)."""
+    if not notifications:
+        return []
+    rows = db.session.execute(
+        select(WhatsappOutbox).where(
+            WhatsappOutbox.recipient_user_id.in_({n.recipient_user_id for n in notifications}),
+            WhatsappOutbox.created_at.in_({n.created_at for n in notifications}),
+        ).order_by(WhatsappOutbox.outbox_id)
+    ).scalars().all()
+    by_key = {(r.recipient_user_id, r.created_at): r for r in rows}  # the latest one when a transaction wrote several
+    result = []
+    for n in notifications:
+        data = n.to_dict()
+        message = by_key.get((n.recipient_user_id, n.created_at))
+        if message is None:
+            data.update(external_channel=None, external_status=None, external_reason=None)
+        else:
+            skipped = message.status == "Skipped"
+            data.update(external_channel="WhatsApp", external_status="Not sent" if skipped else message.status,
+                        external_reason=message.skip_reason if skipped else message.last_error)
+        result.append(data)
+    return result
 
 
 def unread_count() -> int:

@@ -12,7 +12,7 @@ from sqlalchemy import select
 from config.database import db
 from models import Alumni, Company, JobApplication, JobOpening, PlacementProfile, SupportExtension
 from repositories.common import paginate
-from services import audit
+from services import audit, whatsapp_events
 from services import admissions as admissions_service
 from services import persons as persons_service
 from services.context import current_user
@@ -137,6 +137,7 @@ def apply(data: dict) -> JobApplication:
     db.session.add(application)
     db.session.flush()  # consent + open job checked; one application per job
     db.session.refresh(application)
+    whatsapp_events.placement_application_recorded(application)
     return application
 
 
@@ -152,6 +153,7 @@ def change_stage(application_id: int, data: dict) -> JobApplication:
     application.stage = data["stage"]  # the DB logs the change and requires joined_date for Joined
     db.session.flush()
     db.session.refresh(application)
+    whatsapp_events.placement_application_update(application, application.stage)
     return application
 
 
@@ -168,6 +170,9 @@ def add_event(application_id: int, data: dict) -> JobApplication:
                                     notes=data.get("notes"), recorded_by=current_user().user_id))
     db.session.flush()
     db.session.refresh(application)
+    if data["event_type"] == "Interview Scheduled":
+        whatsapp_events.placement_application_update(
+            application, f"Interview scheduled for {application.interview_at:%d %b %Y, %I:%M %p}".replace(" 0", " "))
     return application
 
 

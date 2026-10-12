@@ -44,6 +44,13 @@ def payment_receipt(payment_id: int):
     return payments_controller.payment_receipt(payment_id)
 
 
+@payments_bp.get("/payments/<int:payment_id>/proof")
+@login_required
+@require_roles(*FINANCE_ROLES)
+def payment_proof(payment_id: int):
+    return payments_controller.payment_proof(payment_id)
+
+
 @payments_bp.post("/payments/<int:payment_id>/verify")
 @login_required
 @require_roles(*ACCOUNTS_ROLES)

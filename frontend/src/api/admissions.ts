@@ -5,7 +5,6 @@ import type { BranchRef, CourseRef, DateOnly, DateTime, Money, PersonRef, UserRe
 export const ENROLMENT_STATUSES = ["Awaiting Batch Allocation", "Scheduled", "In Progress", "Paused", "Completed", "Cancelled"];
 /** Enrolments a Branch Manager can pause (the LMS pauses its enrolments; the pull confirms). */
 export const PAUSABLE_STATUSES = ["Awaiting Batch Allocation", "Scheduled", "In Progress"];
-export const CURRICULUM_STATUSES = ["Mapping Pending", "Mapped"];
 export const HANDOVER_STATUSES = ["Pending", "Completed"];
 export const LMS_STATUSES = ["Not Created", "Invited", "Active", "Inactive", "Completed"];
 export const SEAT_TYPES = ["Confirmed Seat", "Future Plan"];
@@ -24,7 +23,6 @@ export type AdmissionRow = {
   delivery_mode: string;
   final_fee: Money;
   admission_date: DateOnly;
-  curriculum_status: string;
   handover_status: string;
   lms_status: string;
   complimentary_of_admission_id: number | null;
@@ -59,21 +57,6 @@ export type Allocation = {
   track_code: string | null;
   lms_mirrored: boolean;
 };
-
-export type CurriculumVersion = {
-  curriculum_version_id: number;
-  course: CourseRef;
-  version_label: string;
-  status: string;
-  notes: string | null;
-  published_by: number | null;
-  published_at: DateTime | null;
-  /** A version the LMS runs, mirrored by the status pull (db 028). */
-  lms_mirrored: boolean;
-  created_at: DateTime;
-};
-
-export type MappedCurriculum = CurriculumVersion & { admission_id: number; mapped_by: number | null; mapped_at: DateTime };
 
 export type FeeChange = {
   fee_change_id: number;
@@ -112,7 +95,7 @@ export type Admission = AdmissionRow & {
   cancellation: { reason?: string | null; cancelled_at?: DateTime | null; cancelled_by?: number | null } | null;
   academic_completed_at: DateTime | null;
   completion_authorised_by: number | null;
-  /** The LMS Academic Coordinator who decided the completion ("LMS" when the LMS didn't say). */
+  /** The LMS user who decided the completion ("LMS" when the LMS didn't say). */
   completion_authorised_by_email: string | null;
   support_until: DateOnly | null;
   created_at: DateTime;
@@ -120,7 +103,6 @@ export type Admission = AdmissionRow & {
 
 export type AdmissionDetail = Admission & {
   allocations: Allocation[];
-  curricula: MappedCurriculum[];
   fee_changes: FeeChange[];
 };
 
@@ -195,7 +177,6 @@ export type AdmissionFilters = {
   person_id?: number;
   course_id?: number;
   enrolment_status?: string;
-  curriculum_status?: string;
   handover_status?: string;
   lms_status?: string;
   seat_type?: string;
@@ -231,8 +212,8 @@ export const admissionsApi = {
   approveFeeChange: (id: number) => post<FeeChange>(`/admission-fee-changes/${id}/approve`, {}),
   rejectFeeChange: (id: number, reason: string) => post<FeeChange>(`/admission-fee-changes/${id}/reject`, { reason }),
   applyFeeChange: (id: number) => post<FeeChange>(`/admission-fee-changes/${id}/apply`, {}),
-  mapCurriculum: (id: number, curriculum_version_id: number) =>
-    post<AdmissionDetail>(`/admissions/${id}/curricula`, { curriculum_version_id }),
+  /** Apply this admission's current LMS state now (round 3). */
+  lmsRefresh: (id: number) => post<{ refreshed: Record<string, number>; admission: AdmissionDetail }>(`/admissions/${id}/lms-refresh`, {}),
   complete: (id: number) => post<Admission>(`/admissions/${id}/complete`, {}),
   allocate: (id: number, batch_id: number) => post<Allocation>(`/admissions/${id}/allocations`, { batch_id }),
   queue: (query: { branch_id?: number; course_id?: number; page?: number; per_page?: number }) =>

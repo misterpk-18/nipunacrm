@@ -9,7 +9,7 @@ from services.context import ADMIN_ROLES, current_user
 from services.errors import BusinessRule, Forbidden, NotFound, ValidationError
 from services.lms_pull import require_crm_academics
 
-REVIEWER_ROLES = ADMIN_ROLES + ("BRANCH_MANAGER", "ACADEMIC_COORDINATOR", "FRONT_OFFICE")
+REVIEWER_ROLES = ADMIN_ROLES + ("BRANCH_MANAGER", "FRONT_OFFICE")
 CASE_FIELDS = ("status", "owner_user_id", "resolution_notes", "refund_case_id", "subject", "description")
 
 
@@ -54,7 +54,6 @@ def tab(person_id: int, name: str) -> dict:
 
         return {"admissions": admissions,
                 "allocations": [x for aid in admission_ids for x in admissions_repo.allocations_for(aid)],
-                "curricula": [x for aid in admission_ids for x in admissions_repo.curricula_for(aid)],
                 "certificates": students_repo.certificates_of(admission_ids)}
     if name == "documents":
         return {"documents": students_repo.documents_of(person_id), "checklist": students_repo.checklist_of(person_id)}
@@ -104,7 +103,7 @@ def upload_document(person_id: int, data: dict, upload) -> Document:
     db.session.refresh(document)
     branch_id = admission.service_branch_id if admission else person.registered_branch_id
     tasks.create_system_task("DOCUMENT_REVIEW", f"Review {doc_type.label} · {person.full_name}", branch_id,
-                             document.uploaded_at, team_role_code="ACADEMIC_COORDINATOR",
+                             document.uploaded_at, team_role_code="BRANCH_MANAGER",
                              dedupe_key=f"document-review:{document.document_id}", document_id=document.document_id)
     return document
 
@@ -142,8 +141,8 @@ def _academic_admission(admission_id: int) -> Admission:
 
     admission = admissions_service.get_admission(admission_id)
     user = current_user()
-    if not (user.is_admin or user.has_role("ACADEMIC_COORDINATOR", branch_id=admission.service_branch_id)):
-        raise Forbidden("Only an Academic Coordinator can manage certificates")
+    if not user.is_manager_of(admission.service_branch_id):
+        raise Forbidden("Only a Branch Manager can manage certificates")
     return admission
 
 

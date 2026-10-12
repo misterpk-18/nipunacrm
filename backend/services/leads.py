@@ -6,7 +6,7 @@ from models import Course, Enquiry, Lead, LeadActivity, LostReason, Person
 from repositories import leads as leads_repo
 from repositories import users as users_repo
 from repositories.common import paginate
-from services import audit, sla, tasks
+from services import audit, sla, staff_alerts, tasks, whatsapp_events
 from services import persons as persons_service
 from services.context import COUNSELLOR_ROLES, current_user
 from services.errors import BusinessRule, Conflict, Forbidden, NotFound, ValidationError
@@ -82,6 +82,20 @@ def log_activity(lead: Lead, activity_type: str, summary: str | None, **fields) 
     return activity
 
 
+def _auto_tick(lead: Lead) -> None:
+    """Qualification checks the saved data now proves are ticked as System (late import: qualification imports this module)."""
+    from services import qualification
+
+    qualification.auto_tick(lead)
+
+
+def staffed_time(branch_id: int, minutes: int) -> datetime:
+    """Now + N staffed minutes at the branch (skips closed hours, off days, holidays) — the follow-up time suggestions."""
+    if not current_user().can_access_branch(branch_id):
+        raise Forbidden("You can only use your own branches")
+    return sla.staffed_deadline(branch_id, datetime.now(timezone.utc), minutes)
+
+
 # ---------------------------------------------------------------- create
 
 def create_lead(data: dict) -> Lead:
@@ -100,7 +114,9 @@ def create_lead(data: dict) -> Lead:
     )
     db.session.add(enquiry)
     db.session.flush()
-    return create_from_enquiry(enquiry, person, data)
+    lead = create_from_enquiry(enquiry, person, data)
+    whatsapp_events.enquiry_received(lead)
+    return lead
 
 
 def _resolve_person(data: dict, branch_id: int) -> Person:
@@ -158,6 +174,9 @@ def create_from_enquiry(enquiry: Enquiry, person: Person, data: dict) -> Lead:
         )
     audit.record("LEAD_CREATED", "lead", lead.lead_id, new={"lead_code": lead.lead_code, "person_id": person.person_id,
                  "assigned_to": assigned_to}, branch_id=lead.branch_id)
+    _auto_tick(lead)
+    if assigned_to is not None:
+        staff_alerts.lead_assigned([lead], assigned_to, imported=bool(data.get("imported")))  # not to whoever made it
     return lead
 
 
@@ -190,6 +209,7 @@ def update_lead(lead_id: int, data: dict) -> Lead:
     db.session.flush()
     db.session.refresh(lead)
     audit.record("LEAD_UPDATED", "lead", lead_id, old=old, new=data, branch_id=lead.branch_id)
+    _auto_tick(lead)
     return lead
 
 
@@ -203,16 +223,17 @@ def assign(lead_id: int, assigned_to: int) -> Lead:
 def bulk_assign(lead_ids: list[int], assigned_to: int) -> list[Lead]:
     """All or nothing: every lead must be visible and managed by the caller."""
     leads = [_managed(lead_id) for lead_id in lead_ids]
-    for lead in leads:
-        assign_to(lead, assigned_to)
+    changed = [lead for lead in leads if assign_to(lead, assigned_to, alert=False)]
     db.session.flush()
+    staff_alerts.lead_assigned(changed, assigned_to)  # one message each, or one summary for a big batch
     return leads
 
 
-def assign_to(lead: Lead, assigned_to: int) -> None:
+def assign_to(lead: Lead, assigned_to: int, *, alert: bool = True) -> bool:
+    """True when the owner changed. alert=False: the caller tells the new owner (bulk assignment sends one summary)."""
     check_assignee(assigned_to, lead.branch_id)
     if lead.assigned_to == assigned_to:
-        return
+        return False
     previous = lead.owner.full_name if lead.owner else "unassigned"
     lead.assigned_to = assigned_to
     db.session.flush()
@@ -220,6 +241,9 @@ def assign_to(lead: Lead, assigned_to: int) -> None:
     log_activity(lead, "Assignment Change", f"Assigned to {lead.owner.full_name} (was {previous})")
     tasks.complete_system_task(f"lead-unassigned:{lead.lead_id}")
     audit.record("LEAD_ASSIGNED", "lead", lead.lead_id, new={"assigned_to": assigned_to}, branch_id=lead.branch_id)
+    if alert:
+        staff_alerts.lead_assigned([lead], assigned_to)
+    return True
 
 
 # ---------------------------------------------------------------- stage / follow-up / lost
@@ -356,4 +380,5 @@ def add_activity(lead_id: int, data: dict) -> LeadActivity:
         lead.last_contacted_at = occurred_at
     db.session.flush()
     db.session.refresh(activity)
+    _auto_tick(lead)
     return activity

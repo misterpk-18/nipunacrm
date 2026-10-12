@@ -8,12 +8,13 @@ from models.enums import CAPACITY_REVIEWS, DELIVERY_MODES, INVOICE_STATUSES, SCR
 from services import delivery_plans as plans_service
 from services import fees as fees_service
 from services import invoices as invoices_service
+from services import payments as payments_service
 
 
 # ---------------------------------------------------------------- discussions
 
 def list_discussions(lead_id: int):
-    return ok([d.to_dict() for d in fees_service.list_for_lead(lead_id)])
+    return ok([fees_service.discussion_payload(d) for d in fees_service.list_for_lead(lead_id)])
 
 
 def start_discussion(lead_id: int):
@@ -26,8 +27,21 @@ def start_discussion(lead_id: int):
 def get_discussion(discussion_id: int):
     discussion = fees_service.get_discussion(discussion_id)
     offers = fees_service.applicable_offers(discussion)
-    return ok({**discussion.to_dict(), "applicable_offers": [o.to_dict() for o in offers],
-               "used_offers": fees_service.used_offers(discussion)})
+    return ok({**fees_service.discussion_payload(discussion), "applicable_offers": [o.to_dict() for o in offers],
+               "used_offers": fees_service.used_offers(discussion), "offer_options": fees_service.offer_options(discussion),
+               "reissue": fees_service.reissue_info(discussion)})
+
+
+def price_preview(discussion_id: int):
+    v = Validator(request.args.to_dict())
+    v.integer("offer_id", nullable=True, min_value=1)
+    v.decimal("extra", min_value=0)
+    data = v.validate()
+    return ok(fees_service.price_preview(discussion_id, data.get("offer_id"), data.get("extra", Decimal("0.00"))))
+
+
+def reissue(discussion_id: int):
+    return created(fees_service.reissue(discussion_id).to_dict())
 
 
 def add_version(discussion_id: int):
@@ -37,6 +51,7 @@ def add_version(discussion_id: int):
     v.integer("payment_plan_id", min_value=1)  # informational; the invoice carries the schedule (db 021)
     v.date("valid_until", nullable=True)
     v.string("notes", nullable=True)
+    v.string("request_reason", nullable=True)  # with an extra concession: also send the special closing request
     return created(fees_service.add_version(discussion_id, v.validate()).to_dict())
 
 
@@ -57,6 +72,8 @@ def _plan_rules(v: Validator) -> None:
     v.date("planned_start_date", nullable=True)
     v.choice("capacity_review", CAPACITY_REVIEWS)
     v.string("notes", nullable=True, max_length=2000)
+    v.string("preferred_lms_batch_code", nullable=True, max_length=100)
+    v.string("preferred_lms_batch_label", nullable=True, max_length=300)
 
 
 def save_delivery_plan(lead_id: int):
@@ -69,7 +86,18 @@ def accept_delivery_plan(lead_id: int):
     v = Validator(json_body())
     _plan_rules(v)
     v.boolean("student_accepted", required=True)
+    v.choice("acceptance_method", ("in_person", "call"), nullable=True)
     return ok(plans_service.accept(lead_id, v.validate()))
+
+
+def delivery_plan_batches(lead_id: int):
+    v = Validator(request.args.to_dict())
+    v.integer("branch_id", min_value=1)
+    return ok(plans_service.batch_hints(lead_id, v.validate().get("branch_id")))
+
+
+def send_delivery_plan_for_confirmation(lead_id: int):
+    return ok(plans_service.send_for_confirmation(lead_id))
 
 
 def reopen_delivery_plan(lead_id: int):
@@ -167,7 +195,7 @@ def get_invoice(invoice_id: int):
     schedule = [row.to_dict() for row in d["schedule"]] or [
         {"installment_no": i.installment_no, "due_date": i.due_date, "amount_due": i.amount_due} for i in d["installments"]]
     invoice = d["invoice"]
-    return ok({**invoice.to_dict(), "lines": [line.to_dict() for line in invoice.lines], "schedule": schedule,
+    return ok({**invoice.to_dict(), "lines": payments_service.lines_payload(invoice), "schedule": schedule,
                "split": invoices_service.split_label([i.amount_due for i in d["installments"]], invoice.billed_amount),
                "payments": [p.to_row() for p in d["payments"]],
                "receipts": [p.to_row() for p in d["payments"] if p.verification_status == "Verified"],

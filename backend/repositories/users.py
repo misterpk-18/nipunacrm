@@ -72,6 +72,17 @@ def user_ids_with_role(role_id: int, branch_id: int | None) -> list[int]:
     return list(db.session.execute(stmt).scalars())
 
 
+def admin_user_ids() -> list[int]:
+    """Active Founder / CEO and Super Admin users (any branch): they see every notification."""
+    stmt = (
+        select(func.distinct(User.user_id))
+        .join(UserRoleScope, UserRoleScope.user_id == User.user_id)
+        .join(Role, Role.role_id == UserRoleScope.role_id)
+        .where(User.is_active, Role.role_code.in_(("SUPER_ADMIN", "FOUNDER_CEO")), _active_scope_condition())
+    )
+    return list(db.session.execute(stmt).scalars())
+
+
 def user_ids_with_any_role(role_codes: tuple[str, ...], branch_id: int) -> set[int]:
     stmt = (
         select(User.user_id)

@@ -15,13 +15,15 @@ import { DataTable, Empty, PageHead, Pagination, Section, Status } from "@/compo
 import { date, money } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { RecordPaymentForm } from "./record-payment";
-import { CorrectionsTable, FINANCE_INVALIDATE, LedgerTable, useFinanceRoles } from "./shared";
+import { ClaimReviewDialog, CorrectionsTable, FINANCE_INVALIDATE, LedgerTable, useFinanceRoles } from "./shared";
 
 export type PaymentSearch = Pick<PaymentFilters, "page" | "q" | "status" | "entry_type" | "payment_mode_id" | "from" | "to"> & {
   tab?: "ledger" | "record" | "unallocated" | "corrections";
   cstatus?: string;
   /** Preselected invoice for Record payment (/payments?invoice=12&tab=record) */
   invoice?: number;
+  /** Opens that payment claim for review (Verify / Mark failed): the link from a "payment waiting for verification" notification. */
+  verify?: number;
 };
 
 /** Payments & Receipts: immutable ledger, record payment, verification, unallocated advances, correction requests. */
@@ -31,7 +33,7 @@ export function PaymentsPage({ search, onSearch }: { search: PaymentSearch; onSe
   const lookups = useLookups();
   const [text, setText] = useState(search.q ?? "");
   const tab = search.tab ?? (search.invoice ? "record" : "ledger");
-  const { tab: _tab, cstatus, invoice: presetInvoice, ...ledgerSearch } = search;
+  const { tab: _tab, cstatus, invoice: presetInvoice, verify: reviewing, ...ledgerSearch } = search;
   const filters: PaymentFilters = { ...ledgerSearch, branch_id: branchId, per_page: 25 };
   const payments = useQuery({ queryKey: paymentKeys.list(filters), queryFn: () => paymentsApi.list(filters), placeholderData: (prev) => prev });
   const totals = payments.data?.totals;
@@ -46,6 +48,15 @@ export function PaymentsPage({ search, onSearch }: { search: PaymentSearch; onSe
 
   return (
     <>
+      {reviewing !== undefined && (
+        <ClaimReviewDialog
+          paymentId={reviewing}
+          onClose={() => {
+            const { verify: _verify, ...rest } = search;
+            onSearch(rest);
+          }}
+        />
+      )}
       <PageHead
         title="Payments & receipts"
         description="Record the payment. Review the evidence. Release the receipt."

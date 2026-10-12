@@ -1,5 +1,6 @@
 """flask --app app lms …: the Nipuna LMS outbox (db 026) — backfill, deliver, inspect, requeue —, the status pull
-(db 028) — pull, holds, drop-crm-batches — and branch finance snapshots (db 029)."""
+(db 028) — pull, holds, drop-crm-batches —, branch finance snapshots (db 029), and round 3 (db 030) — worker,
+refresh, reconcile."""
 import json
 import time
 
@@ -8,7 +9,8 @@ from flask.cli import AppGroup
 
 from config.database import db
 from models import LmsOutbox
-from services import lms_delivery, lms_finance, lms_pull, lms_sync
+from services import lms_delivery, lms_finance, lms_pull, lms_reconcile, lms_sync
+from services.errors import AppError
 
 lms_cli = AppGroup("lms", help="Nipuna LMS sync: backfill events, deliver the outbox, inspect and requeue rows.")
 
@@ -50,6 +52,61 @@ def deliver_command(limit, loop, interval) -> None:
         if any(k != "delivered" or v for k, v in result.items()):
             click.echo(f"{time.strftime('%H:%M:%S')} {json.dumps(result)}")
         time.sleep(interval)
+
+
+@lms_cli.command("worker")
+@click.option("--duration", default=0, show_default=True,
+              help="Seconds to run, then exit (cron: 55, every minute). 0 = until stopped (local).")
+@click.option("--deliver-every", default=10, show_default=True, help="Seconds between deliveries.")
+@click.option("--pull-every", default=60, show_default=True, help="Seconds between status pulls.")
+def worker_command(duration, deliver_every, pull_every) -> None:
+    """Deliver the outbox every 10 s and pull every minute (the retry path behind the push after each request)."""
+    started = time.monotonic()
+    next_pull = started
+    while True:
+        result = lms_delivery.deliver()
+        db.session.commit()
+        if any(k != "delivered" or v for k, v in result.items() if k != "pending"):
+            click.echo(f"{time.strftime('%H:%M:%S')} deliver {json.dumps(result)}")
+        if time.monotonic() >= next_pull:
+            result = lms_pull.pull_if_due()
+            db.session.commit()
+            if "skipped" not in result:
+                click.echo(f"{time.strftime('%H:%M:%S')} pull {json.dumps(result)}")
+            next_pull = time.monotonic() + pull_every
+        if duration and time.monotonic() - started + deliver_every > duration:
+            return
+        time.sleep(deliver_every)
+
+
+@lms_cli.command("refresh")
+@click.argument("admission_id", type=int)
+def refresh_command(admission_id) -> None:
+    """Apply one admission's current LMS state now (the "Refresh from LMS" button)."""
+    try:
+        click.echo(json.dumps(lms_pull.refresh_admission(admission_id)))
+    except AppError as exc:
+        raise click.ClickException(exc.message) from exc
+    db.session.commit()
+
+
+@lms_cli.command("reconcile")
+@click.option("--admission", "admission_id", type=int, help="Only this admission.")
+@click.option("--fix", is_flag=True, help="Send CRM-owned fields again and refresh the LMS-owned mirror.")
+def reconcile_command(admission_id, fix) -> None:
+    """Compare the CRM with the LMS per admission; exits 1 while drift is left unresolved."""
+    try:
+        result = lms_reconcile.reconcile(admission_id, fix=fix)
+    except AppError as exc:
+        raise click.ClickException(exc.message) from exc
+    db.session.commit()
+    for item in result["drift"]:
+        click.echo(f"{item['admission_code']} {item['field']}: CRM {item['crm']} · LMS {item['lms']} "
+                   f"(owner {item['owner']})")
+    click.echo(json.dumps({"checked": result["checked"], "drift": len(result["drift"]), "fixed": result["fixed"],
+                           "unresolved": len(result["unresolved"])}))
+    if result["unresolved"]:
+        raise SystemExit(1)
 
 
 @lms_cli.command("outbox")

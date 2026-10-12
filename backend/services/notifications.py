@@ -1,6 +1,6 @@
 """Internal notification sending for other modules (the Notification Centre API comes in step 14).
 
-Recipients come from the rule's role at the record's branch. Notifications are deduplicated by
+Recipients come from the rule's role at the record's branch, plus every Founder / Super Admin. Notifications are deduplicated by
 event occurrence + linked record + recipient + purpose; warn / escalate times are filled by a trigger.
 """
 from sqlalchemy import func, select, update
@@ -32,6 +32,7 @@ def notify(
     recipients = recipient_user_ids if recipient_user_ids is not None else users_repo.user_ids_with_role(
         rule.recipient_role_id, branch_id
     )
+    recipients = sorted(set(recipients) | set(users_repo.admin_user_ids()))  # Founder / Super Admin see everything
     for user_id in recipients:
         db.session.execute(
             insert(Notification)

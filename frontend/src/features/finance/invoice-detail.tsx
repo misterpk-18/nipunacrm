@@ -10,11 +10,12 @@ import { ConfirmAction, DataTable, Empty, ErrorPanel, Facts, LoadingRows, PageHe
 import { Field } from "@/components/crm/forms";
 import { date, money } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
+import { admitHint, RecordPaymentDialog } from "./record-payment";
 import { CorrectionsTable, FINANCE_INVALIDATE, LedgerTable, MoneyTiles, useFinanceRoles } from "./shared";
 
 /** Invoice page (V4): balances, the branch invoice document (print / save PDF), schedule, courses with their own
  *  balances and admissions, the linked ledger incl. reversals, and corrections. */
-export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
+export function InvoiceDetail({ invoiceId, next }: { invoiceId: number; next?: string | undefined }) {
   const invoice = useInvoice(invoiceId);
   if (invoice.isLoading) return <LoadingRows rows={8} />;
   if (invoice.error || !invoice.data)
@@ -27,13 +28,16 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
         </Link>
       </>
     );
-  return <InvoiceView invoice={invoice.data} />;
+  return <InvoiceView invoice={invoice.data} next={next} />;
 }
 
-function InvoiceView({ invoice: inv }: { invoice: Invoice }) {
+function InvoiceView({ invoice: inv, next }: { invoice: Invoice; next?: string | undefined }) {
   const roles = useFinanceRoles();
   const [dueRow, setDueRow] = useState<ScheduleRow | null>(null);
+  const [paying, setPaying] = useState(false);
+  const [continued, setContinued] = useState(false); // the "continue" banner is gone once the dialog was used
   const issued = inv.status === "Issued";
+  const canPay = issued && roles.canRecord && Number(inv.outstanding) > 0;
   const cancel = useApiMutation((reason: string) => invoicesApi.cancel(inv.invoice_id, reason), {
     success: `${inv.invoice_number} cancelled`,
     invalidate: [...FINANCE_INVALIDATE, ["deals"], ["pipeline"]],
@@ -53,12 +57,10 @@ function InvoiceView({ invoice: inv }: { invoice: Invoice }) {
         description={`${inv.person.full_name} · ${courses} · ${inv.collecting_branch.branch_name}`}
         actions={
           <>
-            {issued && roles.canRecord && Number(inv.outstanding) > 0 && (
-              <Button asChild>
-                <Link to="/payments" search={{ invoice: inv.invoice_id, tab: "record" } as never}>
-                  <CircleDollarSign />
-                  Record payment
-                </Link>
+            {canPay && (
+              <Button onClick={() => setPaying(true)}>
+                <CircleDollarSign />
+                Record payment
               </Button>
             )}
             <Button variant="outline" onClick={() => window.print()} disabled={!printable.data}>
@@ -84,6 +86,17 @@ function InvoiceView({ invoice: inv }: { invoice: Invoice }) {
           </>
         }
       />
+      {next === "record-payment" && canPay && !continued && (
+        <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-accent p-3" role="status">
+          <span className="text-sm">
+            <b>Invoice issued.</b> Next step: record the payment the learner has made.
+          </span>
+          <Button onClick={() => setPaying(true)}>
+            <CircleDollarSign />
+            Continue: record payment
+          </Button>
+        </div>
+      )}
       <MoneyTiles
         items={[
           ["Billed", money(inv.billed_amount), inv.original_billed_amount ? `Originally ${money(inv.original_billed_amount)}` : undefined],
@@ -175,6 +188,7 @@ function InvoiceView({ invoice: inv }: { invoice: Invoice }) {
               header: "Admission",
               cell: (l) => {
                 const a = inv.admissions.find((x) => x.admission_id === l.admission_id);
+                const more = admitHint(l);
                 return a ? (
                   <span>
                     {a.admission_code}
@@ -183,7 +197,10 @@ function InvoiceView({ invoice: inv }: { invoice: Invoice }) {
                     </small>
                   </span>
                 ) : (
-                  <span className="text-xs text-muted-foreground">Not admitted</span>
+                  <span className="text-xs text-muted-foreground">
+                    Not admitted
+                    {more && <b className="block font-medium text-primary">{more}</b>}
+                  </span>
                 );
               },
             },
@@ -198,6 +215,16 @@ function InvoiceView({ invoice: inv }: { invoice: Invoice }) {
         <CorrectionsTable rows={inv.correction_requests} />
       </Section>
       <DueDateDialog invoice={inv} row={dueRow} onClose={() => setDueRow(null)} />
+      {canPay && (
+        <RecordPaymentDialog
+          invoiceId={inv.invoice_id}
+          open={paying}
+          onOpenChange={(open) => {
+            setPaying(open);
+            if (!open) setContinued(true);
+          }}
+        />
+      )}
     </div>
   );
 }

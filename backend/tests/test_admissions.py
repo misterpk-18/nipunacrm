@@ -1,4 +1,4 @@
-"""Step 9: admissions, complimentary courses, transfers, fee changes, batches, allocation, curriculum, completion."""
+"""Step 9: admissions, complimentary courses, transfers, fee changes, batches, allocation, completion."""
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -86,9 +86,9 @@ def test_list_detail_update_and_scope(client, people, course):
     assert [r["admission_id"] for r in rows] == [aid]
     assert client.get(f"{API}/admissions/{aid}", headers=people["mounika"]["h"]).status_code == 404
     updated = call(client, "patch", f"/admissions/{aid}", people["bm"]["h"],
-                   json={"handover_status": "Completed", "lms_status": "Invited", "academic_owner_id": people["coordinator"]["id"]})
+                   json={"handover_status": "Completed", "lms_status": "Invited", "academic_owner_id": people["bm"]["id"]})
     assert updated["handover_status"] == "Completed" and updated["lms_status"] == "Invited"
-    assert updated["academic_owner_id"] == people["coordinator"]["id"]
+    assert updated["academic_owner_id"] == people["bm"]["id"]
     assert client.patch(f"{API}/admissions/{aid}", json={"academic_owner_id": people["mounika"]["id"]},
                         headers=people["bm"]["h"]).status_code == 400
 
@@ -168,82 +168,67 @@ def test_fee_change_below_verified_and_rejection(client, people, course):
 
 # ---------------------------------------------------------------- academics
 
-def published_curriculum(client, people, course, label="v2026.1"):
-    return call(client, "post", "/curriculum-versions", people["coordinator"]["h"], 201,
-                json={"course_id": course, "version_label": label, "publish": True})
-
-
 def make_batch(client, people, course, branch_id=1, capacity=2, **extra):
-    headers = people["coordinator"]["h"] if branch_id == 1 else people["bm_vij"]["h"]
+    headers = people["bm"]["h"] if branch_id == 1 else people["bm_vij"]["h"]
     return call(client, "post", "/batches", headers, 201, json={
         "batch_name": "DS Weekend", "course_id": course, "branch_id": branch_id, "start_date": date.today().isoformat(),
         "capacity": capacity, "start_time": "10:00", "end_time": "12:00", "schedule_days": "Sat, Sun", **extra})
 
 
-def test_curriculum_batch_and_allocation_flow(client, people, course):
-    coordinator = people["coordinator"]["h"]
-    curriculum = published_curriculum(client, people, course)
+def test_batch_and_allocation_flow(client, people, course):
+    manager = people["bm"]["h"]
     batch = make_batch(client, people, course, trainer_user_id=people["trainer"]["id"])
-    assert batch["batch_code"] == "GNT-B-0001" and batch["curriculum_version"]["version_label"] == "v2026.1"
+    assert batch["batch_code"] == "GNT-B-0001" and "curriculum_version" not in batch
     assert batch["seats_left"] == 2 and batch["is_full"] is False
 
     flow = admitted(client, people, course)
     aid = flow["admission"]["admission_id"]
-    queue = call(client, "get", "/batch-allocation-queue", coordinator)
+    queue = call(client, "get", "/batch-allocation-queue", manager)
     assert [row["admission"]["admission_id"] for row in queue] == [aid] and queue[0]["allocate_by"]
 
-    check = call(client, "get", f"/batches/{batch['batch_id']}/allocation-check?admission_id={aid}", coordinator)
-    assert check["ok"] is False and check["reason"].startswith("Curriculum Mapping Pending")
-    assert check["recovery_owner"].startswith("Academic Coordinator (NIT-GNT)")
-    blocked = client.post(f"{API}/admissions/{aid}/allocations", json={"batch_id": batch["batch_id"]}, headers=coordinator)
-    assert blocked.status_code == 422 and "Curriculum Mapping Pending" in blocked.get_json()["error"]["message"]
-
-    mapped = call(client, "post", f"/admissions/{aid}/curricula", coordinator,
-                  json={"curriculum_version_id": curriculum["curriculum_version_id"]})
-    assert mapped["curriculum_status"] == "Mapped"
-    assert call(client, "get", f"/batches/{batch['batch_id']}/allocation-check?admission_id={aid}", coordinator)["ok"]
-    allocation = call(client, "post", f"/admissions/{aid}/allocations", coordinator, 201, json={"batch_id": batch["batch_id"]})
-    assert call(client, "get", f"/admissions/{aid}", coordinator)["enrolment_status"] == "Scheduled"
-    workspace = call(client, "get", f"/batches/{batch['batch_id']}", coordinator)
+    # no curriculum step: the admission is allocatable straight away, and the old endpoints are gone
+    assert "curriculum_status" not in call(client, "get", f"/admissions/{aid}", manager)
+    assert client.post(f"{API}/admissions/{aid}/curricula", json={}, headers=manager).status_code == 404
+    assert client.get(f"{API}/curriculum-versions", headers=manager).status_code == 404
+    check = call(client, "get", f"/batches/{batch['batch_id']}/allocation-check?admission_id={aid}", manager)
+    assert check["ok"] is True and check["reason"] == "All checks passed: same service branch, course, seat available."
+    allocation = call(client, "post", f"/admissions/{aid}/allocations", manager, 201, json={"batch_id": batch["batch_id"]})
+    assert call(client, "get", f"/admissions/{aid}", manager)["enrolment_status"] == "Scheduled"
+    workspace = call(client, "get", f"/batches/{batch['batch_id']}", manager)
     assert workspace["allocated"] == 1 and len(workspace["allocations"]) == 1
 
     assert client.post(f"{API}/batch-allocations/{allocation['allocation_id']}/joining-date",
-                       json={"joining_date": (date.today() + timedelta(days=1)).isoformat()}, headers=coordinator).status_code == 400
+                       json={"joining_date": (date.today() + timedelta(days=1)).isoformat()}, headers=manager).status_code == 400
     joined = call(client, "post", f"/batch-allocations/{allocation['allocation_id']}/joining-date", people["trainer"]["h"],
                   json={"joining_date": date.today().isoformat()})
     assert joined["joining_date"] == date.today().isoformat()
-    assert call(client, "get", f"/admissions/{aid}", coordinator)["enrolment_status"] == "In Progress"
+    assert call(client, "get", f"/admissions/{aid}", manager)["enrolment_status"] == "In Progress"
 
-    completed = call(client, "post", f"/admissions/{aid}/complete", coordinator)
+    completed = call(client, "post", f"/admissions/{aid}/complete", manager)
     assert completed["enrolment_status"] == "Completed" and completed["support_until"] and completed["academic_completed_at"]
-    assert call(client, "get", f"/admissions/{aid}", coordinator)["allocations"][0]["status"] == "Completed"
+    assert call(client, "get", f"/admissions/{aid}", manager)["allocations"][0]["status"] == "Completed"
 
 
 def test_allocation_blocks_wrong_branch_and_full_batch(client, people, course):
-    coordinator = people["coordinator"]["h"]
-    curriculum = published_curriculum(client, people, course)
+    manager = people["bm"]["h"]
     db.session.add(CourseBranch(course_id=course, branch_code="NIT-VIJ"))
     db.session.commit()
     vij_batch = make_batch(client, people, course, branch_id=2)
     tiny = make_batch(client, people, course, capacity=1)
 
     first = admitted(client, people, course)
-    for flow in [first]:
-        call(client, "post", f"/admissions/{flow['admission']['admission_id']}/curricula", coordinator,
-             json={"curriculum_version_id": curriculum["curriculum_version_id"]})
     aid = first["admission"]["admission_id"]
     wrong = call(client, "get", f"/batches/{vij_batch['batch_id']}/allocation-check?admission_id={aid}", people["admin"]["h"])
     assert wrong["ok"] is False and wrong["reason"].startswith("Wrong branch") and wrong["recovery_owner"] == "Branch Manager (NIT-GNT)"
-    call(client, "post", f"/admissions/{aid}/allocations", coordinator, 201, json={"batch_id": tiny["batch_id"]})
-    dup = client.post(f"{API}/admissions/{aid}/allocations", json={"batch_id": tiny["batch_id"]}, headers=coordinator)
+    call(client, "post", f"/admissions/{aid}/allocations", manager, 201, json={"batch_id": tiny["batch_id"]})
+    dup = client.post(f"{API}/admissions/{aid}/allocations", json={"batch_id": tiny["batch_id"]}, headers=manager)
     assert dup.status_code == 422
 
     second = admitted(client, people, course)
     sid = second["admission"]["admission_id"]
-    call(client, "post", f"/admissions/{sid}/curricula", coordinator, json={"curriculum_version_id": curriculum["curriculum_version_id"]})
-    full = call(client, "get", f"/batches/{tiny['batch_id']}/allocation-check?admission_id={sid}", coordinator)
+    full = call(client, "get", f"/batches/{tiny['batch_id']}/allocation-check?admission_id={sid}", manager)
     assert full["ok"] is False and full["reason"].startswith("Full capacity")
-    assert client.post(f"{API}/admissions/{sid}/allocations", json={"batch_id": tiny["batch_id"]}, headers=coordinator).status_code == 422
+    assert client.post(f"{API}/admissions/{sid}/allocations", json={"batch_id": tiny["batch_id"]}, headers=manager).status_code == 422
 
 
 def test_batch_rules(client, people, course):
@@ -251,8 +236,8 @@ def test_batch_rules(client, people, course):
                    branch_links=[CourseBranch(branch_code="NIT-GNT")])
     db.session.add(combo)
     db.session.commit()
-    coordinator = people["coordinator"]["h"]
-    combo_batch = client.post(f"{API}/batches", headers=coordinator, json={
+    manager = people["bm"]["h"]
+    combo_batch = client.post(f"{API}/batches", headers=manager, json={
         "batch_name": "Combo", "course_id": combo.course_id, "branch_id": 1, "start_date": date.today().isoformat(),
         "capacity": 10})
     assert combo_batch.status_code == 422 and "standalone" in combo_batch.get_json()["error"]["message"]
@@ -261,22 +246,36 @@ def test_batch_rules(client, people, course):
         "batch_name": "x", "course_id": course, "branch_id": 1, "start_date": date.today().isoformat(),
         "capacity": 5}).status_code == 403
     batch = make_batch(client, people, course, capacity=5)
-    assert client.post(f"{API}/batches", headers=coordinator, json={
+    assert client.post(f"{API}/batches", headers=manager, json={
         "batch_name": "x", "course_id": course, "branch_id": 1, "start_date": date.today().isoformat(),
         "capacity": 5, "min_students": 6}).status_code == 422
-    patched = call(client, "patch", f"/batches/{batch['batch_id']}", coordinator, json={"status": "Open", "location": "Lab 2"})
+    patched = call(client, "patch", f"/batches/{batch['batch_id']}", manager, json={"status": "Open", "location": "Lab 2"})
     assert patched["status"] == "Open" and patched["location"] == "Lab 2"
 
 
-def test_curriculum_publish_retires_previous(client, people, course):
-    published_curriculum(client, people, course, "v2026.1")
-    v2 = call(client, "post", "/curriculum-versions", people["coordinator"]["h"], 201,
-              json={"course_id": course, "version_label": "v2026.2"})
-    assert v2["status"] == "Draft"
-    call(client, "post", f"/curriculum-versions/{v2['curriculum_version_id']}/publish", people["coordinator"]["h"])
-    versions = {v["version_label"]: v["status"] for v in call(client, "get", f"/curriculum-versions?course_id={course}",
-                                                              people["coordinator"]["h"])}
-    assert versions == {"v2026.1": "Retired", "v2026.2": "Published"}
+def test_allocation_blocks_paused_enrolment_and_other_courses(client, people, course, run_sql):
+    manager = people["bm"]["h"]
+    other = Course(course_code="NIT-CRS-091", course_title="Tally", category="Office", standard_fee=8000,
+                   branch_links=[CourseBranch(branch_code="NIT-GNT")])
+    db.session.add(other)
+    db.session.commit()
+    batch = make_batch(client, people, course, capacity=5)
+    other_batch = make_batch(client, people, other.course_id, capacity=5)
+    aid = admitted(client, people, course)["admission"]["admission_id"]
+
+    mismatch = call(client, "get", f"/batches/{other_batch['batch_id']}/allocation-check?admission_id={aid}", manager)
+    assert mismatch["ok"] is False and mismatch["reason"].startswith("Course mismatch")
+    blocked = client.post(f"{API}/admissions/{aid}/allocations", json={"batch_id": other_batch["batch_id"]}, headers=manager)
+    assert blocked.status_code == 422 and "not part of admission" in blocked.get_json()["error"]["message"]
+
+    call(client, "post", f"/admissions/{aid}/pause", manager, json={"reason": "Medical leave"})
+    paused = call(client, "get", f"/batches/{batch['batch_id']}/allocation-check?admission_id={aid}", manager)
+    assert paused["ok"] is False and "Paused" in paused["reason"]
+    blocked = client.post(f"{API}/admissions/{aid}/allocations", json={"batch_id": batch["batch_id"]}, headers=manager)
+    assert blocked.status_code == 422 and "allocation blocked" in blocked.get_json()["error"]["message"]
+
+    call(client, "post", f"/admissions/{aid}/resume", manager)
+    call(client, "post", f"/admissions/{aid}/allocations", manager, 201, json={"batch_id": batch["batch_id"]})
 
 
 def test_complimentary_course(client, people, course, run_sql):

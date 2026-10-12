@@ -8,6 +8,9 @@ approved.
 """
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
+
+from flask import current_app
 
 from config.database import db
 from models import (
@@ -15,10 +18,11 @@ from models import (
 )
 from models.enums import PROTECTED_STAGES
 from repositories import payments as payments_repo
+from repositories import settings as settings_repo
 from repositories import users as users_repo
 from repositories.common import paginate
 from services import admissions as admissions_service
-from services import audit, lms_sync, notifications, payment_alerts, sla, tasks
+from services import audit, lms_sync, notifications, payment_alerts, sla, tasks, whatsapp_events
 from services import invoices as invoices_service
 from services import persons as persons_service
 from services.context import ADMIN_ROLES, COUNSELLOR_ROLES, current_user
@@ -46,6 +50,15 @@ def _is_accounts(branch_id: int) -> bool:
 
 # ---------------------------------------------------------------- read
 
+def proof_file(payment_id: int):
+    """(absolute path, download name) of the proof attached to a claim; NotFound when there is none."""
+    payment = get_payment(payment_id)
+    path = Path(current_app.config["UPLOAD_DIR"]) / payment.proof_file_path if payment.proof_file_path else None
+    if path is None or not path.is_file():
+        raise NotFound("No proof attached to this payment")
+    return path, path.name.split("-", 1)[-1]
+
+
 def list_payments(filters: dict, page: int, per_page: int):
     stmt = payments_repo.payments_stmt(filters, current_user().branch_ids())
     payments, meta = paginate(stmt, page, per_page)
@@ -67,9 +80,50 @@ def _open_lines(invoice) -> list[tuple[InvoiceLine, Decimal]]:
     return rows
 
 
+def admission_token() -> Decimal:
+    """Verified money a course needs before it can be admitted (setting admission_token_amount, default ₹1,000)."""
+    return Decimal(str(settings_repo.get("admission_token_amount", 1000)))
+
+
+def more_to_admit(line: InvoiceLine, token: Decimal | None = None) -> Decimal:
+    """What still has to be VERIFIED on this course to reach its admission token: 0 once admitted or covered. The token
+    is the setting, or the whole fee when that is smaller (the same rule as the database)."""
+    if line.balance.admission_id is not None:
+        return Decimal("0.00")
+    token = admission_token() if token is None else token
+    return max(min(token, line.billed_amount) - line.balance.verified_paid, Decimal("0.00"))
+
+
+def lines_payload(invoice) -> list[dict]:
+    """The invoice's course lines for the API, each with `more_to_admit`."""
+    token = admission_token()
+    return [{**line.to_dict(), "more_to_admit": more_to_admit(line, token)} for line in invoice.lines]
+
+
+def token_first_split(rows: list[tuple[InvoiceLine, Decimal]], total: Decimal) -> list[tuple[InvoiceLine, Decimal]]:
+    """Spread `total` over the open course lines: every course that is not yet admitted first gets up to its admission
+    token (what is still needed, less what is already waiting for verification; its remaining amount if smaller), then
+    what is left goes oldest line first. Never more than what is open on a course. rows: [(line, open_to_allocate)]."""
+    token = admission_token()
+    gave: dict[int, Decimal] = {}
+    remaining = total
+    for line, left in rows:
+        need = max(more_to_admit(line, token) - line.balance.pending_verification, Decimal("0.00"))
+        take = min(need, left, remaining)
+        if take > 0:
+            gave[line.invoice_line_id] = take
+            remaining -= take
+    for line, left in rows:
+        take = min(left - gave.get(line.invoice_line_id, Decimal("0.00")), remaining)
+        if take > 0:
+            gave[line.invoice_line_id] = gave.get(line.invoice_line_id, Decimal("0.00")) + take
+            remaining -= take
+    return [(line, gave[line.invoice_line_id]) for line, _ in rows if line.invoice_line_id in gave]
+
+
 def _allocations(invoice, total: Decimal, given: list[dict] | None, split_excess: bool
                  ) -> tuple[list[tuple[InvoiceLine, Decimal]], Decimal]:
-    """Given allocations (checked against each line), or the total spread oldest course line first.
+    """Given allocations (checked against each line), or the total spread token-first (token_first_split).
     Returns ([(line, amount)], excess for an unallocated advance)."""
     open_lines = _open_lines(invoice)
     if given:
@@ -90,12 +144,8 @@ def _allocations(invoice, total: Decimal, given: list[dict] | None, split_excess
         if errors:
             raise ValidationError("Check the allocation to courses", errors)
         return result, Decimal("0.00")
-    result, remaining = [], total
-    for line, left in open_lines:
-        take = min(left, remaining)
-        if take > 0:
-            result.append((line, take))
-            remaining -= take
+    result = token_first_split(open_lines, total)
+    remaining = total - sum((amount for _, amount in result), Decimal("0.00"))
     if remaining > 0 and not split_excess:
         raise BusinessRule(f"Payment of {total} exceeds the outstanding {total - remaining} on {invoice.invoice_number}",
                            {"outstanding": str(total - remaining)})
@@ -175,6 +225,10 @@ def record(data: dict, proof: dict | None = None) -> tuple[list[Payment], Paymen
         raise ValidationError("Each tender needs an amount and a payment mode",
                               {"tenders": ["amount and payment_mode_id are required"]})
     modes = [_check_tender(tender, branch_id, n) for n, tender in enumerate(tenders)]
+    if proof is None and any(mode.code != "CASH" for mode in modes):
+        raise ValidationError("Attach the proof (screenshot or PDF) for a UPI / bank transfer, payment link / card or "
+                              "cheque payment. Only cash can be recorded without one",
+                              {"proof": ["Required unless the payment is cash"]})
     total = sum((t["amount"] for t in tenders), Decimal("0.00"))
 
     common = dict(collected_by=user.user_id, collecting_branch_id=branch_id, person_id=person_id,
@@ -235,6 +289,7 @@ def _insert(payment: Payment, parts: list[tuple[InvoiceLine, Decimal]]) -> Payme
         sla.staffed_deadline(payment.collecting_branch_id, datetime.now(timezone.utc), VERIFICATION_DUE_STAFFED_MINUTES),
         team_role_code="ACCOUNTS", dedupe_key=f"payment-verify:{payment.payment_id}", payment_id=payment.payment_id,
     )
+    payment_alerts.payment_to_verify(payment)  # WhatsApp to the branch's Accounts users
     audit.record("PAYMENT_RECORDED", "payment", payment.payment_id,
                  new={"transaction_number": payment.transaction_number, "amount": payment.amount,
                       "invoice_id": payment.invoice_id,
@@ -285,6 +340,8 @@ def verify(payment_id: int, data: dict) -> tuple[Payment, list]:
                       "admissions": [a.admission_code for a in admitted]}, branch_id=payment.collecting_branch_id)
     if payment.invoice_id:
         lms_sync.finance_changed(invoice_id=payment.invoice_id)
+    whatsapp_events.payment_verified(payment)
+    payment_alerts.payment_outcome(payment, "verified")
     return payment, admitted
 
 
@@ -299,6 +356,7 @@ def fail(payment_id: int, reason: str) -> Payment:
     if payment.invoice_id:
         lms_sync.finance_changed(invoice_id=payment.invoice_id)
     db.session.refresh(payment)
+    payment_alerts.payment_outcome(payment, "failed")
     return payment
 
 
@@ -322,6 +380,7 @@ def allocate(payment_id: int, invoice_id: int, allocations: list[dict] | None = 
     audit.record("PAYMENT_ALLOCATED", "payment", payment_id, new={"invoice_id": invoice_id},
                  branch_id=payment.collecting_branch_id)
     lms_sync.finance_changed(invoice_id=invoice_id)
+    whatsapp_events.advance_allocated(payment, parts)
     return payment, admitted
 
 
@@ -402,4 +461,6 @@ def decide_correction(request_id: int, approve: bool, note: str | None) -> Payme
                  reason=note, branch_id=request.payment.collecting_branch_id)
     if approve and request.payment.invoice_id:
         lms_sync.finance_changed(invoice_id=request.payment.invoice_id)  # the reversal
+    if approve:
+        whatsapp_events.correction_applied(request)
     return request

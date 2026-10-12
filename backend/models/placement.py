@@ -1,7 +1,7 @@
 """Placement: companies, Job Opening Master, placement profiles, applications + events; alumni view, support extensions."""
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text
+from sqlalchemy import BigInteger, Boolean, Computed, Date, DateTime, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config.database import db
@@ -117,6 +117,7 @@ class JobApplication(db.Model):
     __tablename__ = "job_applications"
 
     application_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    application_code: Mapped[str] = mapped_column(String(12), Computed("'PL-' || lpad(application_id::TEXT, 5, '0')"))  # db 034
     profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("placement_profiles.profile_id"))
     job_opening_id: Mapped[int] = mapped_column(Integer, ForeignKey("job_openings.job_opening_id"))
     stage: Mapped[str] = mapped_column(ApplicationStage, default="Applied")
@@ -136,7 +137,8 @@ class JobApplication(db.Model):
     events: Mapped[list["ApplicationEvent"]] = relationship(lazy="selectin", order_by="ApplicationEvent.event_id")
 
     def to_dict(self) -> dict:
-        return {"application_id": self.application_id, "profile_id": self.profile_id,
+        return {"application_id": self.application_id, "application_code": self.application_code,
+                "profile_id": self.profile_id,
                 "person": self.profile.person.to_summary(), "job_opening_id": self.job_opening_id,
                 "job_code": self.job_opening.job_code, "job_title": self.job_opening.job_title, "stage": self.stage,
                 "stage_changed_at": self.stage_changed_at, "interview_at": self.interview_at,

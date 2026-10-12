@@ -3,6 +3,7 @@ from flask import request
 
 from controllers.common import Validator, created, get_page_params, json_body, ok, paginated, require_changes
 from models.enums import DEMO_MODES, DEMO_STATUSES, DEMO_TYPES
+from services import demo_slots
 from services import demos as demos_service
 
 RESCHEDULE_REASONS = ("Student requested", "Trainer unavailable", "Batch timing change", "Other")
@@ -24,11 +25,24 @@ def list_demos():
     v.integer("branch_id", min_value=1)
     v.integer("trainer_id", min_value=1)
     v.integer("lead_id", min_value=1)
+    v.integer("owner_id", min_value=1)
     v.choice("status", DEMO_STATUSES)
+    v.boolean("outcome_due")
     filters = v.validate()
     page, per_page = get_page_params()
     demos, meta, counts = demos_service.list_demos(filters, page, per_page)
     return paginated([_with_attended(d, counts) for d in demos], meta)
+
+
+def slots():
+    v = Validator(request.args.to_dict())
+    v.integer("course_id", required=True, min_value=1)
+    v.integer("branch_id", required=True, min_value=1)
+    v.choice("type", DEMO_TYPES, default="Standard")
+    v.date("from")
+    v.integer("days", default=7, min_value=1, max_value=14)
+    data = v.validate()
+    return ok(demo_slots.free_slots(data["course_id"], data["branch_id"], data["type"], data.get("from"), data["days"]))
 
 
 def get_demo(demo_id: int):

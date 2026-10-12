@@ -6,7 +6,9 @@ import { MyWorkPage, type MyWorkSearch } from "@/features/workspace/my-work";
 export const Route = createFileRoute("/my-work")({
   validateSearch: (s: Record<string, unknown>): MyWorkSearch => {
     const queue = str(s["queue"]);
+    const view = str(s["view"]);
     return compact({
+      view: view === "today" || view === "queues" || view === "handover" ? view : undefined,
       queue: QUEUES.some((q) => q.key === queue) ? (queue as QueueKey) : undefined,
       q: str(s["q"]),
       page: num(s["page"]),

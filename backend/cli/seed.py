@@ -35,7 +35,6 @@ STAFF = {
     "sales_gnt": ("Counsellor A (GNT)", "sales.gnt@nipuna.test", [("SALES", GNT)]),
     "fo_gnt": ("Front Office B (GNT)", "fo.gnt@nipuna.test", [("FRONT_OFFICE", GNT)]),
     "accounts_gnt": ("Accounts (GNT)", "accounts.gnt@nipuna.test", [("ACCOUNTS", GNT)]),
-    "coord_gnt": ("Academic Coordinator (GNT)", "coordinator.gnt@nipuna.test", [("ACADEMIC_COORDINATOR", GNT)]),
     "trainer_g1": ("Trainer G1", "trainer.g1@nipuna.test", [("TRAINER", GNT)]),
     "trainer_g2": ("Trainer G2", "trainer.g2@nipuna.test", [("TRAINER", GNT)]),
     "placement_gnt": ("Placement Team (GNT)", "placement.gnt@nipuna.test", [("PLACEMENT", GNT)]),
@@ -44,7 +43,6 @@ STAFF = {
     "sales_vij": ("Counsellor C (VIJ)", "sales.vij@nipuna.test", [("SALES", VIJ)]),
     "fo_vij": ("Front Office D (VIJ)", "fo.vij@nipuna.test", [("FRONT_OFFICE", VIJ)]),
     "accounts_vij": ("Accounts (VIJ)", "accounts.vij@nipuna.test", [("ACCOUNTS", VIJ)]),
-    "coord_vij": ("Academic Coordinator (VIJ)", "coordinator.vij@nipuna.test", [("ACADEMIC_COORDINATOR", VIJ)]),
     "trainer_v1": ("Trainer V1", "trainer.v1@nipuna.test", [("TRAINER", VIJ)]),
     "trainer_v2": ("Trainer V2", "trainer.v2@nipuna.test", [("TRAINER", VIJ)]),
     "placement_vij": ("Placement Team (VIJ)", "placement.vij@nipuna.test", [("PLACEMENT", VIJ)]),
@@ -93,7 +91,6 @@ LEADS = [
 
 TRAINER = {GNT: "trainer_g1", VIJ: "trainer_v1"}
 ACCOUNTS = {GNT: "accounts_gnt", VIJ: "accounts_vij"}
-COORDINATOR = {GNT: "coord_gnt", VIJ: "coord_vij"}
 MANAGER = {GNT: "bm_gnt", VIJ: "bm_vij"}
 
 
@@ -116,7 +113,6 @@ class Seeder:
         self.headers: dict[str, dict] = {}
         self.courses: dict[str, int] = {}
         self.batches: dict[tuple[int, str], int] = {}
-        self.curricula: dict[str, int] = {}
         self.phone = 9876500000
 
     # ------------------------------------------------------------ plumbing
@@ -160,10 +156,6 @@ class Seeder:
     # ------------------------------------------------------------ academics
 
     def academics(self):
-        for code, course_id in self.courses.items():
-            curriculum = self.call("post", "/curriculum-versions", "coord_gnt", 201,
-                                   course_id=course_id, version_label="v2026.1", publish=True)
-            self.curricula[code] = curriculum["curriculum_version_id"]
         start = (datetime.now(IST) + timedelta(days=7)).date().isoformat()
         plan = [
             (GNT, "NIT-CRS-047", "Java FS Morning", "09:00", "11:00", "Mon, Tue, Wed, Thu, Fri", "trainer_g1"),
@@ -173,11 +165,11 @@ class Seeder:
             (VIJ, "NIT-CRS-019", "Power BI Evening", "18:00", "20:00", "Tue, Thu, Sat", "trainer_v2"),
         ]
         for branch, code, name, start_time, end_time, days, trainer in plan:
-            batch = self.call("post", "/batches", COORDINATOR[branch], 201, batch_name=name,
+            batch = self.call("post", "/batches", MANAGER[branch], 201, batch_name=name,
                               course_id=self.courses[code], branch_id=branch, start_date=start, capacity=20,
                               start_time=start_time, end_time=end_time, schedule_days=days,
                               trainer_user_id=self.users[trainer])
-            self.call("patch", f"/batches/{batch['batch_id']}", COORDINATOR[branch], status="Open",
+            self.call("patch", f"/batches/{batch['batch_id']}", MANAGER[branch], status="Open",
                       location="Lab 1" if branch == GNT else "Lab 3")
             self.batches[(branch, code)] = batch["batch_id"]
 
@@ -271,11 +263,9 @@ class Seeder:
                          evidence_reviewed=True, cash_checked=True)["admissions_created"]
 
     def enrol(self, admission, branch, code):
-        self.call("post", f"/admissions/{admission['admission_id']}/curricula", COORDINATOR[branch],
-                  curriculum_version_id=self.curricula[code])
         batch = self.batches.get((branch, code))
         if batch:
-            self.call("post", f"/admissions/{admission['admission_id']}/allocations", COORDINATOR[branch], 201,
+            self.call("post", f"/admissions/{admission['admission_id']}/allocations", MANAGER[branch], 201,
                       batch_id=batch)
 
     def admit(self, lead, branch, who, plan="FULL", share="1", installments=None, amount=None):
@@ -406,7 +396,7 @@ class Seeder:
         self.call("post", "/incidents", "admin", 201, title="WhatsApp number awaiting verification", severity="Medium")
 
     def run(self):
-        steps = [("staff", self.staff), ("courses", self.catalog), ("curricula and batches", self.academics),
+        steps = [("staff", self.staff), ("courses", self.catalog), ("batches", self.academics),
                  ("leads to admissions", self.sales), ("tasks, inbox, placement", self.operations),
                  ("targets and incidents", self.management)]
         for label, step in steps:

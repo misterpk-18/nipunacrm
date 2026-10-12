@@ -141,7 +141,6 @@ def people(make_user, login):
         "accounts": make_user(roles=[("ACCOUNTS", 1)], full_name="Accounts"),
         "founder": make_user(roles=[("FOUNDER_CEO", None)], full_name="Founder"),
         "trainer": make_user(roles=[("TRAINER", 1)], full_name="Trainer G1"),
-        "coordinator": make_user(roles=[("ACADEMIC_COORDINATOR", 1)], full_name="Coordinator G"),
         "bm_vij": make_user(roles=[("BRANCH_MANAGER", 2)], full_name="BM Vijayawada"),
         "accounts_vij": make_user(roles=[("ACCOUNTS", 2)], full_name="Accounts VIJ"),
         "placement": make_user(roles=[("PLACEMENT", 1)], full_name="Placement G"),

@@ -59,6 +59,8 @@ export type InvoiceLine = {
   waived: Money;
   outstanding: Money;
   open_to_allocate: Money;
+  /** Still to be VERIFIED on this course to reach its admission token (0 once admitted or covered). */
+  more_to_admit: Money;
   payment_completion: InvoiceCompletion;
   admission_id: number | null;
 };

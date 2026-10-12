@@ -76,6 +76,7 @@ class LmsPullState(db.Model):
     last_error: Mapped[str | None] = mapped_column(Text)
     last_counts: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # a running pull's claim
+    last_reconcile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # daily drift check (db 030)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
 
     def to_dict(self) -> dict:

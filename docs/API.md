@@ -171,7 +171,9 @@ The database triggers already return readable messages ("Prerequisite missing: f
 | 20 | Background jobs | — | Escalations, reminders, scheduled reports |
 | 21 | **V4 — deals, multi-course invoices, receipts** | Leads, Deal pipeline, Invoices, Payments & receipts, Admissions | UI V4 handoff (see [DEVELOPMENT.md · Part D (V4 plan)](DEVELOPMENT.md#part-d--v4-handoff-plan-and-review)); db 019–022 |
 | 22 | LMS sync (outbox) | — | Sends admissions, courses and finance to the Nipuna LMS; db 026 |
-| 23 | LMS status pull | Batches, Admissions, Student 360, LMS access | Mirrors what the LMS owns (login, LMS status, academics, batches, certificates); academic screens read-only; pause / resume; db 027–028 |
+| 23 | LMS status pull | Batches, Admissions, Student 360, LMS access | Mirrors what the LMS owns (login, LMS status, academics, batches, certificates); academic screens read-only; pause / resume; db 027–028; batch offerability (db 032). Curriculum mapping (db 030, round 3) was removed by db 043 |
+| 24 | CRM AI sales playbook | My work, Lead 360 workbench, Person 360, More → Sales playbook | Front Office queue, outcomes, objections, contact rules, approved knowledge, course suggestions, recovery lists, measures; db 031 |
+| 27 | Curriculum removal | Admissions, Batches, Lead 360, Waiting for batch | No curriculum versions or mapping; Academic Coordinator merged into Branch Manager; db 043 |
 
 Dashboard is sidebar item #1 but is built late: it only displays numbers produced by the other modules.
 
@@ -187,12 +189,13 @@ Dashboard is sidebar item #1 but is built late: it only displays numbers produce
 | M6 — Intelligence & automation | 19, 20 | AI features, scheduled jobs |
 | M7 — UI V4 | 21 | Qualify → convert → delivery plan → multi-course invoice → claim → verified receipt → admission per course |
 | M8 — LMS | 22, 23 | Every admission, course and balance reaches the LMS as it changes; the LMS's academic state comes back |
+| M9 — Front Office playbook | 24 | One ordered daily queue, a 10-minute first response, honest outcomes and contact rules, assisted (never automatic) messaging |
 
 ---
 
 ### 4. Module details
 
-Roles below use the codes in `roles`: `FOUNDER_CEO`, `SUPER_ADMIN`, `BRANCH_MANAGER`, `SALES`, `FRONT_OFFICE`, `ACCOUNTS`, `ACADEMIC_COORDINATOR`, `TRAINER`, `PLACEMENT`, `HR`, `STUDENT`. "Admins" means Founder / CEO or Super Admin. "Counsellors" means Sales or Front Office.
+Roles below use the codes in `roles`: `FOUNDER_CEO`, `SUPER_ADMIN`, `BRANCH_MANAGER`, `SALES`, `FRONT_OFFICE`, `ACCOUNTS`, `TRAINER`, `PLACEMENT`, `HR`, `STUDENT`. "Admins" means Founder / CEO or Super Admin. "Counsellors" means Sales or Front Office.
 
 #### Step 0 — Foundation ✅
 
@@ -377,10 +380,10 @@ Tables: `demos`.
 | POST | `/demos/{id}/cancel` | Counsellors, BM | Reason required (Student not available / Duplicate booking / Course changed / Other); pending reminders Cleared |
 | POST | `/demos/{id}/outcome` | Trainer, Counsellors | Attended / No Show + student feedback, trainer feedback, outcome, recommended course, next action, commercial owner, exact next follow-up (required). Lead → Demo Attended unless protected (Payment Pending Verification / Admitted / Lost never move). Sets the 2-staffed-hour commercial follow-up and creates the Call task |
 | GET | `/demos/{id}/reminders` | Scoped | Reminder states (Pending / Sent / Skipped / Superseded / Cleared / Not needed / Failed) |
-| POST | `/demos/{id}/approve-extra` | Academic Coordinator, BM | |
+| POST | `/demos/{id}/approve-extra` | BM | |
 
 **As built (step 6):**
-- Also `GET /demos/{id}`. Read access: lead roles + Trainer + Academic Coordinator; booking / changes: counsellors, BM, admins; outcome: also trainers of the branch.
+- Also `GET /demos/{id}`. Read access: lead roles + Trainer; booking / changes: counsellors, BM, admins; outcome: also trainers of the branch.
 - Protected stages (never moved by a demo) = Payment Pending Verification, Admitted, Lost (prototype `protectedStages`); booking moves any other stage to Demo Scheduled, attendance to Demo Attended.
 - Default duration 45 (Standard) / 60 (Practical). Extra demo: a counsellor passes `extra_demo_approved_by` (DB checks the approver's role) or an AC / BM booking it approves it themselves; `approve-extra` stamps approval on an already-booked demo (e.g. one that became the 3rd after two were attended).
 - An outcome can't be recorded before the demo's start time. The Call task links to the lead, owned by the commercial owner (default lead owner), original due = the 2-staffed-hour target, revised = the agreed next follow-up (as the prototype).
@@ -454,13 +457,13 @@ Tables: `payments`, `payment_correction_requests`, `payment_modes`; views `unall
 
 #### Step 9 — Admissions & academics (sidebar #5) ✅ — admissions per invoiced course, created on verification (step 21)
 
-Tables: `admissions`, `installments`, `admission_transfers`, `admission_fee_changes`, `batches`, `batch_allocations`, `curriculum_versions`, `admission_curricula`; view `batch_allocation_queue`.
+Tables: `admissions`, `installments`, `admission_transfers`, `admission_fee_changes`, `batches`, `batch_allocations`; view `batch_allocation_queue`.
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
 | POST | `/admissions` | Counsellors, Front Office, BM | From an `invoice_id` (+ optional service branch, admission date). DB enforces both prerequisites (accepted plan on the invoice's version; first qualifying payment on the invoice Verified), records the first qualifying payment, links the invoice's payments, moves the lead to Admitted |
 | POST | `/admissions/{id}/complimentary` | Counsellors, BM | Complimentary course from an active offer. One per offer per paid admission, and never a course the person already has (migration 016; 422 `BUSINESS_RULE` naming the admission; cancelled admissions don't count) |
-| GET | `/admissions` | Scoped | Filters: branch (original / service), enrolment, curriculum, handover, LMS, seat type |
+| GET | `/admissions` | Scoped | Filters: branch (original / service), enrolment, handover, LMS, seat type |
 | GET / PATCH | `/admissions/{id}` | Scoped | Handover, LMS status, owners |
 | POST | `/admissions/{id}/cancel` | BM | Operational cancellation (refund is separate) |
 | POST | `/admissions/{id}/pause` · `/resume` | BM, Admins | Step 23. Pause needs `reason`; resume returns to In Progress / Scheduled / Awaiting Batch Allocation from the active allocations. Sends `AdmissionUpdated.status` (Paused / Active) |
@@ -468,21 +471,18 @@ Tables: `admissions`, `installments`, `admission_transfers`, `admission_fee_chan
 | POST | `/admissions/{id}/fee-changes` | Counsellors, BM | |
 | POST | `/admission-fee-changes/{id}/approve` · `/reject` | Admins, fresh auth | An admin may approve their own request (db 023) |
 | POST | `/admission-fee-changes/{id}/apply` | Accounts, Admins, fresh auth | Admins since db 024 |
-| GET / POST / PATCH | `/batches`, `/batches/{id}` | Academic Coordinator, BM | Curriculum version, trainer, mode, dates, timing, days, room / link, minimum students, capacity; occupancy and Full status. Batch workspace also lists admissions awaiting allocation |
-| GET | `/batch-allocation-queue` | Academic Coordinator, BM | Allocate-by / escalate-at |
-| GET | `/batches/{id}/allocation-check?admission_id=` | Academic Coordinator, BM | Pre-check with the blocking reason and recovery owner (wrong branch → Branch Manager; curriculum → Academic Coordinator; full → Academic Coordinator) |
-| POST | `/admissions/{id}/allocations` | Academic Coordinator, BM | Same service branch, curriculum Mapped (matching the batch's version), enrolment not Paused / Completed / Cancelled, capacity; one active per course |
-| POST | `/batch-allocations/{id}/close` | Academic Coordinator | Moved / Withdrawn / Completed |
-| POST | `/batch-allocations/{id}/joining-date` | Academic Coordinator, Trainer | First confirmed regular class |
-| GET / POST | `/curriculum-versions` | Academic Coordinator, Admins | Publish |
-| POST | `/admissions/{id}/curricula` | Academic Coordinator | Map, then mark Mapped |
-| POST | `/admissions/{id}/complete` | Academic Coordinator | Authorised completion → alumni + support window |
+| GET / POST / PATCH | `/batches`, `/batches/{id}` | BM, Admins | Trainer, mode, dates, timing, days, room / link, minimum students, capacity; occupancy and Full status. Batch workspace also lists admissions awaiting allocation |
+| GET | `/batch-allocation-queue` | BM, Admins | Allocate-by / escalate-at |
+| GET | `/batches/{id}/allocation-check?admission_id=` | BM, Admins | Pre-check with the blocking reason and recovery owner (every case → the Branch Manager of the batch or service branch) |
+| POST | `/admissions/{id}/allocations` | BM, Admins | Same service branch, same course (or a combo component), enrolment not Paused / Completed / Cancelled, capacity; one active per course. No curriculum check (db 043) |
+| POST | `/batch-allocations/{id}/close` | BM, Admins | Moved / Withdrawn / Completed |
+| POST | `/batch-allocations/{id}/joining-date` | BM, Admins, Trainer | First confirmed regular class |
+| POST | `/admissions/{id}/complete` | BM, Admins | Authorised completion → alumni + support window |
 
 **As built (step 9):**
-- Admission detail includes allocations, curricula and fee changes; readers = all staff roles at the original or service branch. PATCH: handover, LMS status, delivery mode, planned start, owners (owners must be staff at the branch). While `academics_managed_in_lms` is on (step 23), LMS status is refused (409 `MANAGED_IN_LMS`), and so are batch create / update, allocation, close, joining date, curriculum versions / publish / mapping, completion and certificate create / update / issue / revoke.
+- Admission detail includes allocations and fee changes; readers = all staff roles at the original or service branch. PATCH: handover, LMS status, delivery mode, planned start, owners (owners must be staff at the branch). While `academics_managed_in_lms` is on (step 23), LMS status is refused (409 `MANAGED_IN_LMS`), and so are batch create / update, allocation, close, joining date, completion and certificate create / update / issue / revoke.
 - Cancel (BM of the service branch) withdraws active allocations; transfer closes them as Moved (new branch = new batch).
 - Fee change: request creates an Approval task (Founder / CEO); approval (also recorded on rejection, as the DB requires) creates an "apply" task for Accounts; only Accounts at the service branch can apply.
-- Also `POST /curriculum-versions/{id}/publish` (retires the previous published version). A batch without a curriculum version picks up the course's published one.
 - Completion only from In Progress; closes active allocations as Completed.
 
 #### Step 10 — Students (sidebar #6) ✅
@@ -501,7 +501,7 @@ Tables: `persons`, `admissions`, `documents`, `certificates`, `support_cases`; v
 
 **As built (step 10):**
 - A "student" is a person with an admission at one of the user's branches (original or service). Tabs are `GET /students/{id}/{tab}`; timeline merges lead activities, payments, admissions and documents.
-- Documents: multipart (`file`, `document_type_id`, optional `admission_id`), pdf / image / doc up to 10 MB; upload creates a Document Review task (team Academic Coordinator). Reviewers: admins, BM, Academic Coordinator, Front Office — never the uploader.
+- Documents: multipart (`file`, `document_type_id`, optional `admission_id`), pdf / image / doc up to 10 MB; upload creates a Document Review task (team Branch Manager). Reviewers: admins, BM, Front Office — never the uploader.
 - Certificates: also `PATCH /certificates/{id}` (eligibility); issue needs status Eligible (AC / admin); revoke admins + fresh auth.
 
 #### Step 11 — Collections (sidebar #8) ✅
@@ -555,7 +555,7 @@ Tables: `refund_cases`, `refund_case_receipts`.
 | POST | `/communications/{id}/retry` | New row with `retry_of_id` |
 | POST | `/communications/{id}/match` | Match to person / lead (manual) |
 | GET / POST / PATCH | `/branch-channels` | Admins |
-| GET | `/notifications?tab=Action Required\|Escalations\|Unread\|System Issues\|Completed` | Own notifications |
+| GET | `/notifications?tab=Action Required\|Escalations\|Unread\|System Issues\|Completed` | Own notifications. `external_channel` / `external_status` / `external_reason` are derived from the staff WhatsApp that went with the notification (same recipient, written in the same transaction): `WhatsApp` + Queued · Sent · Delivered · Read · Failed · Not sent (reason, e.g. "No WhatsApp number on file"); all null when no alert went with it. The `notifications.external_*` columns are no longer written |
 | POST | `/notifications/{id}/read` · `/acknowledge` · `/complete` | Separate states |
 | GET / PATCH | `/notification-rules` | Admins |
 
@@ -635,7 +635,7 @@ Uses the Claude API (key in `.env`). Every output is advisory, stored, and marke
 | GET | `/ai/management-brief` | For dashboards |
 
 **As built (step 19):**
-- `services/ai.py` calls Claude (`anthropic` SDK, model `AI_MODEL`, default `claude-opus-5`) with schema-validated JSON output, effort `medium` and server-side refusal fallbacks (`fallbacks: "default"`). The prompt contains only CRM facts from the user's scope. Without `ANTHROPIC_API_KEY`, on refusal or on any error, a rule-based writer is used (`model: "rules-fallback"`). Tests never call the real API.
+- `services/ai.py` calls Claude (`anthropic` SDK, model `AI_MODEL`, default `claude-opus-5-5`) with schema-validated JSON output, effort `medium` (set explicitly: Opus 5.5 can't disable thinking and defaults to `medium`) and server-side refusal fallbacks (`fallbacks: "default"`). The prompt contains only CRM facts from the user's scope. Without `ANTHROPIC_API_KEY`, on refusal or on any error, a rule-based writer is used (`model: "rules-fallback"`). Tests never call the real API.
 - The brief stores two insights (Before-Call Brief with the suggested WhatsApp message, Priority Explanation); language defaults to the person's preferred language. Ask Nipuna answers over the management report + funnel for the chosen period / branch and stores sources, freshness and a supporting table. One feedback per user per insight / query.
 
 #### Step 20 — Background jobs ✅
@@ -648,7 +648,7 @@ A worker process (`flask jobs run`, scheduled by cron or APScheduler):
 - Scheduled reports (`scheduled_reports` → `report_runs`).
 - Clean-up: expired sessions, expired role scopes, expired fee versions and offers.
 
-**As built (step 20):** `flask --app app jobs list` / `jobs run [name …]` (each job commits separately; exit 1 if any fails). Jobs: `escalations`, `demo-reminders`, `collections`, `dues-due-soon` (DB 018: owner, Accounts and BM notified of unpaid instalments due within `installment_due_soon_days`), `broken-promises`, `batch-allocation` (does nothing while academics are managed in the LMS — its `allocation-escalation` job raises these), `scheduled-reports`, `cleanup`, `lms-sync` (step 22), `lms-status-pull` (step 23), `lms-finance-snapshot` (step 22: writes a branch's snapshot only when its last is 15 minutes old, so the every-minute cron is fine); all idempotent (dedupe keys). With no live WhatsApp / email yet, a due demo reminder becomes a task for the lead owner (reminder marked Sent with a note) and scheduled reports are generated into `report_runs` as Not Sent. Collections skip contact-hold dues; Day +7 onwards goes to the branch manager. Scope clean-up (expired role scopes) needs nothing — expiry is derived.
+**As built (step 20):** `flask --app app jobs list` / `jobs run [name …]` (each job commits separately; exit 1 if any fails). Jobs: `escalations`, `demo-reminders`, `collections`, `dues-due-soon` (DB 018: owner, Accounts and BM notified of unpaid instalments due within `installment_due_soon_days`), `broken-promises`, `batch-allocation` (does nothing while academics are managed in the LMS — its `allocation-escalation` job raises these), `scheduled-reports`, `cleanup`, `lms-sync` (step 22), `lms-status-pull` (step 23), `lms-finance-snapshot` (step 22: writes a branch's snapshot only when its last is 15 minutes old, so the every-minute cron is fine), `lms-reconcile` (step 23: once per business day), `whatsapp-send` (step 25), `fee-expiry` (step 26), `batch-delay-alerts` (step 26); `lms-status-pull` skips when a pull started under 50 s ago; all idempotent (dedupe keys). A due demo reminder is queued as WhatsApp messages when WhatsApp is configured and the learner has a number (reminder marked Sent, note "Sent on WhatsApp"; the trainer gets a staff alert), otherwise it becomes a task for the lead owner (reminder marked Sent with a note). With no live email yet and scheduled reports are generated into `report_runs` as Not Sent. Collections skip contact-hold dues; Day +7 onwards goes to the branch manager. Scope clean-up (expired role scopes) needs nothing — expiry is derived.
 
 ---
 
@@ -679,8 +679,8 @@ Stage changes past New Enquiry, demo booking and starting a fee discussion now r
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| GET | `/leads/{id}/delivery-plan` | Lead roles, Academic Coordinator, Accounts | `{plan, invoice, can_edit}` — `plan`: `DP-00001`, status Draft / Accepted, service branch, mode, seat type, planned start, capacity review, student accepted, accepted by / at |
-| PUT | `/leads/{id}/delivery-plan` | Lead roles, Academic Coordinator | Save the draft (converted, open, not invoiced) |
+| GET | `/leads/{id}/delivery-plan` | Lead roles, Accounts | `{plan, invoice, can_edit}` — `plan`: `DP-00001`, status Draft / Accepted, service branch, mode, seat type, planned start, capacity review, student accepted, accepted by / at |
+| PUT | `/leads/{id}/delivery-plan` | Lead roles | Save the draft (converted, open, not invoiced) |
 | POST | `/leads/{id}/delivery-plan/accept` | Same | Optional plan fields + `student_accepted: true` (required) |
 | POST | `/leads/{id}/delivery-plan/reopen` | Same | `{reason}`; not once invoiced |
 
@@ -735,24 +735,26 @@ One-way push CRM → Nipuna LMS: `POST {LMS_BASE_URL}/api/v1/integrations/crm/ev
 | Event | Written when | `data` |
 |---|---|---|
 | `CourseUpserted` | Course create / update, combo components set (`services/courses.py`) | `course_code`, `course_title`, `category`, `is_combo`, `status`, `components[]` = `{component_course_code, is_bonus, sort_order}` (combos only) |
-| `AdmissionQualified` | Admission created — auto on verify / allocate, manual `POST /admissions`, complimentary. **Also re-sent as a full refresh** when `planned_start_date` changes or the person's name / phone / email / language is edited (not for cancelled admissions) | `person` = `{crm_person_id, person_code, full_name, phone, email, preferred_language}`; `admission` = `{crm_admission_id, admission_code, course_code, original_branch_code, service_branch_code, collecting_branch_code (the invoice's; a complimentary admission uses its paid admission's), delivery_mode, seat_type, planned_start_date, admission_date, complimentary_of_crm_admission_id, access_until}` |
+| `AdmissionQualified` | Admission created — auto on verify / allocate, manual `POST /admissions`, complimentary. **Also re-sent as a full refresh** when `planned_start_date` changes or the person's name / phone / email / language is edited (not for cancelled admissions) | `person` = `{crm_person_id, person_code, full_name, phone, email, preferred_language}`; `admission` = `{crm_admission_id, admission_code, course_code, original_branch_code, service_branch_code, collecting_branch_code (the invoice's; a complimentary admission uses its paid admission's), delivery_mode, seat_type, planned_start_date, admission_date, complimentary_of_crm_admission_id, access_until, preferred_batch_code}` (`preferred_batch_code` optional, step 26: omitted when the delivery plan has none; the LMS ignores unknown keys) |
 | `AdmissionUpdated` | Service-branch transfer (`service_branch_code`), delivery-mode change on `PATCH /admissions/{id}` (`delivery_mode`), pause / resume (`status`: Paused / Active, step 23) | `crm_admission_id` + the changed field(s) |
 | `AdmissionCancelled` | `POST /admissions/{id}/cancel` | `crm_admission_id`, `reason` |
 | `BranchUpserted` | Branch edit (`PATCH /branches/{id}`) that changes the name, city or email; backfill (`flask lms backfill --branches`, also part of a full backfill, first). A branch added in SQL is sent by re-running the backfill (records already sent are skipped) | `branch_code`, `branch_name`, `city`, `receipt_prefix` (the LMS short code, fixed once sent), `email` (the LMS mailbox), `is_active` |
 | `BranchFinanceSnapshot` | Job `lms-finance-snapshot`: each active branch every 15 minutes (`services/lms_finance.py`) | `branch_code`, `as_of`; `period` `{label, start, end}` always: the Approved target version covering today, else the current calendar month (LMS answer A2); targets from the branch's line in that version (`null` when it has none); `collections.verified` (verified payments in the period, net of reversals, collecting branch); `paid_admissions.count` (first verified payment in the period, original branch); `overdue` `{amount, count, by_age_band[]}` (`installment_dues` Overdue, bands `1–3 days` … `91+ days`); `verifications` `{pending_count, pending_amount, overdue_count (open PAYMENT_VERIFICATION task past due), oldest_at}`; `followups` `{overdue_count (open leads past next follow-up, as the CRM dashboard), broken_promises (Broken promises on invoices with a balance)}`. |
 | `FinanceSummaryUpdated` | Payment recorded (pending counts), verified, failed, allocated; correction approved (reversal); fee change applied; refund decided (waiver) and payout; invoice cancelled; instalment due date changed — for every admission on the invoice | From `admission_balances`, `installment_dues` and verified payments: `fee_total`, `verified_paid`, `pending_verification`, `waived`, `refunded`, `balance`, `payment_completion`, `invoice_numbers[]`, `installments[]` = `{installment_no, due_date, amount, covered, balance, due_position}` (**invoice-level**, flagged `installments_scope: "invoice"` + `invoice_course_count`), `next_due_date`, `next_due_amount`, `receipts[]` = `{receipt_number, date, amount}` (verified, not reversed, the part allocated to this course), `as_of` |
 
-**Same transaction:** the marks collect on the SQLAlchemy session; a `before_commit` listener builds one event per record from the final state (courses → qualified → updated → cancelled → finance; a paid admission before its complimentary one) and inserts the rows with the next `lms_sync_versions` value. A rolled-back request writes nothing. Money is sent as strings (`"25000.00"`), dates as `YYYY-MM-DD`, `occurred_at` in IST with offset.
+**Same transaction:** the marks collect on the SQLAlchemy session; a `before_commit` listener builds one event per record from the final state (branches → courses → qualified → updated → cancelled → finance; a paid admission before its complimentary one) and inserts the rows with the next `lms_sync_versions` value. A rolled-back request writes nothing. Money is sent as strings (`"25000.00"`), dates as `YYYY-MM-DD`, `occurred_at` in IST with offset.
 
-**Delivery** (`services/lms_delivery.py`, job `lms-sync` in `flask jobs run`, or `flask lms deliver [--loop]`): claims the oldest Pending row of each `record_key` that is due (`locked_until` lease, `SKIP`-safe), commits, posts with no transaction open, then records the answer and commits each row. So one waiting admission never blocks another, and an admission's finance never overtakes its qualification.
+**Push after the request** (round 3): an `after_commit` listener hands the record keys a request wrote to `lms_delivery.push_soon`, which delivers them in a background thread with `LMS_PUSH_TIMEOUT_SECONDS` (3 s) right away; the request never waits or fails because of the LMS. Off with `LMS_PUSH_ON_COMMIT=0` (tests). Jobs and commands don't push; the worker picks their rows up.
+
+**Delivery** (`services/lms_delivery.py`, job `lms-sync` in `flask jobs run`, `flask lms worker` every 10 s, or `flask lms deliver [--loop]`): claims the oldest Pending row of each `record_key` that is due (`locked_until` lease, `SKIP`-safe), commits, posts with no transaction open, then records the answer and commits each row. So one waiting admission never blocks another, and an admission's finance never overtakes its qualification.
 
 | LMS answer | Row |
 |---|---|
 | 201 / 200 | Delivered; `response_status` / `response_result` stored; `activation_token` dropped (only `activation_token_issued = true` is kept) |
 | 400 / 409 | Failed + Super Admin task "LMS sync failed …" (`last_error` has the LMS's `error.details`). Fix the mapping, then resend the record (`flask lms backfill --admission <id> --force`) |
-| 422 | Pending, retried with backoff (30 s doubling, max 1 h) |
+| 422 `NOT_YET_APPLIED` (its course, branch or admission hasn't arrived yet) | Pending, retried with backoff (30 s doubling, max 1 h). |
 | 5xx | Pending, retried with backoff |
-| No answer (LMS down) | Pending, backoff, the run stops |
+| No answer (LMS down) | Pending, backoff, the run stops. As soon as the LMS's `GET /api/v1/health` answers 200 again, rows waiting only for that are released (`release_when_back()`, start of every run), so recovery never waits out the backoff |
 | 401 / 403 / 404 / 405 | Configuration problem: the run stops, the row stays Pending, attempts not counted |
 
 After 12 attempts a row becomes Failed with a task. Without `LMS_BASE_URL` / `LMS_SERVICE_KEY` the job does nothing and rows wait. The service key and activation tokens are never logged.
@@ -761,20 +763,20 @@ After 12 attempts a row becomes Failed with a task. Without `LMS_BASE_URL` / `LM
 
 Branch events (db 029): `flask --app app lms backfill --branches` sends `BranchUpserted` for every branch; `flask --app app lms finance-snapshot [--force]` writes the snapshots now (the job waits 15 minutes between them). A snapshot not yet sent when the next is written becomes Superseded.
 
-**Not sent:** batches and allocations (LMS-owned; `crm_batch_id` is never sent). The activation token is still dropped (decision D1 = B now, A later: coordinators reissue it in the LMS; the CRM will deliver the link once WhatsApp / email exists). Tests: `tests/test_lms_sync.py`.
+**Not sent:** batches and allocations (LMS-owned; `crm_batch_id` is never sent). The activation token is still dropped (decision D1 = B now, A later: staff reissue it in the LMS; the CRM will deliver the link once WhatsApp / email exists). Tests: `tests/test_lms_sync.py`.
 
 #### Step 23 — LMS status pull ✅ (dev only)
 
-The LMS owns the student's login and LMS status, enrolment and curriculum status, batches, allocations, completion and the certificate register; the CRM mirrors them (db 027–028, [DATABASE.md](DATABASE.md#lms-status-pull-027028--applied-to-nipunacrm-dev-only)). Contract: the LMS repo's `docs/CRM_INTEGRATION.md` §2.2 and `nipuna crm-docs/CRM_ROUND2_LMS_REPLY.md`. Owner decisions: D1 = B now, A later (coordinators reissue links in the LMS; the CRM sends the link once WhatsApp / email exists), D2 = the LMS certificate series, D3 = `BranchUpserted`, D4 = the CRM pushes `BranchFinanceSnapshot` (both in step 22), D5 = the CRM owns placement (LMS Career screen endpoints in a later round).
+The LMS owns the student's login and LMS status, enrolment status, batches, allocations, completion and the certificate register; the CRM mirrors them (db 027–028, [DATABASE.md](DATABASE.md#lms-status-pull-027028--applied-to-nipunacrm-dev-only)). Contract: the LMS repo's `docs/CRM_INTEGRATION.md` §2.2 and `nipuna crm-docs/CRM_ROUND2_LMS_REPLY.md`. Owner decisions: D1 = B now, A later (coordinators reissue links in the LMS; the CRM sends the link once WhatsApp / email exists), D2 = the LMS certificate series, D3 = `BranchUpserted`, D4 = the CRM pushes `BranchFinanceSnapshot` (both in step 22), D5 = the CRM owns placement (LMS Career screen endpoints in a later round).
 
-**The pull** (`services/lms_pull.py`, job `lms-status-pull` every 5 minutes, or `flask lms pull [--full]`): claims `lms_pull_state` (10-minute lease, so two runs never overlap), calls `GET {LMS_BASE_URL}/api/v1/integrations/crm/status?since=<since>` with no transaction open, applies each record in its own transaction with `app.sync_source = 'LMS'`, retries held records, then stores `as_of` exactly as returned as the next `since`. A failed pull (5xx, 401, LMS down, no `as_of`) keeps the watermark and records `last_error`.
+**The pull** (`services/lms_pull.py`, job `lms-status-pull` each cron minute — skipped when a pull started under 50 s ago — or `flask lms pull [--full]`): claims `lms_pull_state` (10-minute lease, so two runs never overlap), calls `GET {LMS_BASE_URL}/api/v1/integrations/crm/status?since=<since>` with no transaction open, applies each record in its own transaction with `app.sync_source = 'LMS'`, retries held records, then stores `as_of` exactly as returned as the next `since`. A failed pull (5xx, 401, LMS down, no `as_of`) keeps the watermark and records `last_error`.
 
 | Key (in this order) | CRM writes |
 |---|---|
-| `batches[]` | Upsert by `lms_course_id` (= LMS `batch_code`): course, branch, mode, status, capacity, dates, curriculum (mirrored version by label), `lead_trainer_email` / `trainer_emails` (+ `trainer_user_id` when a CRM user has that email). Name `<course title> · <code>`; the CRM's own `batch_code` is kept |
+| `batches[]` | Upsert by `lms_course_id` (= LMS `batch_code`): course, branch, mode, status, capacity, dates, `lead_trainer_email` / `trainer_emails` (+ `trainer_user_id` when a CRM user has that email). Name `<course title> · <code>`; the CRM's own `batch_code` is kept Also the timetable `schedule_days`, `start_time`, `end_time`, `location` (null = not confirmed; a clear overwrites), `seats_left`, `readiness` / `readiness_reason` (db 032; *Blocked* = not public to sales) |
 | `persons[]` | `lms_user_id` (student code), `lms_provisioned_at` |
 | `admissions[]` | `lms_status`, `lms_last_activity_at`; `lms_last_synced_at` = when the CRM applied a change |
-| `academics[]` | Curriculum (mapping to the mirrored version, or Mapping Pending), the admission's allocations replaced by the LMS's complete history (one row per track; closed rows first), `enrolment_status`, and on completion `academic_completed_at`, `completion_authorised_by_email` (+ the CRM user when the email matches) |
+| `academics[]` | The admission's allocations replaced by the LMS's complete history (one row per track; closed rows first), `enrolment_status`, and on completion `academic_completed_at`, `completion_authorised_by_email` (+ the CRM user when the email matches) |
 | `certificates[]` | One row per number + version (sorted, so v1 Superseded lands before v2 Issued): status, type, holder, issue date, issuer / revoker emails (+ users), `revoke_reason` or `reissue_reason`, `supersedes_version` |
 
 Rules: every entry is the record's full state and only differing fields are written, so a repeated entry changes nothing. Records with IDs the CRM doesn't have are ignored. A cancelled CRM admission keeps its status. An LMS *Withdrawn* (Cancelled) for an admission the CRM hasn't cancelled is not applied: the service branch's Branch Manager gets a task to cancel it if the student has left. A record that can't be applied (unknown batch / course / branch, a constraint) goes to `lms_pull_holds` and is retried on every pull; after 12 pulls Super Admin gets a task "LMS pull: … not applied".
@@ -783,13 +785,260 @@ Rules: every entry is the record's full state and only differing fields are writ
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| GET | `/lms/sync-status` | Staff | `{academics_managed_in_lms, configured, held, pull: {since, last_attempt_at, last_success_at, last_http_status, last_error, last_counts}}` — the LMS access screen and the read-only notes |
+| GET | `/lms/sync-status` | Staff | `{academics_managed_in_lms, configured, held, pull: {since, last_attempt_at, last_success_at, last_http_status, last_error, last_counts}, outbox: {pending, failed, oldest_pending_at, last_delivered_at, last_error}, lms_reachable}` — the sync health strip (LMS access, Super Admin dashboard) and the read-only notes. `lms_reachable` is `null` before the first pull |
+| POST | `/admissions/{id}/lms-refresh` | Staff with the admission in scope | Applies that admission's current LMS state now (its person, academics, certificates, the batches its allocations name) without moving the watermark: `{refreshed: {counts}, admission}`. Asks the LMS with `?crm_admission_id=` (supported by the LMS since its round 3 reply; the answer echoes `filter`) and also filters the answer itself as a safety net |
 | POST | `/admissions/{id}/pause` | BM, Admins | `{reason}` (required). From Awaiting Batch Allocation / Scheduled / In Progress → Paused; audit `ADMISSION_PAUSED`; `AdmissionUpdated.status = Paused` |
 | POST | `/admissions/{id}/resume` | BM, Admins | `{reason?}`. Paused → In Progress (an active allocation has joined) / Scheduled (allocated) / Awaiting Batch Allocation; audit `ADMISSION_RESUMED`; `AdmissionUpdated.status = Active` |
 
-Refused with 409 `MANAGED_IN_LMS` while `academics_managed_in_lms` is on: `POST/PATCH /batches`, `POST /admissions/{id}/allocations`, `POST /batch-allocations/{id}/close`, `/joining-date`, `POST /curriculum-versions`, `/publish`, `POST /admissions/{id}/curricula`, `/complete`, `POST /admissions/{id}/certificates`, `PATCH /certificates/{id}`, `/issue`, `/revoke`, and `lms_status` on `PATCH /admissions/{id}`. Reads are unchanged.
+Refused with 409 `MANAGED_IN_LMS` while `academics_managed_in_lms` is on: `POST/PATCH /batches`, `POST /admissions/{id}/allocations`, `POST /batch-allocations/{id}/close`, `/joining-date`, `/complete`, `POST /admissions/{id}/certificates`, `PATCH /certificates/{id}`, `/issue`, `/revoke`, and `lms_status` on `PATCH /admissions/{id}`. Reads are unchanged. The CRM holds no curriculum (db 043): `curriculum_versions[]` in the pull and the curriculum fields on `batches[]` / `academics[]` are ignored if the LMS still sends them, and a stale held curriculum record is dropped.
 
-**Commands** (from `backend/`): `flask --app app lms pull [--full]` (`--full` resets the watermark first), `lms holds` (held records and why), `lms drop-crm-batches --yes` (dev / test databases only: deletes the CRM's own batches and all allocations, resets the watermark). Tests: `tests/test_lms_pull.py`.
+
+**Cadence** (round 3): the job `lms-status-pull` runs each cron minute but skips when a pull started less than 50 s ago (`pull_if_due`); `flask lms worker` delivers every 10 s and pulls every minute.
+
+**Commands** (from `backend/`): `flask --app app lms pull [--full]` (`--full` resets the watermark first), `lms holds` (held records and why), `lms drop-crm-batches --yes` (dev / test databases only: deletes the CRM's own batches and all allocations, resets the watermark), `lms worker [--duration 55] [--deliver-every 10] [--pull-every 60]` (cron: every minute with `--duration 55`; locally without it, until stopped), `lms refresh <admission_id>`, `lms reconcile [--admission ID] [--fix]`.
+
+**Drift check** (round 3, `services/lms_reconcile.py`): `lms reconcile` compares each non-cancelled admission with the LMS's full state: in the LMS at all (CRM-owned: `--fix` sends AdmissionQualified + finance again), `lms_user_id`, `lms_status`, active allocations (LMS-owned: `--fix` applies the LMS's entry). It prints each difference and exits 1 while any is left unresolved. Job `lms-reconcile` runs it once per business day (`lms_pull_state.last_reconcile_at`) and raises one Super Admin task when something differs.
+
+**LMS behaviour to expect** (round 3, confirmed in joint tests on 2–3 Oct; results in the LMS repo's `nipuna crm-docs/CRM_ROUND3_JOINT_TESTS_RESULTS.md`):
+- A deleted LMS Draft arrives once as `status: Retired`; the LMS's exact status (`lms_status`, e.g. *Under Review*) is ignored.
+- The pull's `?crm_admission_id=` / `crm_person_id=` filter is supported (the answer echoes `filter`).
+- After deploying db 032, run `flask lms pull --full` once (batch changes made before the upgrade were already counted as unchanged).
+
+
+#### Step 24 — CRM AI sales playbook ✅ (dev only)
+
+Spec: *Nipuna CRM AI Use Cases and Workflows — Developer Specification v2.0* (2 Oct 2026). Built: release 1 (reliable assisted selling) and release 3 (recovery and existing-student opportunities). Release 2 (provider-connected automatic sending, bot replies, provider delivery status) waits for a live WhatsApp / telephony channel. Schema: [DATABASE.md · 031](DATABASE.md#crm-ai-sales-playbook-031--applied-to-nipunacrm-dev-only). Code: `services/playbook.py`, `contact_policy.py`, `knowledge.py`, `recovery.py`, `ai.counselling_brief`, job `first-attempt`; routes `routes/playbook.py`.
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/my-work/today?owner=me\|all\|{id}&branch_id=` | Lead roles | One queue in playbook order, one item per lead (other reasons in `also`): tier 1 first staff attempt pending (unconverted, eligible), promised callbacks due within 30 min, inbox replies At Risk / Breached; tier 2 later callbacks today, near-term demos (24 h), replies within SLA, new enquiries; tier 3 post-demo decisions, agreed follow-ups due today, next action missing; tier 4 future joining / Later, reactivation due, course suggestions whose reminder is due. Stop-contact people are excluded. Counsellors default to their own + unassigned; managers to the branch |
+| GET | `/my-work/handover` | Lead roles | My open leads with something due today, a pending first attempt or a missing next action: last contact, promise, unresolved question, next time |
+| POST | `/leads/{id}/handover-note` | Owner, Front Office cover, BM | `{note, cover_user_id?}` → Note activity (purpose Shift handover); a cover task for the cover person without changing the owner |
+| GET | `/leads/{id}/workbench` | Lead roles in scope | 30-second brief (need, interests, last discussion, unresolved objection, promised next action, missing facts with the one question to ask, enquiry message), response clock, contact policy (counters, blocked reason per channel), one next-action card (deterministic rules in playbook order; hidden while the branch is paused; `hidden` after Ignore / while snoozed), assistance profile, objections, approved content for the person's courses and branch, ready-to-close checklist (converted leads) |
+| POST | `/leads/{id}/outcome` | Owner, Front Office cover, BM | `{channel, direction?, outcome, note?, next_action?, next_action_at?, contact_state?, need?, objection?, ai_action_id?}`. Outbound contact obeys stop contact and the shared ceilings (422); inbound can always be recorded. Callback requested / Later need the date (400); Demo booked needs a booked demo (422). Completes earlier next-action tasks; creates `Callback promised` (CALL) or `Next action` (FOLLOW_UP) tasks; Stop contact records suppression and cancels outreach tasks; Wrong number → Invalid contact; no date → Awaiting reply (No answer) or Next action missing. Never moves the stage |
+| POST | `/leads/{id}/next-action/disposition` | Owner, cover, BM | `{action_code, status: Used\|Edited\|Ignored\|Snoozed, final_text?, note?, remind_at?}` — recomputes the card first (409 if it changed); stores an `ai_actions` row; never cancels a task or promise |
+| POST / PATCH | `/leads/{id}/objections`, `/objections/{id}` · GET `/objections/guide` | Owner, cover, BM | Learner's words + optional category; close with `resolution` (Resolved / Closed unresolved). Guide = the spec's page-7 table |
+| POST | `/persons/{id}/stop-contact` · `/persons/{id}/stop-contact/clear` | Sales roles · BM / admins | `{reason}`; clearing is audited (`PERSON_STOP_CONTACT[_CLEARED]`) |
+| POST | `/leads/{id}/reply-draft` | Owner, cover, BM | `{situation, language?}` → fills the approved template with recorded facts only (`{name} {course} {branch} {approved_link} {time} {specific_question} {date_time} {branch_or_mode} {approved_location_or_link}`); a missing fact stays visible and blocks sending; falls back to English when no template exists in the person's language. Needs the Assist profile and no pause. Stored as a Reply draft action (expires in 24 h) |
+| POST | `/leads/{id}/messages` | Owner, cover, BM | `{channel: WhatsApp\|Email\|SMS, text, ai_action_id?}` — rechecks stop contact, ceilings, unfilled facts and draft age at send time; records the activity as **Manually recorded** (never Delivered); marks the draft Used / Edited |
+| POST | `/leads/{id}/ai/counselling-brief` | Owner, cover, BM | Understood need, one useful question, up to 3 course options (only courses offered at the branch), approved info to share (only Approved ids), missing checks, one next action. Claude when `ANTHROPIC_API_KEY` is set, otherwise rules; unverified items are dropped (`dropped_unverified_items`) |
+| GET / POST / PATCH | `/sales-knowledge`, `/sales-knowledge/{id}` · POST `/approve`, `/retire` | Read: lead roles (Approved only for non-managers) · write: admins, BM (own branch; company-wide = admins) | Editing an Approved item makes a new Draft version |
+| GET / POST / PATCH | `/course-paths`, `/course-paths/{id}` · POST `/approve`, `/retire` | Read: lead + academic roles (Approved only for staff) · write: Branch Manager, admins | |
+| GET / PATCH | `/ai/controls`, `/ai/controls/{branch_id}` | BM (own branch), admins | `{execution_profile: Observe\|Assist, is_paused, pause_reason}`; Approved automatic refused (422) |
+| GET | `/persons/{id}/course-suggestions` | Lead roles | Existing students only: Approved paths from courses they own (incl. combo components); skips owned / included courses and courses not offered at their branch (listed in `skipped`); missing checks, overlap, open lead; ranked by goal match, never by fee; dismissed (same evidence) or snoozed ones in `hidden` |
+| POST | `/persons/{id}/course-suggestions/disposition` | Sales roles | `{course_id, status, note?, remind_at?, final_text?}`. No deal is created; confirmed interest = a new lead under the same person |
+| GET | `/recovery-lists` · `/recovery-lists/{list}?branch_id=&course_id=&owner_id=` | Lead roles | Lists: no_first_attempt, callback_missed, demo_no_next_action, fee_shared_silent (3 days), waiting_batch, never_reached (attempts used, past the window), lost_recoverable (timing / location / fee reasons or reactivation date due), referred, existing_student. Rows carry evidence and the suggested action; exclusions (stop contact, closing states, open lead exists) are counted |
+| POST | `/recovery-lists/tasks` | BM, admins | `{list, lead_ids, due_at?}` → one FOLLOW_UP task per lead (deduplicated per day: `recovery:<list>:<lead>:<date>`); rows no longer on the list are skipped |
+| GET | `/reports/sales-playbook?period=&branch_id=` | Managers | First attempt within SLA, due callbacks completed (30-min grace), demo attendance (cancel / reschedule separate), qualified → verified paid (30-day window, `immature`), recovered paid, cross-course funnel (reviewed → used → interested → paid, complimentary excluded), source × branch quality, assistance outcomes and model fallbacks |
+
+**As built (step 24):**
+- The next-action card is deterministic (stop contact → first attempt → callback due → payment pending → open objection → missing need → qualify / convert → demo → post-demo → closing checklist → agree a next step). AI only writes the optional counselling brief. Nothing auto-sends.
+- First attempt: leads already converted are treated as contacted (the queue, card, recovery list and job skip them) because older records were converted without a logged call. Alerts look back 2 days (older ones are on the recovery list).
+- Job `first-attempt` (every cron minute, idempotent): FIRST_ATTEMPT_COVER at 2, _MANAGER at 10, _FOUNDER at 30 staffed minutes; closes the cover alert once a staff member contacts the learner.
+- Observe = suggestions only (drafts and counselling briefs refused); Assist = default; pause hides cards and refuses drafts; calls, outcomes and deal work never stop.
+- `PATCH /leads/{id}` also accepts `learner_goal`, `prior_experience`, `preferred_timing`, `joining_window`, `open_question`, `next_action`.
+- **Batches (db 032):** the workbench's `batches` lists the course's Planned / Open batches at the lead's branch from `offerable_batches`: offerable first (soonest start), then the rest with `not_offerable_reason` (staff only); `timing` reads "Timing not confirmed: ask the Branch Manager" until the LMS sends days and times. The counselling brief may name only offerable batches with their recorded timing; the `waiting_batch` recovery list says "Suitable batch published: …" when one exists. The pull fills these from `batches[]` (Step 23).
+- Tests: `tests/test_playbook.py` (18).
+
+#### Step 25 — WhatsApp messages (outbox) ✅ (dev only)
+
+The CRM sends template messages to learners through Pinbot: `POST {WHATSAPP_API_URL}` (`https://partnersv1.pinbot.ai/v3/<number id>/messages`) with the header `apikey: {WHATSAPP_API_KEY}`. The 20 approved templates, their wording and the order of their values are in `backend/services/whatsapp_templates.py`. Built in four phases (db 033 and 034).
+
+**Endpoints**
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/whatsapp/messages` | Lead roles, Accounts (branch-scoped) | Filters `status`, `category` (Utility / Marketing), `branch_id`, `person_id`, `template` (part of the name), `q` (name, number or text), `page`, `per_page`. Newest first. Each row: `outbox_id`, `person_name`, `recipient_kind` (`Learner` or `Staff`), `recipient_user_id` and `recipient_name` (the staff member for a staff message, else null / the learner), `branch_name`, `template_name`, `category`, `to_phone`, `body_text` (exactly what the learner received), `status`, `skip_reason`, `last_error`, `attempts`, `provider_message_id`, `created_at` / `sent_at` / `delivered_at` / `read_at` |
+| GET | `/whatsapp/summary?branch_id=` | same | `{counts: {Queued, Sent, …}, total, sending, test_numbers_only}`; `sending` false = the switch is off or unconfigured, messages wait |
+| POST | `/whatsapp/messages/{id}/retry` | BM, Accounts, admins | `{confirm_not_delivered?}`. Failed / Skipped only, and only with a number. A Failed message whose answer was lost needs `confirm_not_delivered: true` after the learner's WhatsApp was checked. Audited (`WHATSAPP_RETRIED`); sent right after the commit |
+| GET | `/persons/{id}/whatsapp` | Lead roles, Accounts | The number, the consent, and the conversation: Outbound messages and Inbound replies (communications inbox), newest first. Staff messages about the learner (`recipient_user_id` set, db 042) are left out |
+| PUT | `/persons/{id}/whatsapp-consent` | Lead roles | `{status: Explicit Consent \| Withdrawn \| Not Recorded, source?}`. Audited (`WHATSAPP_CONSENT`). `persons.to_dict()` now carries `whatsapp_consent` |
+| PUT | `/persons/{id}/whatsapp-notifications` | Lead roles | `{enabled: bool}` → `{notifications, consent}`. The Person 360 switch (db 044). Off: every message to the person is saved as Skipped ("WhatsApp notifications are switched off for this person"); staff alerts about them are unaffected. On: also records Explicit Consent (source "Profile switch") when none is recorded. Audited (`WHATSAPP_NOTIFICATIONS`). `GET /persons/{id}/whatsapp` and `persons.to_dict()` carry `notifications` / `whatsapp_notifications`
+| POST | `/persons/{id}/whatsapp/send` | Lead roles | "Send now" from Person 360: `{template, course_id?, interest?}`, same rules and body as `/leads/{id}/whatsapp/marketing`, sent through the person's most recent visible enquiry (422 when none). 422 also when notifications are switched off. 201 with the outbox row |
+| GET | `/whatsapp/marketing-templates` | Lead roles, Accounts | The four marketing templates: `key`, `label`, `template_name`, `needs`, `reply_keywords`, `about` |
+| POST | `/leads/{id}/whatsapp/marketing` | Lead roles | `{template: course_recommendation \| course_brochure \| new_batch \| enquiry_followup, course_id?, interest?}` → 201 the queued message. Rules below |
+| GET / POST | `/webhooks/whatsapp` | Public, shared token | The provider's callback (below). GET answers Meta's `hub.challenge` handshake |
+
+**Events** (`services/whatsapp_events.py`, called by the service that made the change, inside its transaction, after the flush; they never raise, so a message can't refuse a payment, refund or invoice):
+
+| Event | Template | Values |
+|---|---|---|
+| `POST /payments/{id}/verify` on an advance (no invoice) | `advance_payment_verified_u_v1` | name, branch, amount, receipt, the person's total verified unallocated credit |
+| `POST /payments/{id}/verify` that brings an invoice to 0 outstanding | `invoice_balance_cleared_u_v1` | name, branch, invoice number. A part payment on an invoice sends nothing: no approved template covers it |
+| `POST /payments/{id}/allocate` (a verified advance) | `advance_allocated_u_v1` | amount, receipt, the course(s) and invoice it went to, credit left |
+| `POST /correction-requests/{id}/approve` | `payment_correction_applied_u_v1` | correction code, the receipt, the adjustment |
+| `POST /invoices` | `invoice_issued_u_v1` | name, issuer branch, invoice number, total, the schedule's label (`Full`, `50/50`, `50/25/25`), `WHATSAPP_INVOICE_CHANNEL` |
+| `POST /refund-cases/{id}/decide` → Refund Approved / Rejected | `refund_approved_u_v1` / `refund_declined_u_v1` | name, service branch, case code (+ approved amount). A waiver sends nothing |
+| `POST /refund-cases/{id}/payout` → Completed | `refund_payout_completed_u_v1` | + amount paid, payout date, payout reference |
+| `POST /leads/{id}/delivery-plan/accept` | `delivery_plan_accepted_u_v1` | plan code, course, mode, planned start ("To be confirmed by our team" when none) |
+| Batch allocated by the CRM, or newly reported by the LMS pull | `batch_allocated_u_v1` | admission, course, batch, class details (days, times, start or joining date, location; "Timing to be confirmed" when none) |
+| The LMS reports a person's first login | `lms_account_activated_u_v1` | name, branch, the latest admission. Once per person |
+| An `AdmissionQualified` LMS event fails for good | `lms_course_access_delayed_u_v1` | admission. Once per admission |
+| `POST /job-applications` | `placement_application_recorded_u_v1` | application code (`PL-00001`), "company - job title" |
+| `POST /job-applications/{id}/stage`, an interview scheduled | `placement_application_update_u_v1` | + the recorded status (the stage, or "Interview scheduled for …") |
+| `POST /leads` or `POST /enquiries/{id}/convert` (intake New) | `enquiry_received_u_v3` | enquiry code, the course or "our courses". Not for bulk imports or outreach prospects; once per person per 24 hours |
+| Demo booked / rescheduled / cancelled (demo endpoints) | `demo_booked_u_v1` / `demo_rescheduled_u_v1` / `demo_cancelled_u_v1` | name, course, branch, demo time (+ venue, trainer except on cancel). Queued even while sending is off |
+| Job `demo-reminders`, 24h and 1h reminders (WhatsApp configured and the learner has a number) | `demo_reminder_u_v1` (learner) and `staff_demo_reminder_v1` (trainer, a staff alert) | `starts_in` ("24 hours" / "1 hour"), time, venue, trainer. The reminder row is marked Sent, note "Sent on WhatsApp"; otherwise (WhatsApp off, no number) the task is created as before. A closed or started demo is skipped. Keys `demo-reminder:<id>` / `demo-reminder-trainer:<id>` |
+| An admission is created (verification, manual, complimentary) | `admission_confirmed_u_v1` | admission number, course, learning mode, planned start ("To be confirmed by our team" when none). Once per admission |
+| `PUT /leads/{id}/delivery-plan` saved and ready (mode, seat, branch, start date; not accepted; no request pending) | `delivery_plan_confirm_v1` | As the send-for-confirmation button, sent automatically (`delivery_plans.save(auto_confirm=True)`); the button resends. `…/accept` saves with `auto_confirm=False` |
+| Job `collections` (`send_learner_reminders`): instalment due in 3 days / today / 3 days ago | `instalment_due_u_v1` (before, today) / `instalment_overdue_u_v1` (overdue) | name, branch, invoice number, instalment number, amount still due (after verified money), due date, `WHATSAPP_INVOICE_CHANNEL`. Event key `due-<installment_id>-<before\|today\|overdue>`, `source_type` `invoice_due`, `source_id` = the invoice. Skipped: contact hold, paid, cancelled invoice, Stop contact; one per instalment per stage and at most one per invoice per IST day (earliest instalment). A message already Queued is not withdrawn if the instalment is paid before it is sent |
+
+**Staff alerts** (`services/staff_alerts.py`, db 042). `staff_alerts.send(user_id, template, values, event_key, person=, branch_id=, source_type=, source_id=, skip_actor=True)` is the one helper; it queues to the staff member's `users.phone` with `whatsapp.queue(…, recipient_user_id=)`. `person` is the learner the message is about. It sends nothing when the app setting `whatsapp_staff_alerts_enabled` is false (default **true** since db 042), when the staff member is the person doing the action, or when the user is inactive; no phone = row saved as Skipped ("No WhatsApp number on file"), never the learner's number. It never raises.
+
+| Event | Template | Who |
+|---|---|---|
+| Payment verified / failed (`/payments/{id}/verify`, `/fail`) | `staff_payment_status_v1` | The owner counsellor of each allocated course (the recorder if none) |
+| Lead created with an owner, reassigned, bulk-assigned (`services/leads.py`; imports pass `imported`) | `staff_lead_assigned_v1`; more than 5 leads to one owner in a bulk = one `staff_leads_assigned_v1` with the count | The new owner, unless they assigned themselves |
+| Special closing request raised (`fees.request_special_closing`); again at escalation (`jobs.escalate_notifications`, 5 staffed minutes) | `staff_approval_waiting_v1` | Branch Managers whose limit covers it; Founder / Super Admin when below the floor, above every BM's limit, or on escalation (not repeated to one already told) |
+| A payment claim is recorded (`payments._insert` → `payment_alerts.payment_to_verify`) | `staff_payment_to_verify_v1` | The branch's Accounts users |
+| Demo 24h / 1h reminder (job `demo-reminders`, `whatsapp_events.demo_trainer_reminder`) | `staff_demo_reminder_v1` | The demo's trainer (no phone = Skipped; `skip_actor` off) |
+
+Staff rows carry `recipient_user_id`, so they appear on `GET /whatsapp/messages` as `recipient_kind: "Staff"` (the screen shows "Staff: <name>" under the number and "About <learner>") and never in a person's conversation.
+
+`benefit_request_received_u_v1` is saved but has no event: the CRM has no course-benefit request record yet. News that mirrors the past is not sent (an LMS allocation or login older than 2 days: `FRESH_DAYS`). Stop contact (db 031) is not applied to these messages: it stops outreach, and they report the learner's own money, admission or enquiry. The number is the person's WhatsApp number, else the mobile, as digits with the country code. No number, or a missing value (e.g. a payout without a reference), saves the row as **Skipped** with the reason, never silently dropped.
+
+**Sending** (`services/whatsapp.py`): rows are posted right after the request commits (a background thread, 3 s timeout), and the job `whatsapp-send` (`flask jobs run whatsapp-send`, or `flask whatsapp deliver [--loop]`) is the retry path. Each row is claimed (`locked_until`, `SKIP LOCKED`), posted with no transaction open, and its answer committed on its own.
+
+| Provider answer | Row |
+|---|---|
+| 200 with a message id | Sent (`provider_message_id`, `sent_at`) |
+| 401 / 403 | Configuration problem: the run stops, the row stays Queued |
+| 429 / 5xx | Queued again, 60 s doubling to 30 min; Failed after 5 attempts |
+| connection refused / unreachable | Queued again; the run stops |
+| any other 4xx | Failed with the provider's message |
+| timed out, or 200 without an id | Failed, "may have been delivered: check before sending again". Never resent on its own, so a learner doesn't get the same message twice |
+
+**Gates:** `WHATSAPP_ENABLED` off, or no URL / key = rows wait. `WHATSAPP_TEST_NUMBERS` set = only those numbers are messaged, every other row is Skipped. A row still waiting after `WHATSAPP_MAX_AGE_HOURS` (24) is Skipped, so a switched-off period never ends in a flood of stale news. The API key is never logged or stored.
+
+**The provider's callback** (`services/whatsapp_inbound.py`): `POST /webhooks/whatsapp` with the header `X-Webhook-Token` (or `?token=`) equal to `WHATSAPP_WEBHOOK_TOKEN`; no token configured or a wrong one = 401. It reads Meta's Cloud API shape (`entry[].changes[].value.statuses[]` / `messages[]`), also a flattened `{statuses, messages}` or a list of bodies, always answers 200 once authorised, and keeps every body in `whatsapp_webhook_log` for 30 days. **The provider's real callback format has not been seen yet:** read the log (`SELECT payload, result FROM whatsapp_webhook_log`) after the first real callbacks and adjust `extract()` if Pinbot differs.
+- *Status:* `delivered` → Delivered, `read` → Read (also sets delivered), `failed` → Failed with the provider's error. Delivered / Read never move back and a Failed is ignored once a message was delivered; a late "delivered" after a Failed upgrades it; unknown ids are ignored.
+- *Replies:* saved in the communications inbox (channel WhatsApp, Inbound, `needs_response`, due in the response time); one person with that number = Match Review, otherwise Unmatched (at the first active branch). With one person and an open lead the reply also lands on the lead's timeline, which the unanswered-lead counters read. Keywords (first word, any case): **STOP / UNSUBSCRIBE** withdraw marketing consent; **DETAILS, INTERESTED, BROCHURE, CALLBACK, BATCH, DEMO** make a FOLLOW_UP task for the lead's owner (or the branch's Sales team) linked to the reply. Duplicate message ids are ignored.
+
+**Marketing** (`services/whatsapp_marketing.py`): never automatic; a counsellor sends one template to one lead. Refused (422, with the reason) unless the person has **Explicit Consent**, has no stop contact, is under the unanswered-lead WhatsApp ceiling, and has a number; the same template goes to the same lead once a day. The message is queued through the same outbox (switch, test numbers, retries) and logged on the lead as an outbound WhatsApp, so it counts against the contact ceilings. `course_id` defaults to the lead's course (400 if neither); `interest` defaults to the lead's learner goal, then the course category.
+
+**CLI:** `flask whatsapp outbox [--recent N] [--problems]`, `flask whatsapp deliver`, `flask whatsapp requeue <id …>`.
+
+**Assumptions to confirm:** consent starts at Not Recorded for everyone (the CRM held none), so marketing reaches nobody until it is recorded or imported; the provider's callback shape and how to register the webhook with Pinbot; unmatched replies go to the first active branch; one automatic enquiry acknowledgement per person per day.
+
+Tests: `tests/test_whatsapp.py` (22) and `tests/test_whatsapp_phases.py` (29); the automatic events in `test_whatsapp_auto_w1.py` (demo, admission, plan), `test_whatsapp_auto_w2.py` (instalments) and `test_whatsapp_auto_w3.py` (staff alerts).
+
+#### Step 26 — Smooth lead → batch UX ✅ (dev only)
+
+Migrations 035–039 ([DATABASE.md](DATABASE.md)). No new tables. Frontend: next-step bar, quick-add lead, slot picker, one-screen fee discussion, record-payment dialog, Waiting for batch.
+
+**Journey and next step** (`services/journey.py`)
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/leads/{id}/journey` | Lead roles, Accounts; branch-scoped (other branch = 404) | `data`: `lead_id, person_id, course_id, course_title, pipeline_entry_id`; `steps[]` (`key` in order capture, qualify, convert, demo, fee, plan, invoice, payment, verify, admission, batch; `status` done / current / blocked / todo / skipped — demo is `skipped` when fees started without an attended demo; `at`, `detail`); `next` (null for a lost lead); `money`; `after_admission` |
+
+- `next`: `action` (qualify, convert, save_outcome, book_demo, record_demo_outcome, fee_discussion, request_approval, accept_plan, create_invoice, record_payment, verify_payment, wait_batch, none), `label`, `detail`, `role` (who must act, in words), `can_act` (the caller's own permission, same rules as the services), `blocked` + `reason` (plain words) + `fix_action` / `fix_label`, `ref` (ids the action needs: demo_id / scheduled_at, fee_discussion_id, version_id, scr_id, invoice_id, payment_id / transaction_number, admission_id), `alternatives[]` (e.g. skip the demo: discuss fees). `reason` is also filled when someone else must act ("Waiting for Accounts to verify TXN-…").
+- Rules: next = first unfinished step. `save_outcome` first for a never-contacted lead; a booked demo asks for its outcome; a Pending special closing gives `request_approval` (role Branch Manager, or Founder / Super Admin below the floor; `can_act` only for who may decide it); a pending claim gives `verify_payment` (Accounts); verified money below the token gives `record_payment`. Blocked cases: the token is reached but no admission exists, an invoice with unmet prerequisites (`fix_action` accept_plan / fee_discussion).
+- `money` (once invoiced, this course's line): `invoice_id, invoice_code, total, verified, balance, pending, token_needed` (the admission token, or the line if smaller), `more_to_admit` = max(0, token_needed − verified).
+- `after_admission`: `admission_id, admission_code, trail[]` admitted → lms_login → batch_allocated (`status` done / current / todo, `at`, `detail` with LMS status, batch code · days time · start · joining date).
+- Frontend deep link: `/leads/<id>?action=<action key>` opens that action's dialog once.
+
+**Lead capture and qualification** (migration 035)
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/persons/lookup?phone=` | Lead roles | `{phone, matches[{person_id, person_code, full_name, courses_count, courses[]}], other_branch}`. `matches` = people with that primary / alternate number visible to the user (registered at, or with a lead at, their branches), max 5; courses = distinct courses of their leads at the user's branches. `other_branch: true` = the number also exists where the user cannot see (nothing else revealed). Unlike `/persons/search` it respects branch scope. 400 for an invalid phone |
+| GET | `/leads/staffed-time?branch_id=&minutes=120` | Lead roles | `{at}` = now + N staffed minutes at the branch (closed hours, off days, holidays skipped); minutes 1–1440; 403 for a branch the user cannot use |
+
+- `GET /leads/{id}/qualification`: each check gains `auto`; a System tick has `reviewed_by = {user_id: null, full_name: "System"}`. The read ticks the provable checks once for a lead with no ticks. System ticks (`services/qualification.auto_tick`, called on create, edit, Save outcome and add activity): reachable contact (outcome Connected / Interested / Demo booked / Callback requested), intended course(s) (the lead has a course), exact next action (action text and date both saved). Branch and delivery mode is never auto-ticked.
+- `PUT /leads/{id}/qualification/checks` on a System-ticked check takes it over (reviewer = caller, time = now). Staff ticks are never replaced; unticking sticks until the next proving event.
+
+**Demos**
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/demos/slots?course_id=&branch_id=&type=Standard\|Practical&from=YYYY-MM-DD&days=7` | Lead roles, branch-scoped | `{course_id, branch_id, demo_type, duration_minutes (45/60), from, days (1–14), timezone, trainers[{user_id, full_name, teaches_course, slots[{start, end}]}]}`. All active Trainers at the branch; those who run / ran a batch of the course there come first. Slots: 30-minute grid inside branch shifts, no holidays, after now, minus the trainer's open demos and batch sessions (live Planned / Open / In Progress batches with a confirmed timetable; matched by `trainer_user_id`, or the trainer's e-mail for LMS-mirrored batches) (`services/demo_slots.py`) |
+
+- `POST /leads/{id}/demos` (with `trainer_user_id`), `POST /demos/{id}/reschedule` and `PATCH /demos/{id}` (trainer or duration change) return **409 CONFLICT** "<Trainer> is busy then (demo DM-… / batch …). Pick another slot or trainer." Back-to-back is allowed; a demo without a trainer never clashes.
+- `GET /demos` new filters `outcome_due=true` (open demo whose slot has ended, no outcome) and `owner_id=`. Accounts may call it only with `?lead_id=` (403 otherwise).
+- `POST /demos/{id}/outcome` by someone not on the sales side (the trainer) notifies the lead owner (rule `DEMO_OUTCOME_RECORDED`, entity `lead`, Action Required): "<name>: demo attended · start the fee discussion" (No Show: "demo no-show · follow up to rebook").
+
+**Pipeline cards** — `GET /pipeline` cards and table rows gain `next_step {label, action|null, lead_id, due_at, overdue}`, `blocker` (string | null), `quick_action {action, label, lead_id} | null` (a Lead 360 action key), `days_in_stage` (from `pipeline_entries.stage_changed_at`) and `stalled` (more than `pipeline_stalled_days`, default 7, read with a default, no seed row). Closed cards have `next_step` null. Per course, the first that applies: Payment under review (verify_payment) > demo outcome pending (record_demo_outcome; due = demo end) > "Attend the demo" > book_demo > fee_discussion > "Wait for approval" / "Revise the fee" (blockers *Waiting approval* / *Approval rejected*) > request_approval or "Approve the fee" > accept_plan (*Plan not accepted*) > create_invoice > record_payment > "Create admission". Due date = the course's own next follow-up, else the card's; the card shows its most urgent course.
+
+**Fee discussions** (no migration)
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/fee-discussions/{id}/price-preview?offer_id=&extra=` | Lead roles, branch-scoped | `{standard_fee, offer_discount, extra_concession, final_payable, minimum_floor, below_floor, needs_approval, my_limit, my_limit_unlimited, within_my_limit, approver_role, approver_role_name, second_approver_required, message}`, e.g. "Needs approval from Branch Manager (your limit ₹0)". Uses `concession_limits` (lowest-limit role that covers the amount); below the floor: Founder / CEO or Super Admin plus a second approver. 400 if the discounts exceed the fee or the offer is not eligible |
+| POST | `/fee-discussions/{id}/reissue` | Lead roles | New version with the lapsed current version's offer and extra concession when the same price still holds (201); 422 with the reasons otherwise ("The same price is no longer available: …"), and 422 if the current version is still valid. Audit `FEE_VERSION_REISSUED` |
+
+- `GET /fee-discussions/{id}` also returns `offer_options` {`eligible[]`, `unavailable[]`, `best_offer_id`}, `reissue` {`available, same_price, changes[], new_final_payable, offer_id`}, and every version (and `current_version`) carries `validity` {`valid_until, days_left, state` valid / expiring / expired / closed, `label` "Valid 5 more days"}; `GET /leads/{id}/fee-discussions` carries `validity` too. Eligible offer: `offer_id/code/name, benefit_type, saving, final_price, below_floor, is_best, complimentary_courses` (those the learner lacks). Best = largest saving among discounts that keep the price at or above the 70% floor; complimentary-course offers save nothing on the fee and are never auto-picked. `unavailable` gives the offer and a plain reason (not started / ended, other branch or course, already used on admission X, learner already holds every complimentary course). `applicable_offers` now derives from the same eligibility.
+- `POST /fee-discussions/{id}/versions` accepts `request_reason`: when the version has an extra concession (or is below the floor) the special closing request is sent in the same transaction (version Pending Approval, task / notification as before); ignored when no approval is needed.
+- Special closing summaries gain `decision_reason, requested_at, decision_due_at, decided_at, decided_by_name`.
+- Job `fee-expiry` (`services/fees.expiry_reminders`): for each current live version (Discussion Saved / Counteroffered / Pending Approval / Approved) whose `valid_until` is today or tomorrow, one FEE_DISCUSSION system task for the counsellor (lead owner fallback, else the Branch Manager team queue), dedupe key `fee-expiry:<version_id>`, due at the branch's working-day end the day before expiry; completed when a newer version supersedes it. Expiry of Saved / Counteroffered versions stays with `cleanup`.
+
+**Delivery plan** (migration 037)
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/leads/{id}/delivery-plan/batches?branch_id=` | as the plan GET | `{lead_id, branch_id, batches[]}` — the workbench `batches` rows for the plan's service branch |
+| POST | `/leads/{id}/delivery-plan/send-for-confirmation` | Plan editors | Queues template `nipuna_delivery_plan_confirm_v1`, sets `confirmation_requested_at`, timeline note, audit `DELIVERY_PLAN_CONFIRMATION_SENT`. 422 when no plan, already accepted, or no WhatsApp number. Each press is a new message (event key `delivery-plan-confirm:<plan>:<n>`). The same message is also sent automatically when a saved plan becomes ready; this button is the resend |
+
+- `GET /leads/{id}/delivery-plan`: `plan` gains `preferred_lms_batch_code, preferred_lms_batch_label, acceptance_method, confirmation_requested_at`; new top-level `confirmation` (latest "Reply YES" message: `outbox_id, status, requested_at, sent_at, problem, awaiting_reply`; null if never sent) and `whatsapp` `{sending, has_number}`.
+- `PUT …/delivery-plan` and `POST …/accept` accept `preferred_lms_batch_code` / `preferred_lms_batch_label` (null clears). A new code must be an offerable LMS batch of the deal's course at the service branch (else 400 / 422); the label is derived ("Sat, Sun · 10:00-12:00 · from 12 Oct 2026") when omitted. Changing any plan field withdraws a pending confirmation. `POST …/accept` takes `acceptance_method` in_person | call (optional; `whatsapp` is set only by the learner's reply).
+- `GET /invoices/options`: `courses[].delivery_plan` gains `acceptance_method`.
+- Webhook `POST /webhooks/whatsapp`: a reply whose first word is YES (any case) from a number matching exactly one person accepts that person's latest plan awaiting confirmation (open deal, no invoice, reply not older than the request): `acceptance_method = whatsapp`, `accepted_by` NULL, timeline note, audit; the "plan accepted" template is not sent. No match or nothing awaiting: just recorded in the inbox (needs a response).
+
+**Payments** (migration 038)
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/payments/{id}/proof` | Finance roles, branch-scoped like the payment | Streams the proof file; 404 when none |
+
+- `POST /payments`: 400 with `details.proof` when any tender's mode is not CASH and no `proof` file is sent (multipart). When `allocations` is omitted the default split is now **token-first**: each course not yet admitted gets what it needs to reach the token (`admission_token_amount`, or its remaining amount; pending claims count), then the rest oldest course first, never beyond what is open.
+- `GET /invoices/{id}`: each line has `more_to_admit` (0 when admitted or the token is already verified).
+- Rules `PAYMENT_VERIFIED` / `PAYMENT_FAILED` (Information; entity `lead`, or `payment` for an advance): on verify / fail the lead owner of each allocated course (the recorder if none) gets a bell notification linking to the deal; the decider is not notified. The same events queue a staff WhatsApp (`nipuna_staff_payment_status_v1`) to the owner's `users.phone` through the outbox (through `services/staff_alerts.send`, db 042; event key `staff-payment-<verified|failed>:<payment_id>:<user_id>`; `person_id` = the learner, `recipient_user_id` = the owner, `source_type` payment) only when `whatsapp_staff_alerts_enabled` is true (default **true** since db 042); the test-number gate still applies.
+
+**Waiting for batch** (migration 039)
+
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/batch-waiting` | Founder / CEO, Super Admin, Branch Manager, Sales, Front Office; branch-scoped | Filters `branch_id, course_id, seat_type, q, page, per_page`. Rows `{admission_id, admission_code, person, lead_id, course, service_branch, admission_date, days_waiting, seat_type, planned_start_date, preferred_batch{code,label}\|null, allocate_by, delay (null\|coordinator\|manager\|founder), lms_url\|null}`, longest wait first. Listed = admission *Awaiting Batch Allocation* with no active allocation (branch = service or original) |
+
+- `lms_url` = `{LMS_WEB_URL}/academic/batches?crm_admission_id=…&student=…` (null when `LMS_WEB_URL` is unset).
+- Job `batch-delay-alerts`, only while `academics_managed_in_lms` is on, in working time, idempotent (task keys `batch-wait:<stage>:<admission_id>`; notification keys `batch-wait:owner|manager|founder`, entity `batch_wait`). First alert: a task for the admission's academic owner, else the Branch Manager team, plus an owner notification (stage name `coordinator`): Confirmed Seat `batch_delay_coordinator_days` after admission, to branch closing time or the planned start if sooner; Future Plan `batch_delay_future_plan_hours` before the planned start. Branch Manager task + notification at `batch_delay_manager_days`; Founder / CEO and Super Admin notification at `batch_delay_founder_days`. Days count from the admission date (a Future Plan: from its first-alert deadline); a missed run catches up every stage reached. Tasks and action notifications close when the LMS pull applies an Active allocation (step 23), and the job sweeps any left for a paused, cancelled or allocated admission.
+- `AdmissionQualified` (step 22) carries the optional `admission.preferred_batch_code`.
+
+**Read-only Lead 360 for Accounts** (no migration; the Academic Coordinator, who had it too, no longer exists): GET now also allowed (branch-scoped, 404 elsewhere) on `/leads/{id}`, `/leads/{id}/activities`, `/leads/{id}/enquiries`, `/leads/{id}/workbench`, `/pipeline-entries/{id}`; `GET /leads/{id}/fee-discussions` adds Accounts. Already allowed: `/leads/{id}/journey`, `/leads/{id}/delivery-plan`, `/tasks`, `/invoices/options`. Still lead roles only: `/leads/{id}/qualification`, `/ai/insights`, `/objections/guide` and every POST / PUT / PATCH.
+
+Tests: `test_journey.py`, `test_qualify_autotick.py`, `test_demo_slots.py`, `test_delivery_plan_ux.py`, `test_payment_ux.py`, `test_batch_waiting.py`, `test_lead360_readonly.py`.
+
+#### Step 27 — Curriculum removal, Academic Coordinator merged into Branch Manager ✅ (dev only)
+
+Db 043. The CRM holds no curriculum and the Academic Coordinator role is gone; the LMS keeps its own curriculum.
+
+- **Removed endpoints:** `GET / POST /curriculum-versions`, `POST /curriculum-versions/{id}/publish`, `POST /admissions/{id}/curricula` (all now 404).
+- **Removed fields:** `curriculum_status` (admission, `GET /admissions` filter), `curricula` (admission detail, Student 360 academic tab), `curriculum_version` / `curriculum_version_id` (batches, `POST / PATCH /batches`), `mapping_status` / `mapping_label` (`/batch-waiting`). The journey loses the `mapped` trail step and the `map_curriculum` action.
+- **Removed event:** `AdmissionCurriculumMapped` (step 22). The pull ignores `curriculum_versions[]` and the curriculum fields on `batches[]` / `academics[]`.
+- **Allocation** (`allocation-check`, `POST /admissions/{id}/allocations`, and the database): enrolment not Paused / Completed / Cancelled, batch not Completed / Cancelled, same service branch, same course or a combo component, seat left, one active per course. Recovery owner is the Branch Manager.
+- **Roles:** `ACADEMIC_COORDINATOR` no longer exists. Branch Manager (and admins) now: batches, allocation, close allocation, joining date (with Trainer), complete admission, certificates, document review, approve extra demo, approve course paths and sales knowledge, `GET /alumni`. Lead 360 read-only stays for Accounts only. `seed-dev` creates 18 staff accounts (no coordinators).
+- **Delay alerts:** the first `batch-delay-alerts` stage is still named `coordinator` in task keys and in `/batch-waiting` `delay`; it now tasks the Branch Manager team.
+
+Tests: `test_admissions.py` (allocation checks, removed endpoints), `test_lms_pull.py` (curriculum fields ignored), `test_journey.py`, `test_playbook.py`, `test_pipeline_demos.py`, `test_lead360_readonly.py`.
+
+#### Step 28 — WhatsApp for the LMS (round 6) ✅ (dev only)
+
+Db 045. One Pinbot number serves both systems, so the LMS never calls Pinbot: it posts each message to the CRM, which sends it through the same outbox, switch, test-number list and retries as its own (step 25). Exchange: `nipuna lms-docs/LMS_WHATSAPP_REPLY.md` (the LMS's contract) and `nipunalms/nipuna crm-docs/CRM_WHATSAPP_ROUND6_REPLY.md`.
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| POST | `/lms/whatsapp` | The LMS: header `X-Service-Key` = `LMS_SERVICE_KEY` (wrong or missing = 401) | `{template, language?, to?, lms_user_id?, params[], button_params[]?, dedupe_key, occurred_at?}` → 200 `{status: Queued \| Sent \| Skipped, outbox_id, provider_message_id? (Sent), reason? (Skipped)}` |
+
+- **Templates:** only the nine `nipuna_lms_*` templates in `services/whatsapp_templates.py` (`LMS_TEMPLATES`, `sender="LMS"`); anything else, or another language, is 422. `params` fill `{{1}}..{{n}}` in order and must match the count; each value is non-empty, single line (no line break or tab), at most 1,000 characters (400 otherwise). `button_params` fill the URL buttons; a button whose value is also a body value (the reset code, the certificate number) may be left out and is copied from the body.
+- **Recipient:** `to` (digits with country code; a leading `+` is dropped) wins; otherwise the person with that `persons.lms_user_id`, at their WhatsApp number or mobile. Neither = 400. A matched person gives the row its `person_id` and branch (latest admission's service branch, else the registered branch), so the message appears in their Person 360 conversation; without one (staff invites, an unknown student) the row has no person or branch and only admins see it on `/whatsapp`.
+- **Repeats:** `event_key` = `lms:<dedupe_key>`, unique. A repeat answers what the first call got (Queued / Sent with the provider id / Skipped); a repeat of a Failed message is 422 with the error. Never sent twice.
+- **Skipped at once (200, with the reason):** sending switched off or not configured; `occurred_at` more than 48 hours ago; no number; the person's WhatsApp notifications switched off (db 044); the number not on `WHATSAPP_TEST_NUMBERS` while that is set. Unlike the CRM's own messages, nothing waits while sending is off, so switching on never floods. Consent (`whatsapp_consent`) is not checked: it governs marketing, and these are service messages, as for the CRM's own utility templates.
+- **Sending:** Queued rows are posted right after the request commits (`push_soon`); `whatsapp-send` retries (step 25 table). LMS messages can't be retried from the CRM (`POST /whatsapp/messages/{id}/retry` → 422, `requeue` skips them): the LMS sends a new one.
+- **Hidden values:** the reset code (template 1) and activation tokens (2, 3) are stored in `secret_params` only while Queued; `params` and `body_text` show `[hidden]`, and the database clears `secret_params` once the row is Sent, Failed or Skipped.
+- **Status back (W3 option a):** when `LMS_WHATSAPP_STATUS_EVENTS=1`, every later status change of an LMS row (Sent, Delivered, Read, Failed, Skipped; from the sender, the job or the provider's callback) writes a `WhatsappStatusUpdated` event to `lms_outbox` in the same transaction: record key `whatsapp:<outbox_id>`, its own `source_version`, `data` = `{dedupe_key, crm_outbox_id, status, provider_message_id, reason, occurred_at}`. Delivered by `lms-sync` like every other event. Off by default until the LMS has the handler.
+- **`/whatsapp/messages`:** rows carry `sent_by` (`CRM` / `LMS`), filter `?sent_by=`; `person_name` / `branch_name` may be null and `recipient_kind` is `Not in the CRM` for a row without a person; category filter accepts `Authentication`.
+
+Tests: `tests/test_lms_whatsapp.py` (13).
 
 ### 5. Definition of done (every module)
 

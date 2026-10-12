@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CourseSelect, Field, NativeSelect, StaffSelect, applyServerErrors, useBranchCode } from "@/components/crm/forms";
 import { ConfirmAction, Empty, ErrorPanel, LoadingRows, PageHead, Pagination, Section, Status, Warning } from "@/components/crm/ui";
-import { dateTime, fromLocalInput, isPast, todayIST, toLocalInput } from "@/lib/format";
+import { dateTime, fromLocalInput, isPast, relative, todayIST, toLocalInput } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { FormDialog, SALES_SIDE } from "./shared";
 
@@ -37,7 +37,7 @@ export function DemosPage({ search, onSearch }: { search: DemoSearch; onSearch: 
   const { hasRole, profile } = useAuth();
   const salesSide = hasRole(...SALES_SIDE);
   const isTrainer = hasRole("TRAINER");
-  const canApproveExtra = hasRole("BRANCH_MANAGER", "ACADEMIC_COORDINATOR");
+  const canApproveExtra = hasRole("BRANCH_MANAGER");
   const [act, setAct] = useState<Action | null>(null);
   const [openReminders, setOpenReminders] = useState<number | null>(null);
 
@@ -53,10 +53,10 @@ export function DemosPage({ search, onSearch }: { search: DemoSearch; onSearch: 
     <>
       <PageHead
         title="Demo Management"
-        description="Scheduling, reminders, attendance and outcome. Book a new demo from the lead's page (Lead 360 → Schedule demo)."
+        description="Scheduling, reminders, attendance and outcome. Book a new demo from the lead's page (Lead 360 → Book demo): pick a free trainer slot."
       />
       <div className="mb-4 grid gap-3 md:grid-cols-3">
-        <Warning>Normally maximum 2 attended demos. More needs Academic Coordinator or Branch Manager approval.</Warning>
+        <Warning>Normally maximum 2 attended demos. More needs Branch Manager approval.</Warning>
         <Warning>Usual duration 30–45 minutes; practical demos may be up to 60 minutes.</Warning>
         <Warning>Payment Pending Verification or Admitted records never move backward after a demo; Lost is never reopened.</Warning>
       </div>
@@ -202,6 +202,48 @@ export function DemosPage({ search, onSearch }: { search: DemoSearch; onSearch: 
   );
 }
 
+/**
+ * Demos whose slot has ended with no outcome yet, with a one-tap "Record demo outcome" that opens the outcome form in
+ * place. The trainer sees their own (My work); a counsellor sees the demos of leads she owns. Hidden when none are due.
+ */
+export function DemoOutcomeDue({ trainerId, ownerId }: { trainerId?: number; ownerId?: number }) {
+  const branchId = useBranchFilter();
+  const { hasRole, profile } = useAuth();
+  const salesSide = hasRole(...SALES_SIDE);
+  const [open, setOpen] = useState<DemoRow | null>(null);
+  const filters: DemoFilters = { outcome_due: true, branch_id: branchId, per_page: 20, ...(trainerId ? { trainer_id: trainerId } : {}), ...(ownerId ? { owner_id: ownerId } : {}) };
+  const demos = useQuery({ queryKey: demoKeys.list(filters), queryFn: () => demosApi.list(filters), refetchInterval: 60_000 });
+  const rows = demos.data?.data ?? [];
+  if (!rows.length) return null;
+  return (
+    <Section title="Record demo outcome" subtitle={`${demos.data?.meta.total ?? rows.length} demo${rows.length === 1 ? "" : "s"} finished — the counsellor is told and the next step becomes the fee discussion`}>
+      <ul className="divide-y" aria-label="Demos waiting for an outcome">
+        {rows.map((d) => (
+          <li key={d.demo_id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
+            <div className="min-w-0 text-sm">
+              {salesSide ? (
+                <Link to="/leads/$leadId" params={{ leadId: String(d.lead.lead_id) }} className="font-semibold text-foreground hover:text-primary">
+                  {d.lead.name}
+                </Link>
+              ) : (
+                <span className="font-semibold">{d.lead.name}</span>
+              )}
+              <div className="text-xs text-muted-foreground">
+                {d.course?.course_title ?? "No course"} · {dateTime(d.scheduled_at)} ({relative(d.scheduled_at)}) · {d.demo_type} · {d.branch.branch_name}
+              </div>
+            </div>
+            <Button size="sm" onClick={() => setOpen(d)}>
+              <Check />
+              Record demo outcome
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {open && <OutcomeDialog demo={open} isTrainer={hasRole("TRAINER") && !salesSide} userName={profile?.user.full_name} onClose={() => setOpen(null)} />}
+    </Section>
+  );
+}
+
 function Reminders({ demoId }: { demoId: number }) {
   const q = useQuery({ queryKey: demoKeys.reminders(demoId), queryFn: () => demosApi.reminders(demoId) });
   if (q.isLoading) return <LoadingRows rows={1} />;
@@ -322,7 +364,7 @@ type OutcomeForm = {
   next_follow_up_at: string;
 };
 
-function OutcomeDialog({ demo, onClose, isTrainer, userName }: { demo: DemoRow; onClose: () => void; isTrainer: boolean; userName: string | undefined }) {
+export function OutcomeDialog({ demo, onClose, isTrainer, userName }: { demo: DemoRow; onClose: () => void; isTrainer: boolean; userName: string | undefined }) {
   const branchCode = useBranchCode(demo.branch.branch_id);
   const form = useForm<OutcomeForm>({
     defaultValues: {
@@ -334,7 +376,7 @@ function OutcomeDialog({ demo, onClose, isTrainer, userName }: { demo: DemoRow; 
       recommended_course_id: "",
       next_action: "Fee discussion",
       commercial_owner_id: "",
-      next_follow_up_at: "",
+      next_follow_up_at: toLocalInput(new Date(Date.now() + 24 * 3600_000).toISOString()), // tomorrow, same time: edit if agreed otherwise
     },
   });
   const save = useApiMutation(

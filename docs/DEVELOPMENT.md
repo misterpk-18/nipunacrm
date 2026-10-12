@@ -7,7 +7,7 @@ Everything needed to build, run, test and ship the CRM, and where the project st
 | [Part A — Local development](#part-a--local-development) | Repository layout, `.env`, databases, staging accounts, running and testing |
 | [Part B — Frontend](#part-b--frontend) | Frontend decisions, structure, screen → API map, V4 look, porting prototype changes |
 | [Part C — Test deployment (AWS EC2)](#part-c--test-deployment-aws-ec2) | The EC2 test server (personal AWS account only): layout, redeploy, migrations, backups, stop / start |
-| [Part D — V4 handoff: plan and review](#part-d--v4-handoff-plan-and-review) | The V4 UI handoff: phases, acceptance results, deviations, remaining work |
+| [Part D — V4 handoff: plan and review](#part-d--v4-handoff-plan-and-review) | The V4 UI handoff: status, acceptance results, deviations, remaining work |
 | [Part E — Backlog](#part-e--backlog) | Open product decisions and API gaps |
 
 ---
@@ -39,9 +39,17 @@ nipuna-crm/
 | `DEV_DATABASE_URL` | Dev replica `nipunacrm-dev` with staging data; used when `APP_ENV=development` |
 | `TEST_DATABASE_URL` | Optional; defaults to `DATABASE_URL` + `_test` (`nipunacrm_test`) |
 | `SECRET_KEY`, `LOG_LEVEL`, `UPLOAD_DIR` | App settings |
-| `OPENAI_API_KEY`, `LANGSMITH_*` | Reserved for future AI work — not read by the code yet |
-| `LMS_BASE_URL`, `LMS_SERVICE_KEY` | Nipuna LMS the `lms-sync` job posts to (local: `http://127.0.0.1:5060`); the key is the LMS's `CRM_SERVICE_KEY` — get it from the LMS owner, never commit it. Unset = events wait in `lms_outbox` |
+| `ANTHROPIC_API_KEY`, `AI_MODEL` | Claude for the AI briefs, counselling brief and Ask Nipuna (`AI_MODEL` default `claude-opus-5-5`, Claude Opus 5.5). Unset = rule-based answers (the case today) |
+| `OPENAI_API_KEY`, `LANGSMITH_*` | In `.env` but not read by the code |
+| `LMS_BASE_URL`, `LMS_SERVICE_KEY` | The Nipuna LMS (local: `http://127.0.0.1:5060`); the key is the LMS's `CRM_SERVICE_KEY` — get it from the LMS owner, never commit or print it. Unset = events wait in `lms_outbox` |
 | `LMS_TIMEOUT_SECONDS` | Optional, default 10 |
+| `LMS_WEB_URL` | The LMS web app (dev `http://127.0.0.1:5174`; tests `http://lms-web.test`). Used only for the **Open in LMS** link on Waiting for batch; unset = the link is hidden with a hint. Add it to the server `.env` too |
+| `LMS_PUSH_ON_COMMIT`, `LMS_PUSH_TIMEOUT_SECONDS` | Push a request's LMS events right after it commits (default on, `0` turns it off), with a 3 s timeout |
+| `LMS_WHATSAPP_STATUS_EVENTS` | Default `0`. `1` = tell the LMS when a message it sent through `POST /lms/whatsapp` is Sent / Delivered / Read / Failed / Skipped (`WhatsappStatusUpdated` events, [API.md · Step 28](API.md#step-28--whatsapp-for-the-lms-round-6--dev-only)). Turn on only once the LMS has the handler, or every event fails with a Super Admin task. The same `LMS_SERVICE_KEY` also authenticates the LMS's calls to the CRM |
+| `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_API_KEY` | WhatsApp through Pinbot ([API.md · Step 25](API.md#step-25--whatsapp-messages-outbox--dev-only)). Nothing is sent unless it is `1` and both the URL (`https://partnersv1.pinbot.ai/v3/<number id>/messages`) and the key are set; the key stays in `.env`, never committed or printed. Default off: rows wait in `whatsapp_outbox` |
+| `WHATSAPP_WEBHOOK_TOKEN` | The secret the provider sends (header `X-Webhook-Token` or `?token=`) to `POST /api/v1/webhooks/whatsapp` for delivery status and replies. Unset = the endpoint refuses everything |
+| `WHATSAPP_TEST_NUMBERS` | Comma-separated numbers with country code. When set, only these are messaged; every other row is Skipped. Keep it set on dev: the staging data holds real numbers |
+| `WHATSAPP_MAX_AGE_HOURS`, `WHATSAPP_TIMEOUT_SECONDS`, `WHATSAPP_PUSH_ON_COMMIT`, `WHATSAPP_PUSH_TIMEOUT_SECONDS`, `WHATSAPP_INVOICE_CHANNEL` | Optional: 24, 10, on, 3, "your Nipuna counsellor" (the wording after "review the invoice through") |
 
 `backend/.env.example` lists the same variables without secrets.
 
@@ -60,7 +68,7 @@ flask --app app create-dev-db --yes     # drops and replays db/*.sql (refuses na
 flask --app app seed-dev                # staging data, created through the real API so every rule applies
 ```
 
-The seed (`backend/cli/seed.py`) creates 20 staff accounts, 8 courses (both branches), curricula and 5 batches, 22 leads in both branches — new, **qualified but not converted** (Ravi Teja), converted deals at every pipeline stage (qualification checklist + Convert, db 019), demos, approved fee discussions, **accepted delivery plans**, invoices with their own 1–3 instalment schedules, payment claims and verified receipts, 7 admissions created on verification with batch allocations, a **two-course invoice paid with split tenders** giving two admissions for one person (Meera Joshi), the V4 **₹22,000 invoice with a ₹5,000 cash claim pending** (Sana Begum), an overdue instalment with an invoice promise, a long payment gap, a refund case, tasks, communications, a support case, companies and a job opening, this month's approved targets and an incident.
+The seed (`backend/cli/seed.py`) creates 18 staff accounts, 8 courses (both branches) and 5 batches, 22 leads in both branches — new, **qualified but not converted** (Ravi Teja), converted deals at every pipeline stage (qualification checklist + Convert, db 019), demos, approved fee discussions, **accepted delivery plans**, invoices with their own 1–3 instalment schedules, payment claims and verified receipts, 7 admissions created on verification with batch allocations, a **two-course invoice paid with split tenders** giving two admissions for one person (Meera Joshi), the V4 **₹22,000 invoice with a ₹5,000 cash claim pending** (Sana Begum), an overdue instalment with an invoice promise, a long payment gap, a refund case, tasks, communications, a support case, companies and a job opening, this month's approved targets and an incident.
 
 Logins, password and seeded walkthrough records: [Staging accounts](#staging-accounts) (below).
 
@@ -77,23 +85,29 @@ cd frontend && npm install && npm run dev
 
 Open http://localhost:5173 and sign in with a staging account.
 
-Other backend commands (from `backend/`): `flask --app app create-admin` (first admin on a fresh database), `flask --app app jobs list | run [name…]` (background jobs), `flask --app app create-test-db`.
+Other backend commands (from `backend/`): `flask --app app create-admin` (first admin on a fresh database), `flask --app app jobs list | run [name…]` (background jobs, incl. `first-attempt` for the 2 / 10 / 30-minute enquiry alerts), `flask --app app create-test-db`.
 
-**LMS sync locally** (db 026, [API.md · Step 22](API.md#step-22--lms-sync-outbox--dev-only)): run the LMS on :5060 (`cd nipunalms/backend && APP_ENV=development ../venv/bin/flask --app app run --port 5060`, its own `nipunalms-dev` database), set `LMS_BASE_URL` / `LMS_SERVICE_KEY` in `backend/.env`, then:
+**The LMS link locally** ([API.md · Steps 22–23](API.md#step-22--lms-sync-outbox--dev-only)). Run the LMS on :5060 (`cd nipunalms/backend && APP_ENV=development ../venv/bin/flask --app app run --port 5060`, its own `nipunalms-dev` database) and set `LMS_BASE_URL` / `LMS_SERVICE_KEY` in `backend/.env`. How it works:
+
+- **CRM → LMS:** every admission, course, branch and money change writes `lms_outbox` rows in the same transaction; they are pushed right after the request commits, and `flask lms worker` is the retry path (the LMS owner sees them in its Super Admin screen **CRM sync**, `/admin/crm-sync`).
+- **LMS → CRM:** the status pull mirrors login, LMS status, enrolment, batches (with timetable, seats left and readiness), allocations, completion and certificates. While `academics_managed_in_lms` is on (dev), those academic screens are read-only in the CRM. The CRM holds no curriculum (db 043); the LMS keeps its own.
+- The test suite runs with `academics_managed_in_lms` off (conftest) so the CRM's own academic rules stay covered; `tests/test_lms_pull.py` turns it on.
+- Seed batches in the LMS never come through the pull: create batches in the LMS (Academic → Batches). On a dev database that still has the CRM's own batches, run `flask lms drop-crm-batches --yes` once, then `flask lms pull --full`.
+- Local only: never point this at real student data until the service key, transport and retention are agreed.
 
 ```bash
-APP_ENV=development flask --app app lms backfill          # events for everything that exists (re-runnable)
-APP_ENV=development flask --app app lms deliver --loop    # or: flask jobs run lms-sync (cron)
+APP_ENV=development flask --app app lms worker            # push every 10 s + pull every minute, until stopped (server: cron, --duration 55)
+APP_ENV=development flask --app app lms backfill [--branches]   # events for everything that exists (re-runnable)
+APP_ENV=development flask --app app lms deliver           # push what is due now
 APP_ENV=development flask --app app lms outbox --failed   # counts by status / type, errors
-APP_ENV=development flask --app app lms pull              # status pull (or: flask jobs run lms-status-pull, every 5 min)
+APP_ENV=development flask --app app lms pull [--full]     # status pull now (--full: from the beginning)
 APP_ENV=development flask --app app lms holds             # pulled records waiting to apply, and why
-APP_ENV=development flask --app app lms backfill --branches   # BranchUpserted for every branch (db 029)
 APP_ENV=development flask --app app lms finance-snapshot --force   # BranchFinanceSnapshot now (job: every 15 min)
+APP_ENV=development flask --app app lms refresh 12        # one admission's LMS state now (the "Refresh from LMS" button)
+APP_ENV=development flask --app app lms reconcile [--fix] # CRM ↔ LMS drift per admission; exits 1 while drift is left
 ```
 
-**Round 2 (db 027–028):** the CRM mirrors the LMS's academic state (login, LMS status, enrolment, curriculum, batches, allocations, completion, certificates) and its academic screens are read-only while `academics_managed_in_lms` is on. On a dev database that still has the CRM's own batches, run `flask --app app lms drop-crm-batches --yes` once (deletes the CRM's own batches and every allocation; refuses anything but `-dev` / `_test` databases), then `flask --app app lms pull`. Create batches in the LMS (Academic → Batches): seed batches never come through the pull. The test suite runs with `academics_managed_in_lms` off (conftest) so the CRM's own academic rules stay covered; `tests/test_lms_pull.py` turns it on.
-
-Every payment verification, admission change, course edit and money change now writes outbox rows; the LMS owner checks them in the LMS Super Admin screen **CRM sync** (`/admin/crm-sync`). Local only: never point this at real student data until the service key, transport and retention are agreed.
+The exchange with the LMS team (briefs, replies, joint test results) lives in the LMS repo's `nipuna crm-docs/` folder, not here.
 
 ### 5. Testing
 
@@ -101,10 +115,34 @@ Every payment verification, admission change, course edit and money change now w
 |---|---|---|
 | Backend | `cd backend && ../venv/bin/pytest -q` | Rebuilds `nipunacrm_test`; each test runs in a rolled-back transaction |
 | Frontend types | `cd frontend && npm run typecheck` | |
+| Frontend unit | `cd frontend && npx vitest run src` | Plain `npm test` also picks up the Playwright specs in `e2e/` and fails; run it with `src` |
+| Frontend lint | `cd frontend && npm run lint` | The repo carries thousands of older Prettier formatting errors; judge new files with `npx eslint <files> --rule 'prettier/prettier: off'` (0 errors; the `react-refresh/only-export-components` warnings match the older code) |
 | Frontend build | `cd frontend && npm run build` | Type-check + production build into `dist/` |
 | End-to-end | `cd frontend && npx playwright test` | Needs the API (dev DB) and Vite running; desktop + `@mobile` projects |
 
-E2E specs live in `frontend/e2e/` (`auth-leads`, `sales`, `finance`, `academics`, `operations`, `management`, `v4-shell`, `v4-deals`); `e2e/helpers.ts` has the staging users, `login()` and API setup helpers for the V4 flow (`qualifyAndConvert`, `approvedFee`, `acceptDeliveryPlan`, `createInvoice`, `recordPayment`, `verifyPayment`). `E2E_BASE_URL` points Playwright at another Vite port. Tests create their own records with unique phones/names, so they can be re-run without reseeding. Run one Playwright process at a time — parallel runs share `test-results/` (use `--output=<dir>` if you must run two).
+**Test notes (UX build).** Every payment by a mode other than cash now needs a proof file: in tests use `tests/helpers.py` `record_payment` (it sends a proof for every mode except CASH) or `with_proof(body)` to build the multipart request by hand. `test_operations.py::test_notification_rules` asserts the rule set with `>=` because several features add rules. New files: `test_journey.py`, `test_qualify_autotick.py`, `test_demo_slots.py`, `test_delivery_plan_ux.py`, `test_payment_ux.py`, `test_batch_waiting.py`, `test_lead360_readonly.py`. **Automatic WhatsApp round:** `test_whatsapp_auto_w1.py` (demo, admission, plan confirmation), `test_whatsapp_auto_w2.py` (instalment reminders), `test_whatsapp_auto_w3.py` (staff alerts, db 042). `TestingConfig` has `WHATSAPP_ENABLED=True`, so a test that expects the demo-reminder **task** fallback (`test_ai_jobs.py`) must patch `whatsapp.configured` to return False; with it on, the reminder is queued as messages instead. Run each agent's tests against its own test database with `TEST_DATABASE_URL=postgresql+psycopg://<user>@localhost:5432/<name>_test` so parallel runs don't drop each other's database.
+
+E2E specs live in `frontend/e2e/` (`auth-leads`, `sales`, `finance`, `academics`, `operations`, `management`, `v4-shell`, `v4-deals`, `whatsapp`); `e2e/helpers.ts` has the staging users, `login()` and API setup helpers for the V4 flow (`qualifyAndConvert`, `approvedFee`, `acceptDeliveryPlan`, `createInvoice`, `recordPayment`, `verifyPayment`). `E2E_BASE_URL` points Playwright at another Vite port. Tests create their own records with unique phones/names, so they can be re-run without reseeding. Run one Playwright process at a time — parallel runs share `test-results/` (use `--output=<dir>` if you must run two).
+
+#### A throwaway stack for e2e or a risky check
+
+Other projects use neighbouring ports on the same machine (the LMS runs on :5060, and other dev servers may hold :5174 / :5181), so check a port with `lsof -iTCP:<port> -sTCP:LISTEN` before assuming it is free. To test screens without touching `nipunacrm-dev`:
+
+```bash
+export DEV_DATABASE_URL=postgresql+psycopg://<you>@localhost:5432/nipunacrm-scratch-dev   # any *-dev name can be rebuilt
+cd backend && APP_ENV=development ../venv/bin/flask --app app create-dev-db --yes
+APP_ENV=development ../venv/bin/flask --app app seed-dev        # stops at the batches step while the LMS owns academics: staff + courses exist, which is enough
+APP_ENV=development ../venv/bin/flask --app app run --port 5051 &
+cd ../frontend && VITE_API_TARGET=http://127.0.0.1:5051 npx vite --port 5190 --strictPort &
+E2E_BASE_URL=http://localhost:5190 npx playwright test e2e/whatsapp.spec.ts --project=desktop
+# afterwards: stop both servers and `dropdb nipunacrm-scratch-dev`
+```
+
+The seed password `Nipuna-staging-1` works on a freshly seeded database. It is rejected on the long-lived `nipunacrm-dev` (those accounts were created or changed some other way), so use a scratch database rather than guessing credentials.
+
+#### Clearing test persons, leads and their records
+
+The e2e specs and manual testing create persons and leads in `nipunacrm-dev` and nowhere else (the local `nipunacrm` holds no persons or leads). Back up first: `pg_dump -Fc nipunacrm-dev -f ~/nipuna-crm-backups/<name>.dump`. Everything that hangs off a person is one set of tables (find them with the foreign-key closure of `persons`, leaving out `users`, whose `person_id` is unused for staff): admissions and their curricula / allocations / fee changes / transfers, invoices, instalments and lines, payments and allocations, correction and refund cases, deliveries and demos, fee discussions, pipeline entries, leads and their activities / objections / qualification reviews, enquiries, communications, tasks, AI actions and insights, placement profiles and applications, `whatsapp_outbox`, `whatsapp_webhook_log`, `lead_imports`, `notifications`, and the LMS outbox tables (`lms_outbox`, `lms_sync_versions`, `lms_pull_holds`, which would otherwise point at records that no longer exist). Truncate those with `RESTART IDENTITY`, then `DELETE FROM persons` (PostgreSQL refuses `TRUNCATE persons` while `users` references it). Staff accounts, courses, branches, offers, batches, settings and the audit log stay. Row deletes are refused on ledgers (payments, receipts) by design, which is why this is a truncate; code counters such as `PER-GNT-00001` keep counting. The LMS dev database keeps its students for the deleted CRM records. To also reset staff and settings, rebuild instead: `flask create-dev-db --yes && flask seed-dev`.
 
 ### 6. Docs to keep up to date
 
@@ -115,16 +153,16 @@ All documentation is four files in `docs/`:
 | [PRODUCT_GUIDE.md](PRODUCT_GUIDE.md) | Product behaviour (Part A), roles and permissions (Part B) | Change a business rule, role, screen access, approval or setting |
 | [DATABASE.md](DATABASE.md) | Migrations and the rules the schema enforces | Add or change a migration (status table + section) |
 | [API.md](API.md) | Architecture, conventions, every endpoint (Part A), execution flows (Part B) | Add or change an endpoint (endpoint table + "As built"; also `backend/api.http`) |
-| DEVELOPMENT.md (this file) | Setup and testing (A), frontend (B), deployment (C), V4 status (D), backlog (E) | Change setup or test commands, a screen or frontend convention, the server or deploy steps (C: "Applied so far"), or find a gap / make a product decision (E) |
+| DEVELOPMENT.md (this file) | Setup, LMS link and testing (A), frontend (B), deployment (C), V4 status (D), backlog (E) | Change setup or test commands, a screen or frontend convention, the server or deploy steps (C: "Applied so far"), or find a gap / make a product decision (E) |
 
-The V4 handoff PDF (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.pdf`) is the source for Part D; it is no longer in `docs/` but can be restored from git.
+Source documents (V4 handoff PDF, the AI use-cases spec, the LMS lead-to-learning guide) are not kept in `docs/`; the V4 handoff PDF can be restored from git.
 
 ### Staging accounts
 
-Login accounts for testing. Locally they exist **only in the dev database `nipunacrm-dev`**, created by `flask --app app seed-dev` (re-created on every reseed); they are not in the local `nipunacrm`. They are also loaded into the **EC2 test server's** `nipunacrm` (https://13-201-78-226.sslip.io), see [Part C (deployment)](#database).
+Login accounts for testing. Locally they exist **only in the dev database `nipunacrm-dev`**, created by `flask --app app seed-dev` (re-created on every reseed); they are not in the local `nipunacrm`. They are also loaded into the **EC2 test server's** `nipunacrm` (https://15-252-72-136.sslip.io), see [Part C (deployment)](#database).
 
 - URL: http://localhost:5173 (API on :5050 with `APP_ENV=development` — see [Part A (local development)](#4-running))
-- Password for every account: **`Nipuna-staging-1`**
+- Password for every account: **`Nipuna-staging-1`** — set by `seed-dev`, so it works on a freshly seeded database. On the long-lived `nipunacrm-dev` it was rejected in testing on 2026-10-06 (the accounts were created or changed another way); if login fails there, reseed or use a [scratch stack](#a-throwaway-stack-for-e2e-or-a-risky-check)
 
 #### One account per role
 
@@ -136,14 +174,13 @@ Login accounts for testing. Locally they exist **only in the dev database `nipun
 | Sales (counsellor) | `sales.gnt@nipuna.test` | Guntur | Counsellor Workspace |
 | Front Office | `fo.gnt@nipuna.test` | Guntur | Counsellor Workspace |
 | Accounts | `accounts.gnt@nipuna.test` | Guntur | Dashboard |
-| Academic Coordinator | `coordinator.gnt@nipuna.test` | Guntur | Dashboard |
 | Trainer | `trainer.g1@nipuna.test` | Guntur | Dashboard |
 | Placement | `placement.gnt@nipuna.test` | Guntur | Dashboard |
 | HR | `hr.gnt@nipuna.test` | Guntur | Dashboard |
 
 #### Vijayawada accounts
 
-Same roles, same password: `bm.vij`, `sales.vij`, `fo.vij`, `accounts.vij`, `coordinator.vij`, `placement.vij`, `hr.vij` (all `@nipuna.test`). Trainers: `trainer.v1@nipuna.test`, `trainer.v2@nipuna.test`. Guntur also has a second trainer, `trainer.g2@nipuna.test`.
+Same roles, same password: `bm.vij`, `sales.vij`, `fo.vij`, `accounts.vij`, `placement.vij`, `hr.vij` (all `@nipuna.test`). Trainers: `trainer.v1@nipuna.test`, `trainer.v2@nipuna.test`. Guntur also has a second trainer, `trainer.g2@nipuna.test`.
 
 #### Notes
 
@@ -164,6 +201,11 @@ Same roles, same password: `bm.vij`, `sales.vij`, `fo.vij`, `accounts.vij`, `coo
 | Sample case: ₹22,000 invoice with a ₹5,000 cash claim pending | Sana Begum · `INV-VIJ-2627-0004` — verify it on Payments & receipts | `accounts.vij` |
 | Overdue instalment with a promise to pay | Divya Sree · `INV-GNT-2627-0002` (Collections) | `accounts.gnt` |
 | Long payment gap | Charan Teja (Performance tab → Long-gap plans) | `accounts.vij` |
+| Front Office queue (first attempts, post-demo decision) | My work → Today | `sales.gnt`, `fo.gnt` |
+| Lead workbench: suggested action, Save outcome, reply draft | Bhavana Sri · `LD-00011` (Guntur, new enquiry) | `sales.gnt` |
+| Ready-to-close checklist on a deal | Karthik Reddy · `LD-00012` (Vijayawada, fee discussion) | `sales.vij` |
+| Batches offered to a lead (LMS timetable, Blocked reason) | Any Guntur Java Full Stack lead (batch `NIT-GNT-BAT-2026-000004`) | `sales.gnt` |
+| Sales knowledge, course paths, AI controls, recovery lists, measures | More → Sales playbook | `bm.gnt` (also approves course paths) |
 
 ---
 
@@ -215,7 +257,8 @@ frontend/
 | Leads, Lead 360 (`/leads`, `/leads/$leadId`) | `/leads*` (Active leads by default; `lead_status` filter), `/saved-views`, `/lead-imports`, `/persons`, `/staff`, `/pipeline-entries/{id}` | leads |
 | Counsellor workspace, Pipeline, Demos, Fee discussion, Discount approvals | `/leads/workspace`, `/pipeline` (person cards), `/pipeline-entries*`, `/demos*`, `/fee-discussions*`, `/special-closing-requests*` | sales |
 | Invoices, Payments, Collections, Refunds | `/invoices*`, `/payments*`, `/correction-requests*`, `/collections/*`, `/payment-promises*`, `/refund-cases*` | finance |
-| Admissions, New admission, Batches, LMS access, Students / Student 360, Course Master | `/admissions*`, `/batches*`, `/curriculum-versions*`, `/students*`, `/documents*`, `/courses*`, `/payment-plans*` | academics |
+| Admissions, New admission, Batches, LMS access, Students / Student 360, Course Master | `/admissions*`, `/batches*`, `/students*`, `/documents*`, `/courses*`, `/payment-plans*` | academics |
+| My work (Today / Queues / Handover), Lead workbench, Sales playbook (`/sales-playbook`) | `/my-work/*`, `/leads/{id}/workbench`, `/leads/{id}/outcome`, `/reply-draft`, `/messages`, `/sales-knowledge*`, `/course-paths*`, `/ai/controls*`, `/recovery-lists*`, `/reports/sales-playbook`, `/persons/{id}/course-suggestions` | playbook |
 | My work, Workflow guide, Tasks, Communications, Notifications, Placement & Alumni | `/tasks*`, `/communications*`, `/notifications*`, `/companies`, `/job-*`, `/alumni` | operations |
 | Dashboard (Overview / Performance), Branch Manager, Reports, Target Master, Offer Master, Admin / Settings, AI Copilot, Ask Nipuna, More | `/dashboard*` (incl. `/dashboard/overview`), `/reports*`, `/targets*`, `/offers*`, `/users*`, `/settings`, `/integrations`, `/incidents`, `/audit-log`, `/ai/*` | management |
 
@@ -224,13 +267,13 @@ frontend/
 From the V4 handoff ([Part D (V4 plan)](#part-d--v4-handoff-plan-and-review), Phases 1 and 9). `prototype/` is no longer the visual reference; the published V4 UI is.
 
 - **Theme tokens** (`src/styles.css`, `:root`): Open Sans (Google Fonts, `index.html`); `--primary #6251DA`, `--background #F8F9FC`, `--border #E7E9F0`, `--radius 0.75rem`, white sidebar; lead-chip and WhatsApp colours as `--lead-*` / `--whatsapp*`. A `.dark` token set exists for later. Cards (`.panel`, `.metric-card`): white, 1px border, 12px radius. Buttons 8px radius; tabs are underline tabs (`components/ui/tabs.tsx`); tables have a light header row and no uppercase.
-- **Sidebar** (`auth/access.ts` `NAV_GROUPS`, gated with `allowed()`): Workspace (Overview, My work, AI assistant) · Sales (Leads, Deal pipeline, Demos & counselling) · Learning (Students, Admissions, Batches, LMS access) · Finance (Invoices, Payments & receipts, Collections, Refunds) · Operations (Tasks, Communications, Placement & alumni, Reports) · More (`MORE_ITEMS`: Persons, Counsellor Workspace, Branch Manager, Discount Approvals, Offer / Target / Course Master, Notifications, Ask Nipuna, Admin / Settings) · Workflow guide pinned at the bottom with the signed-in person. Leads shows the new-enquiry count, Payments & receipts the claims awaiting verification. No "SAMPLE DATA" banner.
+- **Sidebar** (`auth/access.ts` `NAV_GROUPS`, gated with `allowed()`): Workspace (Overview, My work, AI assistant) · Sales (Leads, Deal pipeline, Demos & counselling) · Learning (Students, Admissions, Batches, LMS access) · Finance (Invoices, Payments & receipts, Collections, Refunds) · Operations (Tasks, Communications, Placement & alumni, Reports) · More (`MORE_ITEMS`: Persons, Counsellor Workspace, Branch Manager, Discount Approvals, Offer / Target / Course Master, Notifications, Sales playbook, Ask Nipuna, Admin / Settings) · Workflow guide pinned at the bottom with the signed-in person. Leads shows the new-enquiry count, Payments & receipts the claims awaiting verification. No "SAMPLE DATA" banner.
 - **Header**: person search (sales roles), branch switcher ("All Branches", locked for single-branch users), Ask Nipuna (managers), notifications, account avatar menu.
-- **Phone** (< 768px): bottom bar of five items from `mobileNavItems(roles)` — sales roles Home / Leads / Pipeline / Payments / AI; Accounts Home / Invoices / Payments / Collections / Tasks; coordinators and trainers Home / Admissions / Batches / Tasks / Students; others Home / Tasks / Students / Alerts / More. The sidebar opens from the header. Checked at 360 and 390 px (no horizontal page scroll). `<DataTable stack>` turns a table into labelled cards on phones (opt-in).
+- **Phone** (< 768px): bottom bar of five items from `mobileNavItems(roles)` — sales roles Home / Leads / Pipeline / Payments / AI; Accounts Home / Invoices / Payments / Collections / Tasks; trainers Home / Admissions / Batches / Tasks / Students; others Home / Tasks / Students / Alerts / More. The sidebar opens from the header. Checked at 360 and 390 px (no horizontal page scroll). `<DataTable stack>` turns a table into labelled cards on phones (opt-in).
 - **Shared components** (`components/crm/ui.tsx`): `LeadChip({ value, label? })`, `PriorityChip({ priority, score? })` and `leadTone(value)` — dot + text in the lead colours (Hot / New / New Enquiry green, Warm amber, Cold blue, Waiting for Batch / Future Joining violet); `Status` renders lead priorities and "New Enquiry" as lead chips automatically. `KpiCard` (label, tinted icon, value, hint, link), `StatTile` (label + count, optional filter toggle), `Avatar`, `WhatsAppButton`; Button variant `whatsapp` (`#25D366` / `#083E20`). `PageHead` takes an `eyebrow` (defaults to the branch scope).
 - **Overview** (`/dashboard`, `features/management/overview.tsx`): tabs Overview / Performance (`?tab=performance`). Overview: four KPI cards (open enquiries, admissions, verified collections, outstanding balance), verified collections per day for the last 7 days (net of reversals), admission pipeline bars with open opportunity value (the pipeline rule: approved fee, else the course's standard fee), "Your attention" tabs (follow-ups due, payment claims, admissions awaiting a batch — each shown only to roles that can open the screen) and branch pulse. Data: `GET /dashboard/overview` (`api/overview.ts`) plus the existing leads / payments / admissions lists. Performance holds every earlier KPI (incl. Long-gap plans), funnel, branch comparison, targets, approvals and the AI brief. `/branch-manager` keeps the performance layout.
 - **Leads**: snapshot tiles (All enquiries / New enquiries / In counselling / Payment review) that set the lead status / stage filter; V4 table (lead, course / source, owner, stage, intake, follow-up, priority, call / WhatsApp); phone cards from `features/workspace/lead-parts.tsx`.
-- **New screens** (`features/workspace/`): **LMS access** (`/lms-access`, roles as Admissions) — admissions with curriculum, LMS and enrolment status, status tiles and filters, read-only (`api/lms.ts` over `GET /admissions`); **My work** (`/my-work`, all staff) — the Counsellor Workspace queues (own leads for counsellors, branch scope for managers) plus the user's open tasks; roles without leads access see tasks only; `/counsellor` still works; **Workflow guide** (`/workflow-guide`, all staff) — the ten steps from Capture to LMS review, "record truth" definitions and where each step happens.
+- **New screens** (`features/workspace/`): **LMS access** (`/lms-access`, roles as Admissions) — admissions with LMS and enrolment status, status tiles and filters, read-only (`api/lms.ts` over `GET /admissions`); **My work** (`/my-work`, all staff) — sales roles get three views: **Today** (the playbook's one ordered queue, `features/workspace/today.tsx`), **Queues** (the Counsellor Workspace tabs) and **Handover**; plus the user's open tasks. Roles without leads access see tasks only; `/counsellor` still works; **Workflow guide** (`/workflow-guide`, all staff) — the ten steps from Capture to LMS review, "record truth" definitions and where each step happens.
 
 ### 3b. V4 deals, invoices and receipts
 
@@ -248,6 +291,37 @@ From the V4 handoff, Phases 2–8 ([Part D (V4 plan)](#part-d--v4-handoff-plan-a
 | New Admission | Eligibility review over `GET /admissions/eligibility` with a manual Create admission fallback | `features/academics/new-admission.tsx` |
 | Collections | Dues rows show the invoice's courses and how many are admitted; promises are per invoice (also before admission) | `features/finance/collections-page.tsx` |
 
+### 3c. Sales playbook screens (CRM AI v2.0)
+
+| Screen | What it adds | Files |
+|---|---|---|
+| My work → Today / Handover | Ordered queue by tier (service deadlines → new / demos / replies → post-demo / follow-ups → future / reactivation), refreshed every minute; handover list with cover-task dialog | `features/workspace/today.tsx`, `my-work.tsx` |
+| Lead 360 workbench | Right column: *What we know* (+ edit need), first-attempt clock and contact counters, suggested next action (Use / Edit / Ignore / Remind later), **Save outcome** (replaces the old follow-up form), Ready-to-close checklist, batches for the course, approved content; tabs Objections and the AI tab's counselling brief; reply-draft dialog that opens WhatsApp and records "Manually recorded" | `features/leads/workbench.tsx`, `lead-360.tsx` |
+| Person 360 | *Useful next course* cards for students (Discussed / Ignore / Remind later; "Interest confirmed: add lead" pre-fills the new-lead dialog) | `features/persons/course-suggestions.tsx` |
+| WhatsApp messages (`/whatsapp`, Operations) | Status tiles (Queued / Sent / Delivered / Read / Failed / Skipped, click to filter), banners when sending is off or limited to test numbers, search, category and status filters, a table of learner · template · message preview · status · branch, a detail dialog with the exact text, error or skip reason and timestamps, and Retry for Failed / Skipped (managers, Accounts, admins; a lost provider answer asks the user to confirm the learner did not receive it). Visible to the lead roles and Accounts | `features/operations/whatsapp-messages.tsx`, `whatsapp-shared.tsx`, `api/whatsapp.ts`, `routes/whatsapp.tsx` |
+| Person 360 · WhatsApp tab | Overview and WhatsApp tabs; the WhatsApp tab has the consent card (status, who, when, source; Record / Update / Withdraw) and the conversation (what was sent with its status, the learner's replies) | `features/persons/whatsapp-tab.tsx`, `person-360.tsx` |
+| Lead 360 · Send template | Beside the green wa.me button: pick one of the four marketing templates, the course (when the lead has none) and interest; consent status shown, Send disabled without Explicit Consent, with an inline Record consent; server rules shown as returned | `features/leads/send-template-dialog.tsx`, `lead-360.tsx` |
+| Sales playbook (`/sales-playbook`, More) | Tabs: Knowledge & templates, Course paths, AI controls, Recovery lists, Measures | `features/management/sales-playbook.tsx`, `api/playbook.ts` |
+
+These were checked by hand with Playwright (desktop and 390 px, no console errors); they have no e2e spec yet.
+
+### 3d. Smooth lead → batch screens (UX build)
+
+| Screen | What it adds | Files |
+|---|---|---|
+| Lead 360 · next-step bar | Sticky stepper + the one next action, Fix it, Continue to next step, trail after admission; reads `GET /leads/{id}/journey`; route `/leads/$leadId` search param `action` opens a dialog once; hover help `<Term name="…">` | `features/leads/next-step-bar.tsx`, `components/crm/term.tsx` |
+| Quick-add lead | Name, Mobile, Course, Source; More details; phone lookup as you type | `features/leads/new-lead-dialog.tsx` |
+| Qualification · follow-up chips | System ticks; `QualificationPanel` takes optional `onQualified` (default opens ConvertDialog); chips + `useStaffedInTwoHours` | `features/leads/qualification.tsx`, `follow-up-chips.tsx`, `workbench.tsx` (OutcomeForm) |
+| Demo booking · outcome | `BookDemoDialog({ lead, onClose })` slot picker; `DemoOutcomeDue` and exported `OutcomeDialog` on My work | `features/sales/demo-booking.tsx`, `demos-page.tsx` |
+| Pipeline card | Next step, blocker, days in stage, Do it. The link uses `search={{action}}` cast `as never` until the Lead 360 route declares `validateSearch` for `action` | `pipeline-board.tsx` |
+| Fee discussion | Two-step screen, offer choice, live approval status, `FeeValidity({ validity })` | `features/sales/fee-validity.tsx`, `deal-panels.tsx` (`DeliveryPlanPanel`, props kept stable) |
+| Record payment | `RecordPaymentDialog({ invoiceId, open, onOpenChange })`, `tokenFirstSplit`, `admitHint`; `ClaimReviewDialog` replaces the old VerifyDialog; `/payments` search param `verify`; `/invoices/$invoiceId` search param `next` (`record-payment`); `fetchProof` | `features/finance/record-payment.tsx`, `shared.tsx`, `api/payments.ts` |
+| Waiting for batch (`/waiting-for-batch`, Learning) | Admitted students without a batch, delay chip, Open in LMS | `features/academics/waiting-for-batch.tsx`, `api/batch-waiting.ts`, nav entry in `auth/access.ts` |
+| Person 360 · journey strip | One row per course, reads the journey per lead | `features/persons/journey-strip.tsx`, `api/person-journey.ts` |
+| Lead 360 read-only | `rolesForPath` special-cases `/leads/<digits>` in `auth/access.ts`; Lead360 uses `readOnly = !hasRole(...SALES_SIDE)`; "Open lead" links on admission detail and the claim review | `features/academics/admission-detail.tsx`, `features/finance/shared.tsx` |
+
+Backend: `services/journey.py`, `demo_slots.py`, `batch_waiting.py` (+ controller and route), route helper `lead_read_route` / `LEAD_READ_ROLES` in `routes/leads.py`, `services/whatsapp.queue(…, to_phone=…)`.
+
 **Print:** `@media print` in `styles.css` shows only the invoice document (`.print-only-doc` / `.invoice-doc-wrap`) or an open dialog's document (receipts), A4 with backgrounds. The e2e spec `v4-deals.spec.ts` checks the printed page and generates a real PDF with Chromium.
 
 ### 4. Definition of done (every screen)
@@ -263,7 +337,7 @@ From the V4 handoff, Phases 2–8 ([Part D (V4 plan)](#part-d--v4-handoff-plan-a
 
 The API runs against `nipunacrm-dev` (`APP_ENV=development`); `nipunacrm` is never touched by local development or tests. Setup, staging accounts, run and test commands: [Part A (local development)](#part-a--local-development).
 
-Current status (29 Sep 2026, V4): every route is connected to the API; the e2e suite (incl. `v4-shell` and `v4-deals`) passes on desktop and phone width against a freshly seeded dev database.
+Every route is connected to the API. The e2e suite (incl. `v4-shell` and `v4-deals`) last passed in full on 29 Sep 2026 (V4); the LMS and playbook screens added since are covered by backend tests and manual Playwright checks only.
 
 Commands: [Part A §5 Testing](#5-testing). `npm run dev` (Vite, HMR on :5173) also regenerates `src/routeTree.gen.ts`.
 
@@ -287,8 +361,7 @@ Gaps still open are listed in [Part E (backlog)](#part-e--backlog).
 
 ### 8. Later
 
-- Production build + reverse proxy config (nginx: `dist/` + `/api` → gunicorn).
-- AI features on the chosen LLM (OpenAI / LangSmith keys are in `.env`, not used yet).
+- e2e specs for the LMS and playbook screens.
 - File storage for documents in production and the other open decisions in [Part E (backlog)](#part-e--backlog).
 
 ---
@@ -329,7 +402,7 @@ How the test server is built, how to redeploy to it, and how to run it day to da
 | OS | Ubuntu 24.04 LTS, timezone Asia/Kolkata |
 | Disk | 20 GB gp3 |
 | Public address | Auto-assigned public IPv4, **no Elastic IP**, so it **changes on every stop/start** (see section 5) |
-| URL | **https://13-201-78-226.sslip.io** (sslip.io maps the dashed IP to the address; HTTP redirects to HTTPS) |
+| URL | **https://15-252-72-136.sslip.io** (sslip.io maps the dashed IP to the address; HTTP redirects to HTTPS) |
 | TLS certificate | Let's Encrypt via certbot (nginx plugin), registered without an email, auto-renewed by `certbot.timer`. It is tied to the hostname, so it has to be re-issued when the IP changes |
 | Security group | `sg-02132530c3cbda43c` (`nipuna-crm-test`): 22 from the developer's IP only, 80 and 443 from anywhere. 5432 is not open |
 | SSH key | `~/.ssh/nipuna-crm-test` (AWS key pair `nipuna-crm-test`) |
@@ -354,7 +427,7 @@ open https://${IP//./-}.sslip.io
 | `/srv/nipuna/venv` | Python 3.12 venv (`requirements.txt` + gunicorn) |
 | `nipuna.service` (systemd) | gunicorn, 2 workers, `127.0.0.1:5050`, restarts automatically |
 | `/etc/nginx/sites-available/nipuna` | Port 443 (certbot-managed TLS, port 80 redirects): static frontend with SPA fallback to `index.html`, `/api/` → `127.0.0.1:5050`, 10 MB upload limit |
-| `ubuntu` crontab | `flask --app app jobs run` every minute → `/srv/nipuna/jobs.log` |
+| `ubuntu` crontab | `flask --app app jobs run` every minute → `/srv/nipuna/jobs.log` (this runs **every registered job**, so the new `fee-expiry` and `batch-delay-alerts` need no extra line; `batch-delay-alerts` is working-day based, so `flask --app app jobs run batch-delay-alerts` hourly is also enough). Once the LMS link is live, add `flask --app app lms worker --duration 55` every minute too (delivery every 10 s, pull every minute) |
 
 #### Database
 
@@ -403,9 +476,19 @@ $KEY ubuntu@$IP 'cd /srv/nipuna && set -a && . backend/.env && set +a &&
   psql "${DATABASE_URL/+psycopg/}" -v ON_ERROR_STOP=1 --single-transaction -f db/017_<name>.sql'
 ```
 
-Applied so far: `001` to `016`.
+Applied so far: `001` to `039`, `042`, `043`, `044` and `045` (applied 10 Oct 2026; the pre-V4 backup is `/srv/nipuna/backups/nipunacrm-before-v4-2026-10-10.dump`). `040` and `041` are not used.
 
-**Pending for the V4 review deploy (not applied yet — only on the user's go-ahead):** `017` to `025`, in order, each with `--single-transaction`. Take a `pg_dump` backup first (section 4): 019–022 rewrite the pipeline, invoice and payment triggers and backfill existing rows (one-line invoices, payment allocations, transaction numbers; pending receipts lose their receipt numbers until verified). 017–022 were rehearsed on a copy of the local main database (023–025 only relax admin role checks) and replayed from scratch against `nipunacrm-dev` (schema diff 0). The staging seed on the server predates V4; reload it only if asked (`create-dev-db` refuses non-dev names, so it would be a manual rebuild).
+**Applied on 10 Oct 2026** (notes on what each file does and what the server still needs, e.g. LMS or WhatsApp settings):
+
+- **017–025 (V4):** 019–022 rewrite the pipeline, invoice and payment triggers and backfill existing rows (one-line invoices, payment allocations, transaction numbers; pending receipts lose their receipt numbers until verified). Rehearsed on a copy of the local main database; 023–025 only relax admin role checks.
+- **026–030, 032 (LMS link):** useful only once the LMS is reachable from the server, with `LMS_BASE_URL` / `LMS_SERVICE_KEY` in the server `.env` and the `lms worker` cron line. Then `flask lms backfill` and `flask lms pull --full`. 028 sets `academics_managed_in_lms` on.
+- **034 (WhatsApp phases 2–4):** adds `application_code` to placement applications, `persons.whatsapp_consent*` (everyone starts at Not Recorded: record or import consent before marketing templates reach anyone) and `whatsapp_webhook_log`. Set `WHATSAPP_WEBHOOK_TOKEN`, give Pinbot the public URL `https://<server>/api/v1/webhooks/whatsapp` with that token, then read `whatsapp_webhook_log` after the first real callbacks to confirm the format.
+- **033 (WhatsApp outbox):** adds `whatsapp_outbox`. On the server set `WHATSAPP_API_URL`, `WHATSAPP_API_KEY` and (until go-live) `WHATSAPP_TEST_NUMBERS` in `.env`, switch `WHATSAPP_ENABLED=1`, and add `flask jobs run whatsapp-send` to the every-minute cron. Messages are queued even while it is off; when it is switched on, only those still under `WHATSAPP_MAX_AGE_HOURS` old are sent and older ones are Skipped.
+- **042 (staff WhatsApp alerts):** adds `whatsapp_outbox.recipient_user_id` and turns `whatsapp_staff_alerts_enabled` on by default (040 and 041 are not used). Staff need a number in `users.phone`; test numbers still gate every send.
+- **035–039 (UX build):** 035 lets a qualification tick be made by the system; 036 and 038 add notification rules; 037 adds the preferred batch, acceptance method and confirmation request to delivery plans; 038 adds `whatsapp_staff_alerts_enabled` (false); 039 adds `working_days_between()` and the four batch-delay settings. On the server add `LMS_WEB_URL` to `.env`. The `fee-expiry` and `batch-delay-alerts` jobs run from the existing every-minute cron. The two new WhatsApp templates (`nipuna_delivery_plan_confirm_v1`, `nipuna_staff_payment_status_v1`, both Utility) need Pinbot approval before sending is switched on, and so do the 12 added by the automatic WhatsApp round ([list](#templates-to-submit-to-pinbot)).
+- **031 (playbook):** seeds the six reply templates as Approved (attributed to the first Founder / Super Admin, who exists on the server) and five course paths as Draft; adds the `first-attempt` job's rules.
+
+All files replay from scratch against `nipunacrm-dev` with a schema diff of 0. The staging seed on the server predates V4; reload it only if asked (`create-dev-db` refuses non-dev names, so it would be a manual rebuild).
 
 ---
 
@@ -470,6 +553,8 @@ aws ec2 start-instances --profile nipuna --instance-ids i-0f56f0778b34411e7
 | AI Copilot | No `ANTHROPIC_API_KEY` in the server `.env`, so the rule-based fallback is used |
 | Fixed address | No Elastic IP or domain, so the URL and certificate change on restart. For a stable address: own domain + Elastic IP, then the same certbot command |
 | Automated backups | Manual `pg_dump` only |
+| LMS link | Migrations applied, but `LMS_BASE_URL` / `LMS_SERVICE_KEY` are not in the server `.env`, so the LMS jobs skip; no LMS reachable from the server |
+| WhatsApp | Switched on 10 Oct 2026 with `WHATSAPP_TEST_NUMBERS` set (only those numbers are messaged). Not set: `WHATSAPP_WEBHOOK_TOKEN`, so delivery callbacks and replies do not arrive. Templates without Pinbot approval fail with `(#132001)` |
 
 ---
 
@@ -490,10 +575,7 @@ This is how the current one was built (27 Sep 2026). Check the account first.
 
 ## Part D — V4 handoff: plan and review
 
-Plan for bringing the app in line with the V4 handoff PDF (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.pdf`, in git history).
-Status: **built on `nipunacrm-dev` (29 Sep 2026) — Phases 1–9 done, Phase 10 done except the AWS review deploy**
-(waiting for the go-ahead; see [Part C (deployment)](#part-c--test-deployment-aws-ec2)). Migrations 019–025; nothing committed. The main `nipunacrm`
-database, commits and AWS deploys happen only when asked. Results against the handoff checklist: [V4 developer response](#v4-developer-response).
+The V4 UI handoff (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.pdf`, in git history). **Built on `nipunacrm-dev` on 29 Sep 2026**; only the AWS review deploy is outstanding (on the go-ahead, see [Part C](#new-migrations)). Results against the handoff checklist: [V4 developer response](#v4-developer-response).
 
 | Phase | Status | Where |
 |---|---|---|
@@ -508,146 +590,14 @@ database, commits and AWS deploys happen only when asked. Results against the ha
 | 9. New screens | ✅ | Part B §3a |
 | 10. Acceptance and handover | ✅ tests, seed, docs, review · ⏳ AWS deploy | V4 developer response (below) |
 
-### What we take from V4, and where we differ on purpose
+**Taken from V4:** multi-course invoices with per-course payment allocation, the per-course delivery plan, receipt numbers issued only at verification, the full visual redesign and the Open Sans font. **Kept as our own design:** see [Intentional differences from V4](#intentional-differences-from-v4). **Left out:** the "SAMPLE DATA" banner and anything V4 only simulates.
 
-**Taken from V4:** multi-course invoices with per-course payment allocation, the per-course delivery plan, receipt
-numbers issued only at verification, the full visual redesign, and the Open Sans font.
+Decisions made while building, kept for the record (open ones are D8–D11 in [Part E](#part-e--backlog)):
 
-**Kept as our own design** (intentional deviations — tell the V4 reviewer): see [Intentional differences from V4](#intentional-differences-from-v4) below.
-
-**Left out:** the "SAMPLE DATA" banner (demo only) and anything V4 simulates (contact actions, AI, LMS provisioning).
-
-### Phases
-
-Each phase ends with a working app, backend tests, e2e tests and updated docs.
-Sizes are relative: S ≈ a day, M ≈ 2–3 days, L ≈ a week.
-
-#### 1. Look and shell (L)
-
-- **Theme:** Open Sans; `#6251DA` accent and `#F8F9FC` page background as theme tokens; V4's cards, buttons and chips.
-- **Sidebar:** V4's groups and names —
-  - Workspace: Overview, My work, AI assistant
-  - Sales: Leads, Deal pipeline, Demos & counselling
-  - Learning: Students, Admissions, Batches, LMS access
-  - Finance: Invoices, Payments & receipts, Collections, Refunds
-  - Operations: Tasks, Communications, Placement & alumni, Reports
-  - plus a Workflow guide
-- **Mobile:** bottom nav bar (Home / Leads / Pipeline / Payments / AI); layouts checked at 360 and 390 px.
-- **Lead colours:** chips with a dot and a text label —
-  Hot / New `#E8F8EE` / `#167341` / dot `#1A9B52`; Warm `#FFF2D6` / `#925600` / `#D89314`;
-  Cold `#EAF2FF` / `#2459A6` / `#3476CC`; Future joining `#F0EAFA` / `#7445A4` / `#9562C7`.
-- **WhatsApp:** buttons in `#25D366` with text `#083E20`.
-- **Overview dashboard:** four KPI cards, collections chart, admission pipeline bars, "Your attention" tabs and branch
-  pulse. Existing KPIs stay, including Long-gap plans.
-
-#### 2. Qualify and convert (M · DB 019)
-
-- **Qualification checklist:** a table of the six checks (genuine intent; reachable contact; intended course(s)
-  understood; branch and delivery mode discussed; exact next action agreed; possible identity match reviewed — never
-  auto-merged), with who reviewed each and when. "Mark Qualified" needs all six ticked. It never changes the stage.
-- **Convert to deal:** `POST /leads/{id}/convert` with courses (several allowed), branch, owner and expected close date;
-  only for a qualified lead.
-  - Reuses the person. Creates a lead for each extra course; a course that is already open is returned, not duplicated.
-  - Moves the courses to Counselling, so the person's card opens or they join it.
-  - Creates no admission, receipt or LMS access.
-- **Pipeline rule change:** a lead joins the pipeline **only through Convert**, no longer on its first stage change
-  (replaces 017's rule). The expected close date is stored on the card.
-- **Lead 360 action row:** phone number, Call, WhatsApp, Email and Convert to deal, wrapping on mobile; the checklist
-  panel sits on the right.
-- **Existing cards and leads** are treated as already converted.
-
-#### 3. Pipeline screen (M)
-
-- **Seven stage chips:** Counselling, Demo scheduled, Demo attended, Fee discussion, Payment review, Admitted, Closed
-  lost. Counts are for the selected branch; clicking a chip filters the board; "Show all stages" clears it.
-- **Board columns:** Counselling | Demo | Fee discussion | Payment review, plus Admitted and Lost columns when those
-  chips are chosen. List view as well.
-- **Cards:** person, courses, value (sum of approved or standard fees), delivery-plan status, owner, expected close.
-- **Header:** open opportunities, open value, number admitted.
-- **Next actions** (`GET /pipeline/next-actions`, per branch), each with a "Review deal" link: review payment evidence,
-  record demo outcome, confirm delivery plan, prepare invoice, follow up balance.
-
-#### 4. Delivery plan per course (M · DB)
-
-- **Fields:** `DP-00001` code, service branch, mode, seat type (Confirmed Seat / Future Plan, kept from today), planned
-  start date, capacity review (checked / waiting), "student acceptance captured" tick, accepted by and when.
-- **Replaces** today's accept-plan on the fee discussion; existing data is migrated.
-
-#### 5. Multi-course invoice with per-course payments (L+ · DB — biggest and riskiest phase)
-
-- **Invoice lines:** one row per course with its lead, fee version and amount. The invoice holds the person, branch,
-  total and schedule.
-- **Create invoice dialog** (from the card or the course):
-  - Issuer preview: issuing branch and its address.
-  - Courses: only eligible ones can be ticked — same person and branch, approved version, accepted delivery plan, not
-    yet invoiced, not lost.
-  - Schedule: the flexible 1–3 instalments move here from the fee version and apply to the invoice total.
-  - After creating, the invoice opens and each included course shows "View invoice".
-- **Branch details:** address, phone and email columns on branches (admin-editable, seeded with the two addresses in
-  the PDF). Each invoice keeps a snapshot, so later branch edits never change an issued invoice.
-- **Payments:** a payment can be split across course lines; a split checkout creates one pending transaction per
-  tender; no line can be paid beyond what is left on it.
-- **Balances:** each course line has its own balance. Instalment dues stay at invoice level; money covers the oldest
-  instalment first.
-- **Also reworked for lines:** fee changes, refunds, corrections, advances, collections and reports.
-
-#### 6. Payments and receipts (M · DB)
-
-- **Record payment:** gets a `TXN-GNT-00001` number; Payments opens with the invoice preselected (`/payments?invoice=`).
-- **Verify:** the receipt number `GNT-R-2627-00001` is issued only here. Two confirmations: evidence reviewed, and an
-  independent check for cash.
-- **Receipt:** printable document. A pending payment shows as a "Payment claim" with no receipt number.
-
-#### 7. Automatic admission (M · DB)
-
-- **When:** on verification, each course line with an accepted delivery plan and at least ₹1,000 verified (or its
-  whole amount, if smaller) gets its admission — once, reusing the person / student.
-- **New Admission** becomes an eligibility review screen. Complimentary courses stay manual.
-
-#### 8. Branch invoice templates (M)
-
-- **Colours:** Guntur violet `#6251DA`, Vijayawada teal `#137E89`.
-- **Contents:** issuer block, bill-to, course lines, payment terms, totals, verified paid, balance, instalment cards,
-  verified receipts.
-- **Print:** print preview that saves to PDF; real PDF output is checked.
-- **Mobile:** tables become stacked cards.
-- **Tax and bank details:** only once approved values are provided.
-
-#### 9. New screens (S–M)
-
-- **LMS access:** admissions with their LMS status, read-only.
-- **My work:** the counsellor's queue plus their tasks.
-- **Workflow guide:** static page.
-
-#### 10. Acceptance and handover (M)
-
-- Backend tests, e2e tests and seed update; every item in the PDF's acceptance checklist, including the sample case:
-  ₹22,000 invoice → ₹5,000 pending shows ₹0 paid and ₹22,000 balance → after verification one receipt, ₹5,000 paid,
-  ₹17,000 balance.
-- Docs updated, deployment to the AWS test server as the review URL, and a gap report.
-
-### Build order
-
-1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10. Phase 1 is independent and can run alongside Phases 2 and 3.
-
-### Decisions made while building (confirm — also in [Part E (backlog)](#part-e--backlog) D8–D11)
-
-- A new enquiry for a person who already has an open card **stays in Leads** until it is converted (017 used to put it on the card straight away).
-- Converting onto an existing card **keeps that card's owner**; the dialog's owner applies to a new card.
+- A new enquiry for a person who already has an open card **stays in Leads** until it is converted.
 - **Re-issue:** an invoice no longer supersedes an earlier one automatically; cancel the unpaid invoice first (its courses become invoiceable again).
-- **Promises to pay** belong to the invoice (all its courses), and work before admission.
 - The **receipt numbers** that pending / failed payments had been given at recording were cleared by 022 (they were never receipts); verified ones kept theirs.
 - An automatic admission the database refuses (e.g. offer already used) is **skipped with a Branch Manager task** and stays on the eligibility review.
-
-### Open questions (recommended default used unless decided otherwise)
-
-1. **Before conversion:** can a lead get a demo or fee discussion before it is converted? Default: **no** — booking a
-   demo or starting fees on an unconverted lead asks to qualify and convert first, matching V4's order.
-2. **Admitted / Closed-lost chip counts:** all-time per branch, or this period only? Default: **all-time**, as in V4.
-3. **LMS access:** default **read-only list**; V4's provisioning and recovery flow waits for a real LMS.
-4. **Tax, GSTIN and bank details on invoices:** default **left off** until approved.
-
----
 
 ### V4 developer response
 
@@ -655,9 +605,9 @@ Response to the V4 handoff PDF (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.p
 
 | | |
 |---|---|
-| **Review URL** | Not deployed yet. The build runs on the development database (`nipunacrm-dev`); the AWS test server gets it on the go-ahead (migrations 017–025, see [Part C (deployment)](#part-c--test-deployment-aws-ec2)). |
+| **Review URL** | Deployed to the AWS test server on 10 Oct 2026 (migrations 017–039, 042, 043; see [Part C (deployment)](#part-c--test-deployment-aws-ec2)). The URL changes whenever the instance is restarted. |
 | **Built** | 29 Sep 2026 — live CRM (Flask API + PostgreSQL + React), not a demo: real permissions, branch scoping, persistence and document numbers |
-| **Tests** | Backend 205 passed · end-to-end 83 passed (3 device-specific skips), 0 failed, on desktop (1440 px) and phone (Pixel 7; 360 px checks) against a freshly seeded database |
+| **Tests** | At handoff: backend 205 passed · end-to-end 83 passed (3 device-specific skips), 0 failed, on desktop (1440 px) and phone (Pixel 7; 360 px checks) against a freshly seeded database. Backend now: 266 |
 
 #### Acceptance checklist (handoff page 4)
 
@@ -684,7 +634,7 @@ Response to the V4 handoff PDF (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.p
 | 3. Create invoice | One or more compatible courses; issuer snapshot; no admission created |
 | 4. Record payment | Payment claim (`TXN-…`), allocated per course, one per tender; balance unchanged |
 | 5. Verify payment | Evidence reviewed (+ cash check); receipt issued; each course reaching ₹1,000 verified is admitted, reusing one person / student |
-| 6. Grant LMS access | Separate: LMS access screen is a read-only status list (no live LMS) |
+| 6. Grant LMS access | Separate: every admission is sent to the Nipuna LMS, which creates the login and enrolment (dev); the LMS access screen shows the mirrored status |
 
 #### Intentional differences from V4
 
@@ -702,9 +652,10 @@ Response to the V4 handoff PDF (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.p
 | Item | State |
 |---|---|
 | Tax / GSTIN and bank details on invoices | Left off until approved values are provided |
-| LMS provisioning and recovery (V4 "Review Recovery", "Safe retry") | Not built — read-only LMS status list until a real LMS exists |
-| AI assistant suggestions | Rule-based fallback; LLM not connected |
-| HDFC / WhatsApp / email / telephony integrations | Not connected (as in V4) |
+| LMS provisioning and recovery (V4 "Review Recovery", "Safe retry") | Built since, as the LMS link (dev): outbox with retries, status pull, refresh button, drift check ([API.md · Steps 22–23](API.md#step-22--lms-sync-outbox--dev-only)) |
+| AI assistant suggestions | Claude when `ANTHROPIC_API_KEY` is set; rule-based without (no key configured yet) |
+| HDFC / email / telephony integrations | Not connected (as in V4). WhatsApp: template messages go out (see the row above); inbound messages and the WhatsApp inbox are not connected |
+| WhatsApp | All four phases built (dev) — 20 approved templates, 19 with an event (benefit request has none: no such record in the CRM), the outbox and sender, delivery-status and reply callbacks, the message list / retry / consent / marketing endpoints and screens ([API.md · Step 25](API.md#step-25--whatsapp-messages-outbox--dev-only)). **Not done:** the provider's real callback format is unverified (the log shows it after the first callbacks); marketing consent is empty for existing people; no bulk campaigns (marketing is one lead at a time by design); WhatsApp is not yet running on the AWS test server |
 | Header "Search anything ⌘K" | Header search finds persons; the all-records palette is not built |
 | Independent cash check | A recorded tick; the verifier is not yet required to be a different person from the collector |
 | Decisions to confirm | Demos / fees only after conversion; chip counts all-time; conversion keeps an existing card's owner; promises per invoice ([Part E (backlog)](#part-e--backlog) D8–D11) |
@@ -713,10 +664,10 @@ Response to the V4 handoff PDF (`Nipuna-CRM-UI-V4-Developer-Handoff-2026-09-29.p
 
 | Remaining | Size |
 |---|---|
-| Deploy to the AWS test server as the review URL (backup, migrations 017–025, frontend build, smoke test) | S (under a day), on the go-ahead |
+| Deploy to the AWS test server as the review URL (backup, migrations 017–039, frontend build, smoke test) | S (under a day), on the go-ahead |
 | Changes from the review and the decisions above | S–M, depending on feedback |
 | Tax / bank details on the invoice template, once values are approved | S |
-| LMS provisioning, integrations | Separate projects |
+| Email / telephony / HDFC integrations; inbound WhatsApp | Separate projects |
 
 ---
 
@@ -734,16 +685,43 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 | D2 | File storage for documents / CVs / certificates in production (S3, local disk, other)? | Local disk (`UPLOAD_DIR`) |
 | D3 | Real shift hours per branch | Mon–Sat 09:00–19:00 placeholder drives all SLA deadlines |
 | D4 | Password policy / MFA at launch | 10-char minimum, lockout after 5 failures |
-| D5 | LLM for AI features | Rule-based fallback; OpenAI + LangSmith keys are in `.env` for later (code reads `ANTHROPIC_API_KEY` today) |
+| D5 | LLM for AI features | The code calls Claude when `ANTHROPIC_API_KEY` is set (briefs, counselling brief, Ask Nipuna); no key is configured, so answers are rule-based. Decide the key / model (`AI_MODEL`) and budget. The OpenAI / LangSmith keys in `.env` are unused |
 | D6 | Production hosting | Plan: nginx serving `frontend/dist` and proxying `/api` to gunicorn on one origin |
 | D7 | Offer once per person — what counts as "used" | Built: used = an admission applies the offer (discount or complimentary); counted per person across all versions of the offer; a cancelled admission releases it. Confirm cancellation should release it, and whether a still-open fee discussion or issued invoice should also reserve the offer |
-| D8 | V4 open questions (defaults built — confirm) | (1) A lead gets demos / fee discussions only after qualify + convert; (2) Admitted / Closed-lost chip counts are all-time per branch; (3) LMS access is a read-only list until a real LMS exists; (4) tax / GSTIN / bank details are left off invoices until approved values are provided |
+| D8 | V4 open questions (defaults built — confirm) | (1) A lead gets demos / fee discussions only after qualify + convert; (2) Admitted / Closed-lost chip counts are all-time per branch; (3) tax / GSTIN / bank details are left off invoices until approved values are provided |
 | D9 | V4 · conversion owner | Converting onto an existing card keeps that card's owner; the owner in the dialog applies to a new card only. Confirm, or let conversion reassign the card |
 | D10 | V4 · independent cash check | Recorded as a tick at verification; should the verifier also have to be someone other than the collector for cash? |
 | D11 | V4 · promises to pay | Moved to the invoice (one promise per invoice, shared by its courses). Confirm per-invoice rather than per-course promises |
-| D12 | LMS · student activation link | The LMS returns a one-time activation token for each new student login; the CRM discards it (only `activation_token_issued` is kept) and never logs it. Decide: the CRM sends the link by WhatsApp / email (template + task), or activation stays supervised in the LMS (coordinator reissues) |
 | D13 | LMS · instalments on multi-course invoices | Instalments are per invoice, so each admission on a two-course invoice carries the same schedule (flagged `installments_scope: "invoice"`). Confirm the LMS shows it as the invoice's, or decide a per-course split |
-| D14 | LMS · status pull | `flask lms status-check` only calls it. Round 2: a job storing `persons.lms_user_id`, `admissions.lms_status` / academics / batches / certificates, and `PATCH /admissions` no longer accepting `lms_status` from staff |
+| D15 | CRM AI playbook · assumptions (built — confirm) | (1) Converted leads count as contacted for the first-attempt clock (older records have no logged call); (2) alerts only for enquiries captured in the last 2 days; (3) "fee shared, learner silent" = no contact for 3 days; (4) recoverable lost reasons = timing, location, fee too high (+ any due reactivation date); (5) the six spec templates are seeded as Approved, the course paths as Draft; (6) recovery tasks go to the lead owner, else the Sales team queue |
+| D16 | CRM AI playbook · release 2 | Automatic acknowledgement / reminders / unanswered sequences need a live WhatsApp provider (opt-in, 24-hour window, approved templates, delivery webhooks). `ai_branch_controls` refuses Approved automatic until then |
+| D17 | LMS · batch readiness values | The CRM stores the LMS's readiness as free text and treats only `Blocked` as not public (LMS Q3). Confirm no other readiness value should hide a batch from sales |
+| D18 | WhatsApp · new templates | `nipuna_delivery_plan_confirm_v1` ("Reply YES to confirm this plan"; params customer_name, branch_name, delivery_plan_no, course_name, learning_mode, start_window) and `nipuna_staff_payment_status_v1` (staff alert) await Pinbot approval. Until then plan acceptance is recorded by hand (In person / On a call) and the staff alert switch `whatsapp_staff_alerts_enabled` is now on by default (db 042). Every template to submit is listed in [Templates to submit to Pinbot](#templates-to-submit-to-pinbot) |
+| D19 | LMS · preferred batch | The CRM now sends optional `admission.preferred_batch_code` on `AdmissionQualified`. The LMS has to read it (ask in the LMS repo's `nipuna crm-docs/CRM_ROUND4_BATCH_PREFERENCE.md`); unknown keys are ignored today. The delivery plan is frozen once the deal is admitted, so the preference must be set before admission |
+| D20 | UX build follow-ups | `pipeline_stalled_days` has no seed row (default 7 in code; add one to make it editable in Settings); the pipeline card link casts `search` until Lead 360 declares `validateSearch` for `action`; `batch-delay-alerts` runs only while academics are managed in the LMS (the CRM's own `batch-allocation` job covers CRM-run academics); the new screens have no e2e spec beyond the updated `sales.spec.ts` "books a demo" |
+
+#### Templates to submit to Pinbot
+
+All Utility, language `en`, none yet approved by Pinbot (the code in `backend/services/whatsapp_templates.py` is the source of the exact wording and value order; sending to real numbers waits for approval). Values are `{{1}}`, `{{2}}` … in the order of the parameter list.
+
+| Template | Round | Parameters (in order) | Body |
+|---|---|---|---|
+| `nipuna_delivery_plan_confirm_v1` | earlier | customer_name, branch_name, delivery_plan_no, course_name, learning_mode, start_window | Hello {{1}}, Nipuna Technologies, {{2}}, has prepared your delivery plan {{3}} for {{4}}. Learning mode: {{5}}. Planned start window: {{6}}. Please reply YES to confirm this plan. Batch allocation and admission confirmation are separate updates. |
+| `nipuna_staff_payment_status_v1` | earlier | staff_name, transaction_no, learner_name, payment_amount, outcome, outcome_detail | Hello {{1}}, Accounts at Nipuna Technologies has reviewed payment claim {{2}} for {{3}} of INR {{4}}. Outcome: {{5}}. {{6}} Please open the CRM to see the details and follow up with the learner. |
+| `nipuna_demo_booked_u_v1` | W1 | customer_name, course_name, branch_name, demo_time, demo_venue, trainer_name | Hello {{1}}, your demo session for {{2}} at Nipuna Technologies, {{3}}, is booked for {{4}}. Venue: {{5}}. Trainer: {{6}}. Please reach a few minutes early. Contact our counsellor if you need to change the time. |
+| `nipuna_demo_rescheduled_u_v1` | W1 | customer_name, course_name, branch_name, demo_time, demo_venue, trainer_name | Hello {{1}}, your demo session for {{2}} at Nipuna Technologies, {{3}}, has been moved to {{4}}. Venue: {{5}}. Trainer: {{6}}. Your earlier time no longer applies. |
+| `nipuna_demo_cancelled_u_v1` | W1 | customer_name, course_name, branch_name, demo_time | Hello {{1}}, your demo session for {{2}} at Nipuna Technologies, {{3}}, planned for {{4}}, has been cancelled. Our counsellor will contact you to arrange another time if you wish. |
+| `nipuna_demo_reminder_u_v1` | W1 | customer_name, branch_name, course_name, starts_in, demo_time, demo_venue, trainer_name | Hello {{1}}, a reminder from Nipuna Technologies, {{2}}: your demo session for {{3}} starts in {{4}}, at {{5}}. Venue: {{6}}. Trainer: {{7}}. |
+| `nipuna_staff_demo_reminder_v1` | W1 | staff_name, learner_name, course_name, starts_in, demo_time, demo_venue | Hello {{1}}, a reminder from the Nipuna CRM: you take the {{3}} demo for {{2}} in {{4}}, at {{5}}. Venue: {{6}}. |
+| `nipuna_admission_confirmed_u_v1` | W1 | customer_name, branch_name, admission_no, course_name, learning_mode, start_date | Hello {{1}}, your admission at Nipuna Technologies, {{2}}, is confirmed. Admission number: {{3}}. Course: {{4}}. Learning mode: {{5}}. Planned start: {{6}}. Our academic team will share your batch and class details separately. |
+| `nipuna_instalment_due_u_v1` | W2 | customer_name, branch_name, invoice_no, installment_no, amount_due, due_date, invoice_channel | Hello {{1}}, this is a friendly reminder from Nipuna Technologies, {{2}}. Instalment {{4}} of invoice {{3}} (INR {{5}}) is due on {{6}}. To pay, please contact {{7}}. If you have already paid, please ignore this message. |
+| `nipuna_instalment_overdue_u_v1` | W2 | customer_name, branch_name, invoice_no, installment_no, amount_due, due_date, invoice_channel | Hello {{1}}, Nipuna Technologies, {{2}}, has not yet received instalment {{4}} of invoice {{3}} (INR {{5}}), which was due on {{6}}. Please make the payment at the earliest by contacting {{7}}. If you have already paid, please share the details with us so we can update your account. |
+| `nipuna_staff_lead_assigned_v1` | W3 | staff_name, learner_name, course_name, branch_name, response_note | Hello {{1}}, a new lead has been assigned to you at Nipuna Technologies: {{2}} for {{3}} at the {{4}} branch. {{5}} Please open the CRM to follow up. |
+| `nipuna_staff_leads_assigned_v1` | W3 | staff_name, lead_count, branch_name | Hello {{1}}, {{2}} new leads have been assigned to you at Nipuna Technologies ({{3}}). Please open the CRM, My leads, to start following them up. |
+| `nipuna_staff_approval_waiting_v1` | W3 | staff_name, request_code, learner_name, requested_extra, branch_name | Hello {{1}}, special closing request {{2}} for {{3}} of INR {{4}} at the {{5}} branch is waiting for your approval at Nipuna Technologies. Please open the CRM to decide it. |
+| `nipuna_staff_payment_to_verify_v1` | W3 | staff_name, transaction_no, learner_name, payment_amount, payment_mode, reference | Hello {{1}}, payment claim {{2}} from {{3}} of INR {{4}} by {{5}} (reference {{6}}) is waiting for verification at Nipuna Technologies. Please open the CRM to verify it. |
+
+**The nine LMS templates (round 6).** Sent by the LMS through `POST /lms/whatsapp`. Their drafts, with buttons and sample values, are in the LMS repo `docs/whatsapp-templates/` (replace `LMS_HOST` in each button before submitting); the CRM's copy, which must match what Pinbot approves, is `LMS_TEMPLATES` in `whatsapp_templates.py`: `nipuna_lms_password_reset_code_auth_v1` (Authentication, Copy code), `nipuna_lms_student_activation_link_u_v1`, `nipuna_lms_staff_account_invite_u_v1` (URL button with the token), `nipuna_lms_class_reminder_u_v1`, `nipuna_lms_class_cancelled_u_v1`, `nipuna_lms_class_rescheduled_u_v1`, `nipuna_lms_result_published_u_v1`, `nipuna_lms_certificate_issued_u_v1` (URL button with the certificate number), `nipuna_lms_batch_change_agreement_u_v1`. If Pinbot approves a different wording, update both copies.
 
 ### 2. API gaps
 
@@ -779,8 +757,7 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 
 - `GET /admin/sessions`: unpaginated and always `current: false`.
 - `GET /collections/ageing`: empty bands return `balance: 0` (number) instead of `"0.00"`.
-- `POST /batches` with `curriculum_version_id: null` skips the "use the published version" default (omit the field instead).
-- Role checks that differ from the prototype wording: approve extra demo is Academic Coordinator / Branch Manager only; `/concession-limits` and `/offers` are admin / BM only, so counsellors can't see their limits or pick offers for complimentary courses.
+- Role checks that differ from the prototype wording: approve extra demo is Branch Manager only (db 043 merged the Academic Coordinator role into Branch Manager); `/concession-limits` and `/offers` are admin / BM only, so counsellors can't see their limits or pick offers for complimentary courses.
 
 #### Code vs plan (found while rewriting the API execution flows)
 
@@ -799,4 +776,4 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 - Dashboard tiles: outstanding (verified basis), dues recovery, captured leads, top courses by net verified.
 - Report sections: course enrolment & revenue drill-down, source / campaign with record links, trainer batches, upcoming / overdue dues.
 - Admin: AI configuration, retention, backup / recovery status.
-- LMS "Open LMS" / live sync, "Open class link", collecting branch on admissions, email resend, channel status chips, support-period extensions (endpoint exists, not exposed).
+- "Open LMS" link and "Open class link", collecting branch on admissions, email resend, channel status chips, support-period extensions (endpoint exists, not exposed).

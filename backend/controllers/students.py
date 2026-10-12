@@ -48,7 +48,6 @@ def student_tab(person_id: int, tab: str):
                                             **a.to_dict()["balance"]} for a in d["admissions"]]},
         "academic": lambda d: {"admissions": [a.to_summary() for a in d["admissions"]],
                                "allocations": [x.to_dict() for x in d["allocations"]],
-                               "curricula": [x.to_dict() for x in d["curricula"]],
                                "certificates": [x.to_dict() for x in d["certificates"]]},
         "documents": lambda d: {"documents": [x.to_dict() for x in d["documents"]],
                                 "checklist": [x.to_dict() for x in d["checklist"]]},

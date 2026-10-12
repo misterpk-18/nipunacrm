@@ -21,8 +21,11 @@ export type Notification = {
   escalate_at: DateTime | null;
   escalated_at: DateTime | null;
   escalated_from_id: number | null;
+  /** "WhatsApp" when a staff alert went with this notification (db 042), else null. */
   external_channel: string | null;
-  external_status: string;
+  /** Queued · Sent · Delivered · Read · Failed · Not sent; null with no channel. */
+  external_status: string | null;
+  external_reason?: string | null;
 };
 
 export type NotificationMeta = PageMeta & { unread: number };

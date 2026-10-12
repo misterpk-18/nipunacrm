@@ -7,6 +7,7 @@ from models.enums import (
 )
 from repositories.leads import QUEUES
 from services import enquiries as enquiries_service
+from services import journey as journey_service
 from services import lead_imports as imports_service
 from services import leads as leads_service
 from services import persons as persons_service
@@ -60,6 +61,12 @@ def search_persons():
     params = v.validate()
     results = persons_service.search(params.get("phone"), params.get("email"), params.get("name"))
     return ok([_person_with_leads(person, leads) for person, leads in results])
+
+
+def lookup_person():
+    v = Validator(request.args.to_dict())
+    v.phone("phone", required=True)
+    return ok(persons_service.lookup_by_phone(v.validate()["phone"]))
 
 
 def list_persons():
@@ -218,12 +225,23 @@ def get_lead(lead_id: int):
     return ok(leads_service.get_lead(lead_id).to_dict())
 
 
+def get_journey(lead_id: int):
+    return ok(journey_service.journey(lead_id))
+
+
 def update_lead(lead_id: int):
     v = Validator(json_body())
     v.integer("course_id", nullable=True, min_value=1)
     v.choice("intake_status", MANUAL_INTAKE)
     v.string("campaign", nullable=True, max_length=150)
     v.string("remarks", nullable=True)
+    # what the learner needs (db 031)
+    v.string("learner_goal", nullable=True)
+    v.string("prior_experience", nullable=True)
+    v.string("preferred_timing", nullable=True, max_length=150)
+    v.string("joining_window", nullable=True, max_length=150)
+    v.string("open_question", nullable=True)
+    v.string("next_action", nullable=True)
     return ok(leads_service.update_lead(lead_id, _require_changes(v.validate())).to_dict())
 
 
@@ -286,6 +304,14 @@ def reactivate(lead_id: int):
 
 
 # ---------------------------------------------------------------- qualification / convert (db 019)
+
+def staffed_time():
+    v = Validator(request.args.to_dict())
+    v.integer("branch_id", required=True, min_value=1)
+    v.integer("minutes", min_value=1, max_value=1440, default=120)
+    data = v.validate()
+    return ok({"at": leads_service.staffed_time(data["branch_id"], data["minutes"])})
+
 
 def get_qualification(lead_id: int):
     return ok(qualification_service.checklist(lead_id))

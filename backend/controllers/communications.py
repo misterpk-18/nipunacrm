@@ -96,11 +96,11 @@ def list_notifications():
     v.choice("tab", tuple(NOTIFICATION_TABS))
     page, per_page = get_page_params()
     rows, meta = comms_service.my_notifications(v.validate().get("tab"), page, per_page)
-    return paginated([n.to_dict() for n in rows], {**meta, "unread": comms_service.unread_count()})
+    return paginated(comms_service.notification_dicts(rows), {**meta, "unread": comms_service.unread_count()})
 
 
 def mark_notification(notification_id: int, action: str):
-    return ok(comms_service.mark(notification_id, action).to_dict())
+    return ok(comms_service.notification_dicts([comms_service.mark(notification_id, action)])[0])
 
 
 def list_rules():

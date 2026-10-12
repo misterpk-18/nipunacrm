@@ -2,11 +2,12 @@ import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { CalendarDays, CalendarPlus, Handshake, IndianRupee, Mail, Pencil, Phone, PlusCircle, RotateCcw, Sparkles, UserCog, XCircle } from "lucide-react";
+import { CalendarPlus, Handshake, IndianRupee, Mail, MessageSquareText, Pencil, Phone, PlusCircle, RotateCcw, Sparkles, UserCog, XCircle } from "lucide-react";
 import { get, list, post } from "@/api/client";
-import { FOLLOW_UP_PURPOSES, FOLLOW_UP_RESPONSES, MANUAL_INTAKE, REACTIVATE_STAGES, leadKeys, leadsApi, useLead, type Lead } from "@/api/leads";
+import { MANUAL_INTAKE, REACTIVATE_STAGES, leadKeys, leadsApi, useLead, type Lead } from "@/api/leads";
 import { pipelineApi, pipelineKeys } from "@/api/pipeline";
 import { useLookups } from "@/api/reference";
+import type { FeeValidity as FeeValidityInfo } from "@/api/fees";
 import type { BranchRef, CourseRef, Money, UserRef } from "@/api/types";
 import { useAuth } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
@@ -17,15 +18,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { CourseSelect, Field, LookupSelect, NativeSelect, StaffSelect, applyServerErrors } from "@/components/crm/forms";
 import { AiNote, DataTable, Empty, ErrorPanel, Facts, LeadChip, LoadingRows, PageHead, PriorityChip, QueryView, Section, Status, Warning, WhatsAppButton } from "@/components/crm/ui";
 import { CommercialPanel, DeliveryPlanPanel } from "@/features/sales/deal-panels";
+import { BookDemoDialog } from "@/features/sales/demo-booking";
+import { FeeValidity } from "@/features/sales/fee-validity";
 import { SALES_SIDE } from "@/features/sales/shared";
 import { ConvertDialog, QualificationPanel } from "./qualification";
 import { date, dateTime, fromLocalInput, money, phone, relative, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { NewLeadDialog } from "./new-lead-dialog";
+import { NextStepBar } from "./next-step-bar";
+import { SendTemplateDialog } from "./send-template-dialog";
+import { ApprovedContent, BatchOptions, ClosingChecklist, CounsellingBrief, ObjectionsTab, OutcomeForm, ReplyDraftDialog, WorkbenchPanel } from "./workbench";
 
 // Minimal shapes for the related-record tabs (full types live in each module's api file).
 type DemoRow = { demo_id: number; demo_code: string; scheduled_at: string; duration_minutes: number; mode: string; trainer: UserRef | null; status: string; outcome: string | null };
-type FeeVersion = { version_id: number; version_no: number; status: string; final_payable: Money; payment_plan: { plan_name: string } | null; valid_until: string | null };
+type FeeVersion = { version_id: number; version_no: number; status: string; final_payable: Money; payment_plan: { plan_name: string } | null; valid_until: string | null; validity?: FeeValidityInfo };
 type FeeDiscussion = { fee_discussion_id: number; discussion_code: string; milestone: string; course: CourseRef | null; current_version: FeeVersion | null; created_at: string };
 type TaskRow = { task_id: number; title: string; task_type: string; owner: UserRef | null; team_role: string | null; status: string; original_due_at: string; revised_due_at: string | null; is_overdue: boolean };
 type Enquiry = { enquiry_id: number; enquiry_code?: string; course?: CourseRef | null; branch?: BranchRef; lead_source?: string; contact_channel?: string; message?: string | null; created_at: string };
@@ -33,11 +39,15 @@ type Insight = { insight_id: number; insight_type: string; content: string | Rec
 
 const workable = (lead: Lead) => lead.is_open && lead.stage !== "Admitted";
 
-export function Lead360({ leadId }: { leadId: number }) {
+export function Lead360({ leadId, action, onActionHandled }: { leadId: number; action?: string | undefined; onActionHandled?: (() => void) | undefined }) {
   const lead = useLead(leadId);
   const [tab, setTab] = useState("timeline");
-  const [dialog, setDialog] = useState<null | "convert" | "edit" | "assign" | "stage" | "lost" | "reactivate" | "demo" | "another" | "activity">(null);
+  const [dialog, setDialog] = useState<null | "convert" | "edit" | "assign" | "stage" | "lost" | "reactivate" | "demo" | "another" | "activity" | "template">(null);
+  const [draftSituation, setDraftSituation] = useState<string | null>(null);
   const { hasRole } = useAuth();
+  // Accounts opens Lead 360 read-only: no edit / assign / stage / lost / convert / demo / outcome / template.
+  const readOnly = !hasRole(...SALES_SIDE);
+  const showMoney = !readOnly || hasRole("ACCOUNTS"); // fee discussions and the invoice panel: Accounts yes
 
   if (lead.isLoading) return <LoadingRows rows={8} />;
   if (lead.error) return <ErrorPanel error={lead.error} onRetry={() => void lead.refetch()} />;
@@ -46,9 +56,17 @@ export function Lead360({ leadId }: { leadId: number }) {
   const digits = p.phone.replace(/\D/g, "");
   const close = () => setDialog(null);
   const converted = l.converted_at !== null;
+  // The suggested next action's primary button (playbook card)
+  const onAction = (action: string) => {
+    if (action === "call") window.location.href = `tel:+${digits}`;
+    else if (action === "convert") setDialog("convert");
+    else if (action.startsWith("draft:")) setDraftSituation(action.slice(6));
+    else document.getElementById(action === "qualify" ? "qualification" : "save-outcome")?.scrollIntoView({ behavior: "smooth" });
+  };
 
   return (
     <>
+      <NextStepBar lead={l} initialAction={action} onInitialActionHandled={onActionHandled} renderers={{ book_demo: (onClose) => <BookDemoDialog lead={l} onClose={onClose} /> }} />
       <PageHead
         title={l.name}
         description={`${l.lead_code} · ${p.person_code} · ${l.branch.branch_name} · ${l.course?.course_title ?? "No course yet"} · ${l.original_source} · Owner: ${l.owner?.full_name ?? "Unassigned"}`}
@@ -68,6 +86,12 @@ export function Lead360({ leadId }: { leadId: number }) {
           </a>
         </Button>
         <WhatsAppButton phone={p.whatsapp_number ?? p.phone} />
+        {!readOnly && (
+          <Button variant="outline" size="sm" onClick={() => setDialog("template")}>
+            <MessageSquareText />
+            Send template
+          </Button>
+        )}
         {p.email && (
           <Button variant="outline" size="sm" asChild>
             <a href={`mailto:${p.email}`}>
@@ -77,7 +101,8 @@ export function Lead360({ leadId }: { leadId: number }) {
           </Button>
         )}
         {converted ? (
-          l.pipeline_entry_id !== null && (
+          l.pipeline_entry_id !== null &&
+          !readOnly && (
             <Button size="sm" variant="outline" asChild>
               <Link to="/pipeline" search={{ q: l.lead_code }}>
                 <Handshake />
@@ -115,7 +140,7 @@ export function Lead360({ leadId }: { leadId: number }) {
         </div>
       )}
       <div className="mb-4 flex flex-wrap gap-2">
-        {workable(l) && (
+        {workable(l) && !readOnly && (
           <>
             {converted && (
               <>
@@ -154,16 +179,18 @@ export function Lead360({ leadId }: { leadId: number }) {
             </Button>
           </>
         )}
-        {l.stage === "Lost - closed" && (
+        {l.stage === "Lost - closed" && !readOnly && (
           <Button size="sm" variant="outline" onClick={() => setDialog("reactivate")}>
             <RotateCcw />
             Reactivate
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={() => setDialog("another")}>
-          <PlusCircle />
-          Add another course
-        </Button>
+        {!readOnly && (
+          <Button size="sm" variant="outline" onClick={() => setDialog("another")}>
+            <PlusCircle />
+            Add another course
+          </Button>
+        )}
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="min-w-0 space-y-4 lg:col-span-2">
@@ -171,15 +198,19 @@ export function Lead360({ leadId }: { leadId: number }) {
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList className="min-w-max">
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                {!readOnly && <TabsTrigger value="objections">Objections</TabsTrigger>}
                 <TabsTrigger value="enquiries">Enquiries</TabsTrigger>
                 <TabsTrigger value="demos">Demos</TabsTrigger>
-                <TabsTrigger value="fees">Fees / Invoices</TabsTrigger>
+                {showMoney && <TabsTrigger value="fees">Fees / Invoices</TabsTrigger>}
                 <TabsTrigger value="tasks">Tasks</TabsTrigger>
-                <TabsTrigger value="ai">AI Insights</TabsTrigger>
+                {!readOnly && <TabsTrigger value="ai">AI Insights</TabsTrigger>}
               </TabsList>
               <div className="mt-5">
                 <TabsContent value="timeline">
                   <Timeline leadId={l.lead_id} />
+                </TabsContent>
+                <TabsContent value="objections">
+                  <ObjectionsTab lead={l} />
                 </TabsContent>
                 <TabsContent value="enquiries">
                   <Enquiries leadId={l.lead_id} />
@@ -188,12 +219,14 @@ export function Lead360({ leadId }: { leadId: number }) {
                   <Demos leadId={l.lead_id} />
                 </TabsContent>
                 <TabsContent value="fees">
-                  <Fees lead={l} />
+                  <Fees lead={l} readOnly={readOnly} />
                 </TabsContent>
                 <TabsContent value="tasks">
                   <Tasks leadId={l.lead_id} />
                 </TabsContent>
                 <TabsContent value="ai">
+                  <CounsellingBrief lead={l} />
+                  <div className="mt-4" />
                   <Insights leadId={l.lead_id} />
                 </TabsContent>
               </div>
@@ -201,9 +234,18 @@ export function Lead360({ leadId }: { leadId: number }) {
           </div>
         </div>
         <div className="min-w-0 space-y-4">
-          {!converted && <QualificationPanel lead={l} />}
+          {!readOnly && <WorkbenchPanel lead={l} onAction={onAction} />}
+          {workable(l) && !readOnly && (
+            <div id="save-outcome">
+              <Section title="Save outcome" subtitle="The actual result and the agreed next action, in one step">
+                <OutcomeForm lead={l} />
+              </Section>
+            </div>
+          )}
+          {converted && l.is_open && <ClosingChecklist lead={l} />}
+          <div id="qualification">{!converted && !readOnly && <QualificationPanel lead={l} />}</div>
           {converted && l.is_open && <DeliveryPlanPanel lead={l} />}
-          {converted && <CommercialPanel lead={l} />}
+          {converted && showMoney && <CommercialPanel lead={l} />}
           <Section title="Sales summary">
             <Facts
               columns={1}
@@ -220,18 +262,21 @@ export function Lead360({ leadId }: { leadId: number }) {
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <Button asChild size="sm" variant="outline">
-                <Link to="/persons/$personId" params={{ personId: String(p.person_id) }}>
-                  Open person
-                </Link>
+                {readOnly ? (
+                  <Link to="/students/$personId" params={{ personId: String(p.person_id) }}>
+                    Open student
+                  </Link>
+                ) : (
+                  <Link to="/persons/$personId" params={{ personId: String(p.person_id) }}>
+                    Open person
+                  </Link>
+                )}
               </Button>
             </div>
           </Section>
-          {l.pipeline_entry_id !== null && <CardSummary entryId={l.pipeline_entry_id} leadId={l.lead_id} />}
-          {workable(l) && (
-            <Section title="Log follow-up" subtitle="Adds to the timeline and sets the next follow-up task">
-              <FollowUpForm leadId={l.lead_id} />
-            </Section>
-          )}
+          {l.pipeline_entry_id !== null && <CardSummary entryId={l.pipeline_entry_id} leadId={l.lead_id} readOnly={readOnly} />}
+          {l.is_open && <BatchOptions lead={l} />}
+          {!readOnly && <ApprovedContent lead={l} onDraft={setDraftSituation} />}
         </div>
       </div>
 
@@ -241,8 +286,10 @@ export function Lead360({ leadId }: { leadId: number }) {
       {dialog === "stage" && <StageDialog lead={l} onClose={close} />}
       {dialog === "lost" && <LostDialog lead={l} onClose={close} />}
       {dialog === "reactivate" && <ReactivateDialog lead={l} onClose={close} />}
-      {dialog === "demo" && <ScheduleDemoDialog lead={l} onClose={close} />}
+      {dialog === "demo" && <BookDemoDialog lead={l} onClose={close} />}
+      {dialog === "template" && <SendTemplateDialog lead={l} onClose={close} />}
       {dialog === "activity" && <ActivityDialog lead={l} onClose={close} />}
+      {draftSituation && <ReplyDraftDialog lead={l} situation={draftSituation} onClose={() => setDraftSituation(null)} />}
       <NewLeadDialog open={dialog === "another"} onOpenChange={(o) => !o && close()} person={p} />
     </>
   );
@@ -251,7 +298,7 @@ export function Lead360({ leadId }: { leadId: number }) {
 // ---------------------------------------------------------------- tabs
 
 /** The person's pipeline card this lead is on: shared stage, owner and the other courses. */
-function CardSummary({ entryId, leadId }: { entryId: number; leadId: number }) {
+function CardSummary({ entryId, leadId, readOnly }: { entryId: number; leadId: number; readOnly: boolean }) {
   const card = useQuery({ queryKey: pipelineKeys.entry(entryId), queryFn: () => pipelineApi.get(entryId) });
   if (!card.data) return null;
   const c = card.data;
@@ -280,7 +327,7 @@ function CardSummary({ entryId, leadId }: { entryId: number; leadId: number }) {
           ],
         ]}
       />
-      {c.is_open && (
+      {c.is_open && !readOnly && (
         <Button asChild size="sm" variant="outline" className="mt-3">
           <Link to="/pipeline" search={{ q: c.entry_code }}>
             Open in pipeline
@@ -363,16 +410,18 @@ function Demos({ leadId }: { leadId: number }) {
   );
 }
 
-function Fees({ lead }: { lead: Lead }) {
+function Fees({ lead, readOnly }: { lead: Lead; readOnly: boolean }) {
   const q = useQuery({ queryKey: ["fee-discussions", "lead", lead.lead_id], queryFn: () => get<FeeDiscussion[]>(`/leads/${lead.lead_id}/fee-discussions`) });
   return (
     <QueryView
       query={q}
       empty={
         <Empty title="No fee discussion yet">
-          <Link to="/fee-quote" search={{ leadId: lead.lead_id }} className="text-primary">
-            Start a fee discussion
-          </Link>
+          {!readOnly && (
+            <Link to="/fee-quote" search={{ leadId: lead.lead_id }} className="text-primary">
+              Start a fee discussion
+            </Link>
+          )}
         </Empty>
       }
     >
@@ -383,17 +432,20 @@ function Fees({ lead }: { lead: Lead }) {
           columns={[
             {
               header: "Discussion",
-              cell: (d) => (
-                <Link to="/fee-quote" search={{ leadId: lead.lead_id, discussionId: d.fee_discussion_id }} className="font-medium text-primary">
-                  {d.discussion_code}
-                </Link>
-              ),
+              cell: (d) =>
+                readOnly ? (
+                  <span className="font-medium">{d.discussion_code}</span>
+                ) : (
+                  <Link to="/fee-quote" search={{ leadId: lead.lead_id, discussionId: d.fee_discussion_id }} className="font-medium text-primary">
+                    {d.discussion_code}
+                  </Link>
+                ),
             },
             { header: "Milestone", cell: (d) => <Status>{d.milestone}</Status> },
             { header: "Version", cell: (d) => (d.current_version ? `v${d.current_version.version_no} · ${d.current_version.status}` : "—") },
             { header: "Final payable", cell: (d) => money(d.current_version?.final_payable) },
             { header: "Plan", cell: (d) => d.current_version?.payment_plan?.plan_name ?? "—" },
-            { header: "Valid until", cell: (d) => date(d.current_version?.valid_until) },
+            { header: "Valid until", cell: (d) => (d.current_version?.validity ? <FeeValidity validity={d.current_version.validity} /> : date(d.current_version?.valid_until)) },
           ]}
         />
       )}
@@ -447,43 +499,6 @@ function Insights({ leadId }: { leadId: number }) {
         )}
       </QueryView>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- side form
-
-function FollowUpForm({ leadId }: { leadId: number }) {
-  const form = useForm({ defaultValues: { purpose: FOLLOW_UP_PURPOSES[0]!, response: FOLLOW_UP_RESPONSES[0]!, notes: "", next: "" } });
-  const log = useApiMutation(
-    (v: { purpose: string; response: string; notes: string; next: string }) =>
-      leadsApi.logFollowUp(leadId, { purpose: v.purpose, response: v.response, notes: v.notes || undefined, next_follow_up_at: fromLocalInput(v.next)! }),
-    {
-      success: "Follow-up logged",
-      invalidate: [leadKeys.detail(leadId), leadKeys.activities(leadId), ["tasks"]],
-      silentValidation: true,
-      onSuccess: () => form.reset({ ...form.getValues(), notes: "", next: "" }),
-      onError: (e) => applyServerErrors(form, e),
-    },
-  );
-  return (
-    <form className="grid gap-2" onSubmit={form.handleSubmit((v) => log.mutate(v))}>
-      <Field label="Purpose">
-        <NativeSelect options={FOLLOW_UP_PURPOSES.map((x) => ({ value: x, label: x }))} {...form.register("purpose")} />
-      </Field>
-      <Field label="Response">
-        <NativeSelect options={FOLLOW_UP_RESPONSES.map((x) => ({ value: x, label: x }))} {...form.register("response")} />
-      </Field>
-      <Field label="Notes">
-        <Textarea {...form.register("notes")} />
-      </Field>
-      <Field label="Next follow-up (IST)" error={form.formState.errors.next?.message ?? form.formState.errors["next_follow_up_at" as "next"]?.message}>
-        <Input type="datetime-local" aria-label="Next follow-up" {...form.register("next", { required: "Next follow-up is required" })} />
-      </Field>
-      <Button type="submit" disabled={log.isPending}>
-        <CalendarDays />
-        Log follow-up
-      </Button>
-    </form>
   );
 }
 
@@ -708,63 +723,3 @@ function ActivityDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) 
   );
 }
 
-function ScheduleDemoDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const form = useForm({ defaultValues: { scheduled_at: "", course_id: "", demo_type: "Standard", mode: "In-person", duration_minutes: "45", trainer_user_id: "", meeting_link: "" } });
-  const book = useApiMutation(
-    (v: { scheduled_at: string; course_id: string; demo_type: string; mode: string; duration_minutes: string; trainer_user_id: string; meeting_link: string }) =>
-      post<{ demo_code: string }>(`/leads/${lead.lead_id}/demos`, {
-        scheduled_at: fromLocalInput(v.scheduled_at),
-        ...(v.course_id ? { course_id: Number(v.course_id) } : {}),
-        demo_type: v.demo_type,
-        mode: v.mode,
-        duration_minutes: Number(v.duration_minutes),
-        trainer_user_id: v.trainer_user_id ? Number(v.trainer_user_id) : null,
-        meeting_link: v.meeting_link || null,
-      }),
-    {
-      success: (d) => `Demo ${d.demo_code} scheduled`,
-      invalidate: [...invalidateLead(lead.lead_id), ["demos"]],
-      onSuccess: onClose,
-      silentValidation: true,
-      onError: (e) => applyServerErrors(form, e),
-    },
-  );
-  return (
-    <FormDialog
-      title={`Schedule demo · ${lead.name}`}
-      description={lead.course ? lead.course.course_title : "The lead has no course yet"}
-      onClose={onClose}
-      busy={book.isPending}
-      submitLabel="Schedule"
-      onSubmit={form.handleSubmit((v) => book.mutate(v))}
-    >
-      <Field label="Date & time (IST)" error={form.formState.errors.scheduled_at?.message}>
-        <Input type="datetime-local" aria-label="Demo date and time" {...form.register("scheduled_at", { required: "Required" })} />
-      </Field>
-      {!lead.course && (
-        <Field label="Course (optional)" error={form.formState.errors.course_id?.message}>
-          <CourseSelect branchCode={lead.branch.branch_code} placeholder="Not decided yet" {...form.register("course_id")} />
-        </Field>
-      )}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Type">
-          <NativeSelect options={["Standard", "Practical"].map((t) => ({ value: t, label: t }))} {...form.register("demo_type")} />
-        </Field>
-        <Field label="Mode">
-          <NativeSelect options={["In-person", "Online"].map((t) => ({ value: t, label: t }))} {...form.register("mode")} />
-        </Field>
-        <Field label="Minutes" error={form.formState.errors.duration_minutes?.message}>
-          <Input type="number" min={15} step={15} {...form.register("duration_minutes")} />
-        </Field>
-      </div>
-      <Field label="Trainer" error={form.formState.errors.trainer_user_id?.message}>
-        <StaffSelect branchId={lead.branch.branch_id} roles={["TRAINER"]} placeholder="Assign later" {...form.register("trainer_user_id")} />
-      </Field>
-      {form.watch("mode") === "Online" && (
-        <Field label="Meeting link" error={form.formState.errors.meeting_link?.message}>
-          <Input type="url" {...form.register("meeting_link")} />
-        </Field>
-      )}
-    </FormDialog>
-  );
-}

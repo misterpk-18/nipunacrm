@@ -3,7 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Printer, ReceiptText, RotateCcw, XCircle } from "lucide-react";
-import { paymentKeys, paymentsApi, type CorrectionRequest, type PaymentRow } from "@/api/payments";
+import { fetchProof, paymentKeys, paymentsApi, type CorrectionRequest, type PaymentRow } from "@/api/payments";
 import { useAuth } from "@/auth/auth";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -85,62 +85,143 @@ export function VerifyActions({ payment }: { payment: PaymentRow }) {
         reasonLabel="Failure reason"
         onConfirm={(reason) => fail.mutateAsync({ id: payment.payment_id, reason })}
       />
-      {open && <VerifyDialog payment={payment} onClose={() => setOpen(false)} />}
+      {open && <ClaimReviewDialog paymentId={payment.payment_id} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function VerifyDialog({ payment, onClose }: { payment: PaymentRow; onClose: () => void }) {
-  const cash = (payment.mode ?? "").toLowerCase() === "cash";
+/** The claim in one place for Accounts: who paid what to which courses, the proof, then Verify or Mark failed. Opened
+ *  from the ledger, from a "payment waiting for verification" notification and from /payments?verify=<id>. Same rules
+ *  as ever: evidence reviewed (and the independent cash check for cash) before Verify; failing needs a reason. */
+export function ClaimReviewDialog({ paymentId, onClose }: { paymentId: number; onClose: () => void }) {
+  const { canVerify } = useFinanceRoles();
+  const claim = useQuery({ queryKey: paymentKeys.detail(paymentId), queryFn: () => paymentsApi.get(paymentId) });
+  const payment = claim.data;
+  const cash = (payment?.mode ?? "").toLowerCase() === "cash";
   const [evidence, setEvidence] = useState(false);
   const [cashChecked, setCashChecked] = useState(false);
-  const verify = useApiMutation(() => paymentsApi.verify(payment.payment_id, { evidence_reviewed: evidence, cash_checked: cashChecked }), {
+  const verify = useApiMutation(() => paymentsApi.verify(paymentId, { evidence_reviewed: evidence, cash_checked: cashChecked }), {
     success: (p) =>
       `${p.receipt_number} issued` + (p.admissions_created.length ? ` · admitted: ${p.admissions_created.map((a) => a.admission_code).join(", ")}` : ""),
-    invalidate: [...FINANCE_INVALIDATE, ["pipeline"], ["deals"]],
+    invalidate: [...FINANCE_INVALIDATE, ["pipeline"], ["deals"], ["notifications"]],
     onSuccess: onClose,
   });
+  const fail = useApiMutation((reason: string) => paymentsApi.fail(paymentId, reason), {
+    success: (p) => `${p.transaction_number} marked Failed`,
+    invalidate: [...FINANCE_INVALIDATE, ["notifications"]],
+    onSuccess: onClose,
+  });
+  const pending = payment ? isVerifiable(payment) : false;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="w-[calc(100vw-1.5rem)] max-w-lg">
+      <DialogContent className="max-h-[92vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Review before verifying {payment.transaction_number}</DialogTitle>
+          <DialogTitle>{payment ? `Review ${payment.transaction_number}` : "Review payment claim"}</DialogTitle>
           <DialogDescription>
-            {money(payment.amount)} from {payment.person.full_name} via {payment.mode ?? "—"}
-            {payment.reference ? ` (ref ${payment.reference})` : ""}. Verification issues the receipt and counts the money towards each course on the invoice.
+            {payment
+              ? `${money(payment.amount)} from ${payment.person.full_name} via ${payment.mode ?? "—"}${payment.reference ? ` (ref ${payment.reference})` : ""}. Verification issues the receipt and counts the money towards each course on the invoice.`
+              : "Loading the claim…"}
           </DialogDescription>
         </DialogHeader>
-        {payment.allocations.length > 0 && (
-          <ul className="grid gap-1 text-sm">
-            {payment.allocations.map((a) => (
-              <li key={a.invoice_line_id} className="flex justify-between gap-2">
-                <span>{a.course.course_title}</span>
-                <b>{money(a.amount)}</b>
-              </li>
-            ))}
-          </ul>
-        )}
-        <label className="check-tile">
-          <Checkbox aria-label="Evidence reviewed" checked={evidence} onCheckedChange={(v) => setEvidence(v === true)} />
-          <span className="text-sm">Payment evidence reviewed (bank statement / UTR / proof)</span>
-        </label>
-        {cash && (
-          <label className="check-tile">
-            <Checkbox aria-label="Independent cash check completed" checked={cashChecked} onCheckedChange={(v) => setCashChecked(v === true)} />
-            <span className="text-sm">Independent cash check completed</span>
-          </label>
+        {claim.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+        {claim.error && <p className="text-sm text-destructive">{claim.error.message}</p>}
+        {payment && (
+          <>
+            {!pending && (
+              <p className="rounded-lg bg-muted p-2 text-sm">
+                This claim is already <b>{payment.verification_status}</b>
+                {payment.receipt_number ? ` (${payment.receipt_number})` : ""}
+                {payment.failure_reason ? ` — ${payment.failure_reason}` : ""}.
+              </p>
+            )}
+            {payment.allocations.length > 0 && (
+              <ul className="grid gap-1 text-sm">
+                {payment.allocations.map((a) => (
+                  <li key={a.invoice_line_id} className="flex justify-between gap-2">
+                    <span>{a.course.course_title}</span>
+                    <b>{money(a.amount)}</b>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="text-xs text-muted-foreground">
+              {payment.invoice ? `Invoice ${payment.invoice.invoice_number} · ` : "Unallocated advance · "}
+              recorded {payment.recorded_by ? `by ${payment.recorded_by.full_name} ` : ""}on {date(payment.payment_date)}
+              {payment.notes ? ` · Notes: ${payment.notes}` : ""}
+              {payment.lead_id !== null && (
+                <>
+                  {" · "}
+                  <Link to="/leads/$leadId" params={{ leadId: String(payment.lead_id) }} className="text-primary">
+                    Open lead
+                  </Link>
+                </>
+              )}
+            </div>
+            <ProofViewer paymentId={paymentId} hasProof={!!payment.proof_file_path} />
+            {pending && canVerify && (
+              <>
+                <label className="check-tile">
+                  <Checkbox aria-label="Evidence reviewed" checked={evidence} onCheckedChange={(v) => setEvidence(v === true)} />
+                  <span className="text-sm">Payment evidence reviewed (bank statement / UTR / proof)</span>
+                </label>
+                {cash && (
+                  <label className="check-tile">
+                    <Checkbox aria-label="Independent cash check completed" checked={cashChecked} onCheckedChange={(v) => setCashChecked(v === true)} />
+                    <span className="text-sm">Independent cash check completed</span>
+                  </label>
+                )}
+              </>
+            )}
+            {pending && !canVerify && <p className="text-sm text-muted-foreground">Only Accounts (or an admin) can verify payments.</p>}
+          </>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            Close
           </Button>
-          <Button disabled={!evidence || (cash && !cashChecked) || verify.isPending} onClick={() => verify.mutate(undefined)}>
-            <CheckCircle2 />
-            Verify payment
-          </Button>
+          {pending && canVerify && (
+            <>
+              <ConfirmAction
+                trigger={
+                  <Button variant="outline" aria-label={`Fail ${payment?.transaction_number}`}>
+                    <XCircle />
+                    Mark failed
+                  </Button>
+                }
+                title={`Mark ${payment?.transaction_number} as Failed?`}
+                description="The money was not received (bounced, not in the bank statement…). The claim stays in the ledger as Failed and never gets a receipt; the counsellor is told why."
+                action="Mark failed"
+                destructive
+                reason
+                reasonLabel="Failure reason"
+                onConfirm={(reason) => fail.mutateAsync(reason)}
+              />
+              <Button disabled={!evidence || (cash && !cashChecked) || verify.isPending} onClick={() => verify.mutate(undefined)}>
+                <CheckCircle2 />
+                Verify payment
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The proof the counsellor attached: an image shown here, a PDF opened in a new tab. */
+function ProofViewer({ paymentId, hasProof }: { paymentId: number; hasProof: boolean }) {
+  const proof = useQuery({ queryKey: paymentKeys.proof(paymentId), queryFn: () => fetchProof(paymentId), enabled: hasProof, staleTime: Infinity });
+  if (!hasProof) return <p className="rounded-lg border border-dashed p-2 text-xs text-muted-foreground">No proof attached (cash needs none; check the cash was counted).</p>;
+  if (proof.isLoading) return <p className="text-xs text-muted-foreground">Loading proof…</p>;
+  if (proof.error || !proof.data) return <p className="text-xs text-destructive">{proof.error?.message ?? "Could not load the proof"}</p>;
+  return (
+    <div className="rounded-lg border p-2">
+      <div className="mb-1 text-xs font-semibold">Proof</div>
+      {proof.data.type.startsWith("image/") && <img src={proof.data.url} alt="Payment proof" className="max-h-64 w-full rounded object-contain" />}
+      <a href={proof.data.url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
+        Open proof in a new tab
+      </a>
+    </div>
   );
 }
 

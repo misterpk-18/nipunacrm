@@ -63,7 +63,7 @@ test("LMS access lists admissions with their LMS status", async ({ page }) => {
   await login(page, USERS.founder);
   await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "LMS access" }).click();
   await expect(page.getByRole("heading", { name: "LMS access" })).toBeVisible();
-  for (const header of ["Learner", "Admission / course", "Curriculum", "LMS status", "Enrolment"]) await expect(page.getByRole("columnheader", { name: header })).toBeVisible();
+  for (const header of ["Learner", "Admission / course", "LMS status", "Enrolment"]) await expect(page.getByRole("columnheader", { name: header })).toBeVisible();
   await expect(page.getByRole("cell", { name: /NIT-GNT-2026-/ }).first()).toBeVisible();
   await page.getByRole("button", { name: /^Not Created/ }).click();
   await expect(page).toHaveURL(/lms_status=Not\+Created|lms_status=Not%20Created/);

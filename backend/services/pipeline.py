@@ -3,13 +3,14 @@ owner / follow-up / expected close.
 
 The database keeps the card and its open courses (leads) on one stage (db 017): moving the card moves them.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from config.database import db
 from models import Lead, LostReason, PipelineEntry
 from models.leads import user_summary
 from repositories import pipeline as pipeline_repo
+from repositories import settings as settings_repo
 from repositories.common import paginate
 from services import audit
 from services import leads as leads_service
@@ -69,7 +70,7 @@ def board(filters: dict, per_stage: int) -> dict:
 
 
 def _column(key: str, label: str, stages: tuple, count: int, entries: list[PipelineEntry]) -> dict:
-    details = card_details(entries)
+    details = card_details(entries, progress=True)
     rows = [card_row(entry, details[entry.pipeline_entry_id]) for entry in entries]
     return {"key": key, "label": label, "stages": list(stages), "count": count,
             "value": sum((details[e.pipeline_entry_id]["value"] for e in entries), Decimal("0.00")), "cards": rows}
@@ -81,7 +82,7 @@ def table(filters: dict, page: int, per_page: int):
     if stage:
         filters["stage"] = stage
     entries, meta = paginate(pipeline_repo.table_stmt(filters, current_user().branch_ids(), closed=closed), page, per_page)
-    details = card_details(entries)
+    details = card_details(entries, progress=True)
     return [card_row(entry, details[entry.pipeline_entry_id]) for entry in entries], meta
 
 
@@ -91,9 +92,10 @@ def _card_leads(entry: PipelineEntry) -> list[Lead]:
     return entry.open_leads if entry.is_open else [lead for lead in entry.leads if lead.stage == entry.stage] or entry.leads
 
 
-def card_details(entries: list[PipelineEntry]) -> dict[int, dict]:
+def card_details(entries: list[PipelineEntry], progress: bool = False) -> dict[int, dict]:
     """Per card: value (approved fee, else the course's standard fee; the admitted fee once admitted), delivery-plan
-    status and the courses' live invoices — in a few batched queries."""
+    status and the courses' live invoices — in a few batched queries. With `progress`, also the next step, blocker
+    and days in stage (see card_progress)."""
     leads = {entry.pipeline_entry_id: _card_leads(entry) for entry in entries}
     lead_ids = [lead.lead_id for rows in leads.values() for lead in rows]
     prices = pipeline_repo.lead_prices(lead_ids)
@@ -126,12 +128,99 @@ def card_details(entries: list[PipelineEntry]) -> dict[int, dict]:
         else:
             plan_status = "Delivery plan needed"
         result[entry.pipeline_entry_id] = {"courses": courses, "value": value, "delivery_plan_status": plan_status}
+    if progress:
+        context = _progress_context([c["lead_id"] for d in result.values() for c in d["courses"]], result)
+        for entry in entries:
+            result[entry.pipeline_entry_id].update(card_progress(entry, result[entry.pipeline_entry_id]["courses"], context))
     return result
 
 
 def card_row(entry: PipelineEntry, details: dict) -> dict:
-    return {**entry.to_row(), "courses": details["courses"], "value": details["value"],
-            "delivery_plan_status": details["delivery_plan_status"]}
+    row = {**entry.to_row(), "courses": details["courses"], "value": details["value"],
+           "delivery_plan_status": details["delivery_plan_status"]}
+    for key in ("next_step", "blocker", "quick_action", "days_in_stage", "stalled"):
+        if key in details:
+            row[key] = details[key]
+    return row
+
+
+# ---------------------------------------------------------------- card progress (next step, blocker, days in stage)
+#
+# Each course on a card has one next step (the same funnel the Lead 360 next-step bar follows); the card shows the
+# most urgent one. `quick_action.action` is a Lead 360 action key: the card links to /leads/<id>?action=<key>.
+
+STEP_RANK = ("verify_payment", "record_demo_outcome", "request_approval", "fee_discussion", "accept_plan",
+             "create_invoice", "record_payment", "book_demo", "create_admission", "wait")
+OPEN_DEMO_BLOCK = "Demo outcome pending"
+
+
+def _progress_context(lead_ids: list[int], details: dict[int, dict]) -> dict:
+    invoice_ids = {c["invoice"]["invoice_id"] for d in details.values() for c in d["courses"] if c["invoice"]}
+    return {"pending": pipeline_repo.leads_with_pending_payments(lead_ids), "demos": pipeline_repo.lead_open_demos(lead_ids),
+            "fees": pipeline_repo.lead_fee_state(lead_ids), "balances": pipeline_repo.invoice_outstanding(invoice_ids),
+            "now": datetime.now(timezone.utc)}
+
+
+def _course_step(course: dict, context: dict) -> dict:
+    """One course's next step: {action (Lead 360 key or None), label, due ('demo_end' / 'demo_start' / None), blocker}."""
+    lead_id, invoice = course["lead_id"], course["invoice"]
+    plan = course["delivery_plan"]
+    fee = context["fees"].get(lead_id)
+    demo = context["demos"].get(lead_id)
+
+    def step(action, label, due=None, blocker=None, rank=None):
+        return {"action": action, "label": label, "due": due, "blocker": blocker, "lead_id": lead_id,
+                "rank": STEP_RANK.index(rank or action or "wait")}
+
+    if lead_id in context["pending"]:
+        return step("verify_payment", "Verify payment", blocker="Payment under review")
+    if demo is not None:
+        if demo.scheduled_at + timedelta(minutes=demo.duration_minutes) <= context["now"]:
+            return step("record_demo_outcome", "Record demo outcome", "demo_end", OPEN_DEMO_BLOCK)
+        return step(None, "Attend the demo", "demo_start", rank="wait")
+    if course["stage"] in ("Counselling", "Demo Scheduled") and fee is None:
+        return step("book_demo", "Book demo")
+    if fee is None or fee["status"] in (None, "Expired", "Superseded"):
+        return step("fee_discussion", "Start fee discussion")
+    status = fee["status"]
+    if status == "Pending Approval":
+        return step(None, "Wait for approval", blocker="Waiting approval", rank="wait")
+    if status == "Rejected":
+        return step("fee_discussion", "Revise the fee", blocker="Approval rejected")
+    if status in ("Discussion Saved", "Counteroffered"):
+        return step("request_approval" if fee["needs_special_closing"] else "fee_discussion",
+                    "Request approval" if fee["needs_special_closing"] else "Approve the fee")
+    if not (plan and plan["status"] == "Accepted"):
+        return step("accept_plan", "Accept plan", blocker="Plan not accepted")
+    if invoice is None:
+        return step("create_invoice", "Create invoice")
+    if context["balances"].get(invoice["invoice_id"], 0) > 0:
+        return step("record_payment", "Record payment")
+    return step(None, "Create admission", rank="create_admission")
+
+
+def card_progress(entry: PipelineEntry, courses: list[dict], context: dict) -> dict:
+    """next_step {label, action, lead_id, due_at, overdue}, blocker (plain words or None), quick_action
+    {action, label, lead_id} (None when nobody can act yet), days_in_stage and whether it is past the stalled limit."""
+    now = context["now"]
+    steps = sorted((_course_step(c, context) for c in courses), key=lambda st: st["rank"])
+    chosen = steps[0] if steps else None
+    days = max(0, (now - entry.stage_changed_at).days) if entry.stage_changed_at else 0
+    result = {"days_in_stage": days, "stalled": days > settings_repo.get_int("pipeline_stalled_days", 7),
+              "next_step": None, "blocker": None, "quick_action": None}
+    if chosen is None or not entry.is_open:
+        return result
+    lead = next((lead for lead in entry.leads if lead.lead_id == chosen["lead_id"]), None)
+    due = (lead.next_follow_up_at if lead else None) or entry.next_follow_up_at
+    demo = context["demos"].get(chosen["lead_id"])
+    if chosen["due"] and demo is not None:
+        due = demo.scheduled_at + timedelta(minutes=demo.duration_minutes) if chosen["due"] == "demo_end" else demo.scheduled_at
+    result["next_step"] = {"label": chosen["label"], "action": chosen["action"], "lead_id": chosen["lead_id"],
+                           "due_at": due, "overdue": bool(due and due < now)}
+    result["blocker"] = chosen["blocker"]
+    if chosen["action"]:
+        result["quick_action"] = {"action": chosen["action"], "label": chosen["label"], "lead_id": chosen["lead_id"]}
+    return result
 
 
 # ---------------------------------------------------------------- next actions
