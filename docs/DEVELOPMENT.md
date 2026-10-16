@@ -87,6 +87,8 @@ Open http://localhost:5173 and sign in with a staging account.
 
 Other backend commands (from `backend/`): `flask --app app create-admin` (first admin on a fresh database), `flask --app app jobs list | run [name…]` (background jobs, incl. `first-attempt` for the 2 / 10 / 30-minute enquiry alerts), `flask --app app create-test-db`.
 
+**Cartograph — read only the files you need.** Before changing a backend function, ask the code map which files matter instead of scanning the backend: `flask --app app cartograph files services.leads:create_lead [--depth 2]` lists the files holding that function and the functions it calls (**READ**) and the files that call it (**CHECK**). `flask --app app cartograph build` writes `backend/cartograph.html` (git-ignored): a searchable page with what each function uses, who uses it and an expandable call tree. It follows plain function and method calls only; ORM model classes, calls through variables and Flask route wiring are not followed, so treat it as a starting point and re-run it after adding code (it reads the source each time, nothing to keep in sync).
+
 **The LMS link locally** ([API.md · Steps 22–23](API.md#step-22--lms-sync-outbox--dev-only)). Run the LMS on :5060 (`cd nipunalms/backend && APP_ENV=development ../venv/bin/flask --app app run --port 5060`, its own `nipunalms-dev` database) and set `LMS_BASE_URL` / `LMS_SERVICE_KEY` in `backend/.env`. How it works:
 
 - **CRM → LMS:** every admission, course, branch and money change writes `lms_outbox` rows in the same transaction; they are pushed right after the request commits, and `flask lms worker` is the retry path (the LMS owner sees them in its Super Admin screen **CRM sync**, `/admin/crm-sync`).

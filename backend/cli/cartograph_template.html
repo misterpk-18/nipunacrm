@@ -1,0 +1,60 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nipuna CRM Cartograph</title>
+<style>
+:root{--bg:#f6f7f9;--pn:#fff;--tx:#1a1f2b;--mu:#667085;--bd:#dfe3ea;--ac:#2563eb;--hl:#e8f0ff;
+--routes:#0ea5e9;--controllers:#14b8a6;--services:#8b5cf6;--repositories:#f59e0b;--models:#ec4899;--cli:#64748b;--config:#94a3b8;--app:#64748b}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1218;--pn:#171b24;--tx:#e6e9f0;--mu:#8b93a5;--bd:#272d3a;--ac:#6ea0ff;--hl:#1d2740}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,sans-serif;display:grid;grid-template-columns:340px 1fr;height:100vh}
+aside{border-right:1px solid var(--bd);background:var(--pn);display:flex;flex-direction:column;min-height:0}
+aside header{padding:12px;border-bottom:1px solid var(--bd)}h1{font-size:16px;margin:0 0 2px}.sub{color:var(--mu);font-size:12px}
+input{width:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}.chip{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);cursor:pointer;color:var(--mu);background:none}
+.chip.on{color:#fff;border-color:transparent}
+#list{overflow:auto;flex:1}.file{padding:6px 12px;font-size:11px;font-weight:600;color:var(--mu);background:var(--bg);position:sticky;top:0}
+.row{padding:5px 12px;cursor:pointer;display:flex;gap:6px;align-items:center;border-left:3px solid transparent}.row:hover{background:var(--hl)}.row.sel{background:var(--hl);border-left-color:var(--ac)}
+.row span.n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.cnt{font-size:11px;color:var(--mu)}
+main{overflow:auto;padding:20px 28px;min-width:0}.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+h2{margin:0;font-size:20px;word-break:break-all}.loc{color:var(--mu);font-size:12px;margin:2px 0 6px}.doc{margin:6px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:1000px){.cols{grid-template-columns:1fr}}
+.card{background:var(--pn);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;margin-bottom:16px}.card h3{margin:0 0 8px;font-size:13px;color:var(--mu);text-transform:uppercase;letter-spacing:.04em}
+.lnk{display:flex;gap:6px;align-items:center;padding:3px 0;cursor:pointer}.lnk:hover b{color:var(--ac)}.lnk small{color:var(--mu)}.lnk .x{color:var(--ac);font-size:11px}
+ul.t{list-style:none;margin:0;padding-left:16px;border-left:1px dashed var(--bd)}ul.t.root{padding-left:0;border:0}
+.tn{display:flex;gap:6px;align-items:center;padding:2px 0}.tg{width:16px;cursor:pointer;color:var(--mu);user-select:none;text-align:center}.tn b{cursor:pointer;font-weight:500}.tn b:hover{color:var(--ac)}.tn small{color:var(--mu)}
+.empty{color:var(--mu);font-style:italic}.hint{color:var(--mu);padding:40px 0}
+@media(max-width:760px){body{grid-template-columns:1fr;grid-template-rows:42vh 1fr;height:auto}aside{border-right:0;border-bottom:1px solid var(--bd)}main{padding:16px}}
+</style></head><body>
+<aside><header><h1>Nipuna CRM Cartograph</h1><div class="sub" id="stats"></div><input id="q" placeholder="Search a function or file…" autocomplete="off"><div class="chips" id="chips"></div></header><div id="list"></div></aside>
+<main id="main"><div class="hint">Pick a function on the left. You will see what it calls, who calls it, and a call tree you can expand level by level across files.</div></main>
+<script>
+const D=__DATA__,F=D.F,out=F.map(()=>[]),inn=F.map(()=>[]);
+D.E.forEach(([a,b,l])=>{out[a].push([b,l]);inn[b].push([a,l])});
+const LAY=["routes","controllers","services","repositories","models","cli","config"],on=new Set(LAY.concat("app"));
+const col=y=>`var(--${y})`,$=s=>document.querySelector(s);
+const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const cross=D.E.filter(([a,b])=>F[a].f!==F[b].f).length;
+$("#stats").textContent=`${F.length} functions · ${D.E.length} calls · ${cross} across files`;
+$("#chips").innerHTML=LAY.map(y=>`<button class="chip on" data-y="${y}" style="background:${col(y)}">${y}</button>`).join("");
+$("#chips").onclick=e=>{const y=e.target.dataset.y;if(!y)return;const b=e.target;on.has(y)?(on.delete(y),b.classList.remove("on"),b.style.background=""):(on.add(y),b.classList.add("on"),b.style.background=col(y));draw()};
+let sel=-1;
+function draw(){const q=$("#q").value.toLowerCase();let h="",last="";
+ F.forEach((f,i)=>{if(!on.has(f.y))return;if(q&&!(f.n.toLowerCase().includes(q)||f.f.toLowerCase().includes(q)))return;
+  if(f.f!==last){h+=`<div class="file">${f.f}</div>`;last=f.f}
+  h+=`<div class="row${i===sel?" sel":""}" data-i="${i}"><i class="dot" style="background:${col(f.y)}"></i><span class="n">${esc(f.n)}</span><span class="cnt">${out[i].length}↓ ${inn[i].length}↑</span></div>`});
+ $("#list").innerHTML=h||'<div class="hint" style="padding:12px">No match.</div>'}
+$("#q").oninput=draw;$("#list").onclick=e=>{const r=e.target.closest(".row");if(r)go(+r.dataset.i)};
+const link=(i,l)=>{const f=F[i];return `<div class="lnk" data-go="${i}"><i class="dot" style="background:${col(f.y)}"></i><b>${esc(f.n)}</b><small>${f.f}${l?":"+l:""}</small></div>`};
+function tree(i,seen){const ks=out[i].filter(([b])=>!seen.has(b));if(!ks.length)return"";
+ return `<ul class="t">`+ks.map(([b,l])=>{const f=F[b],has=out[b].length>0,s2=new Set(seen).add(b);
+  return `<li><div class="tn"><span class="tg" data-t="${b}" data-s="${[...s2]}">${has?"▸":"·"}</span><i class="dot" style="background:${col(f.y)}"></i><b data-go="${b}">${esc(f.n)}</b><small>${f.f}</small></div></li>`}).join("")+`</ul>`}
+function go(i){sel=i;const f=F[i];draw();
+ const o=out[i].filter(([b])=>F[b].f!==f.f),same=out[i].filter(([b])=>F[b].f===f.f);
+ $("#main").innerHTML=`<h2><i class="dot" style="background:${col(f.y)}"></i> ${esc(f.n)}</h2><div class="loc">${f.f}:${f.l}–${f.e} · ${f.y}</div>${f.d?`<div class="doc">${esc(f.d)}</div>`:""}
+ <div class="cols"><div class="card"><h3>Uses (other files) · ${o.length}</h3>${o.map(([b,l])=>link(b,l)).join("")||'<div class="empty">Calls nothing in other files</div>'}
+ ${same.length?`<h3 style="margin-top:12px">Uses (same file) · ${same.length}</h3>${same.map(([b,l])=>link(b,l)).join("")}`:""}</div>
+ <div class="card"><h3>Used by · ${inn[i].length}</h3>${inn[i].map(([a,l])=>link(a,l)).join("")||'<div class="empty">Nothing in the backend calls it (an entry point, job or unused)</div>'}</div></div>
+ <div class="card"><h3>Call tree: how it is built</h3><ul class="t root"><li><div class="tn"><span class="tg" data-t="${i}" data-s="${i}">▾</span><i class="dot" style="background:${col(f.y)}"></i><b>${esc(f.n)}</b></div>${tree(i,new Set([i]))}</li></ul></div>`;
+ $("#main").scrollTop=0;document.querySelector(".row.sel")?.scrollIntoView({block:"nearest"})}
+$("#main").onclick=e=>{const g=e.target.closest("[data-go]");if(g)return go(+g.dataset.go);
+ const t=e.target.closest(".tg");if(!t||t.textContent==="·")return;const li=t.closest("li"),sub=li.querySelector(":scope>ul");
+ if(sub){sub.remove();t.textContent="▸"}else{li.insertAdjacentHTML("beforeend",tree(+t.dataset.t,new Set(t.dataset.s.split(",").map(Number))));t.textContent="▾"}};
+draw();
+</script></body></html>

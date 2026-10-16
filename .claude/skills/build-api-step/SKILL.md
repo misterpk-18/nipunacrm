@@ -9,6 +9,7 @@ Flask + SQLAlchemy 2 over the existing `nipunacrm` schema. Follow `docs/API.md` 
 
 ## 0. Read first
 
+0. **Scope the code you read.** Don't scan `backend/`. Run `flask --app app cartograph files <module>:<function>` on the closest existing function (see `CLAUDE.md`) and read only its READ / CHECK files plus the same module in the layers you touch.
 1. The step's section in `docs/API.md` (endpoints, roles, notes) and any "As built" notes of earlier steps.
 2. The matching section of `docs/DATABASE.md` — the database already enforces many rules; don't re-implement them, let their messages through.
 3. The real columns of every table you'll map:
