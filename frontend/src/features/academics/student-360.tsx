@@ -27,6 +27,7 @@ import { date, dateTime, money, phone, sumMoney } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { useCan } from "./can";
 import { FormDialog, LmsRefreshButton } from "./shared";
+import { isHidden } from "@/auth/access";
 
 export function Student360({ personId }: { personId: number }) {
   const student = useQuery({ queryKey: studentKeys.detail(personId), queryFn: () => studentsApi.get(personId), retry: false });
@@ -236,11 +237,17 @@ function AdmissionsTab({ personId }: { personId: number }) {
               cell: (a) => {
                 const active = allocationsOf(a.admission_id).filter((x) => x.status === "Active");
                 return active.length
-                  ? active.map((x) => (
-                      <Link key={x.allocation_id} to="/batches/$batchId" params={{ batchId: String(x.batch_id) }} className="mr-2 text-primary">
-                        {x.batch_code}
-                      </Link>
-                    ))
+                  ? active.map((x) =>
+                      isHidden("/batches") ? (
+                        <span key={x.allocation_id} className="mr-2">
+                          {x.batch_code}
+                        </span>
+                      ) : (
+                        <Link key={x.allocation_id} to="/batches/$batchId" params={{ batchId: String(x.batch_id) }} className="mr-2 text-primary">
+                          {x.batch_code}
+                        </Link>
+                      ),
+                    )
                   : "Awaiting allocation";
               },
             },

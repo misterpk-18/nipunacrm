@@ -95,11 +95,12 @@ Many stage moves happen automatically: converting a qualified lead puts it at *C
 
 - A lead can be entered by staff (phone, walk-in, WhatsApp), come from the website or ads, or be **imported from a CSV file** (for example college data or outreach lists).
 - For every lead the system records **where it came from** (source such as Google Ads, Referral, Walk-in), **how they contacted us** (channel) and **how it was entered**, so marketing performance can be measured.
-- **New lead is a quick add:** Name, Mobile, Course and Source. Everything else is filled in automatically and shown under **More details** (branch from the user or the branch filter, owner = the user for Sales / Front Office, contact channel and entry method as last used, status New, and the next follow-up two staffed hours from now). More details opens by itself if a rejected field is inside it.
+- **New lead is a quick add:** Name, Mobile, **Email (required)**, Course and Source. Everything else is filled in automatically and shown under **More details** (branch from the user or the branch filter, owner = the user for Sales / Front Office, contact channel and entry method as last used, status New, and the next follow-up two staffed hours from now). More details opens by itself if a rejected field is inside it.
 - **Duplicates show up as you type.** After the 10th digit of the mobile number, the form checks it: if the number already belongs to someone the user may see it shows "Already a person: <name> · N courses" with **Add course to this person** (which switches to *Add another course*; "Not this person" undoes it). If the number exists only at a branch the user cannot see, a plain notice says so without any detail. Nothing is merged automatically.
 - One person can enquire about several courses. The system keeps **one record per person** and a separate lead per course, so a returning learner's history stays together ("Add another course").
 - **Duplicates are never merged automatically.** If a phone number already exists, the new record is flagged *Duplicate Review* for a person to check.
-- CSV imports are checked row by row before anything is saved (valid phone and email, real course, correct branch); invalid rows are skipped and duplicates held for review.
+- **Website enquiries** *(live on nipunacrm.com since 19 Oct 2026)*. The enquiry form and the Call / WhatsApp popup on nipunatechnologies.com send each submission straight to the **Enquiries** screen (Sales menu), not to Leads. The source shows the marketing source the website reports (Google Ads, Meta Ads, or Website for organic / direct) and the channel shows the enquiry type (Web form, Phone call for a call request, WhatsApp for a WhatsApp request); the time is when the visitor submitted, if the website sends it. The Branch Manager of the chosen branch, the Founder / CEO and the Super Admin get a notification. Open an enquiry to see the message, the course asked for, the ad tracking and any possible duplicates (same mobile or email as a person, an open lead or another enquiry), then **Convert to lead**, **Link** it to the existing lead, or mark it **Invalid-Spam** / **Test**. The same mobile or email again within 24 hours goes to *Duplicate Review*; a course the branch doesn't offer is kept as text in the message. If the visitor ticked the WhatsApp box, that consent is recorded on the person when the enquiry is converted or linked. The 10-minute first-contact clock counts from when the form was sent, so convert website enquiries quickly.
+- **CSV import is hidden for now** (15 Oct 2026: no Import CSV button on Leads; `SHOW_IMPORT` in `leads-list.tsx` brings it back). When on, CSV imports are checked row by row before anything is saved (valid phone and email, real course, correct branch); invalid rows are skipped and duplicates held for review.
 - A lead created by a counsellor belongs to that counsellor. A lead without an owner creates a task for the branch manager to assign it; managers can **bulk-assign** several leads at once. Ownership changes are recorded.
 
 #### 4.2 Counselling and follow-ups
@@ -322,7 +323,7 @@ Response targets count **staffed working time** — branch opening hours, exclud
 | Two-person rule | Nobody approves their own discount, correction or document (a Founder / CEO or Super Admin may approve their own fee change and pay out a refund they decided) |
 | Reasons required | Lost leads, cancellations, rejections, deadline changes, reversals and refunds all need a written reason |
 | Full audit trail | Sensitive actions (approvals, money, fee changes, access changes, settings) record who did what, when, and the before / after values |
-| Secure sign-in | Sessions end after 30 minutes idle or 12 hours at most; 5 wrong passwords lock the account for 15 minutes; new or reset accounts must set their own password; sensitive admin actions ask for the password again |
+| Secure sign-in | Sessions end after 30 minutes idle or 12 hours at most; 5 wrong passwords lock the account for 15 minutes; new or reset accounts must set their own password; sensitive admin actions ask for the password again. **Forgot password?** on the sign-in page: the staff member enters their mobile, gets a 6-digit code on WhatsApp (valid 10 minutes, 5 tries, a new code at most once a minute and 5 an hour) and sets a new password, which signs them out everywhere. The page never says whether a number has an account; a number shared by two active accounts gets no code (ask an admin) |
 | Controlled access | Admins grant each person a role per branch, optionally temporary with an expiry date; revoking takes effect immediately |
 
 ### 9. Administration
@@ -339,6 +340,7 @@ Founder / CEO and Super Admin have an **Admin / Settings** area to: manage users
 | Bank / payment gateway (HDFC) | Payments recorded and verified manually | Automatic matching |
 | AI | Rule-based suggestions on live data; the counselling brief uses Claude when an API key is configured | Automatic replies / reminders through a connected channel (Approved automatic profile) after acceptance tests |
 | Some dashboard tiles and report sections from the prototype | Not shown | Added as the data becomes available |
+| Batches, Waiting for batch, LMS access, Placement & alumni | Hidden for every role (screens and API kept) | Switched back on when academics and placement are ready |
 
 Open product decisions are listed in [DEVELOPMENT.md · Part E (backlog)](DEVELOPMENT.md#part-e--backlog).
 
@@ -451,6 +453,8 @@ flowchart TD
 
 ✅ = screen visible. Admin = Founder / CEO and Super Admin (identical for screens).
 
+**Hidden for now (15 Oct 2026):** **Batches**, **Waiting for batch**, **LMS access** and **Placement & alumni** are switched off for every role: no menu or phone-bar entry, a direct link shows "no access", and batch codes on Admissions / Student 360 show as plain text. The rows below show who gets them once they are switched back on (`HIDDEN_PATHS` in `frontend/src/auth/access.ts`).
+
 | Screen | Admin | BM | Sales / FO | Accounts | Acad. Coord. | Trainer | Placement | HR |
 |---|---|---|---|---|---|---|---|---|
 | Dashboard (Overview) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -458,6 +462,7 @@ flowchart TD
 | LMS access (V4, read-only) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Workflow guide (V4) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Persons · Person 360 | ✅ | ✅ | ✅ | | | | | |
+| Enquiries | ✅ | ✅ | ✅ | | | | | |
 | Leads (list) | ✅ | ✅ | ✅ | | | | | |
 | Lead 360 | ✅ | ✅ | ✅ | ✅ (read-only, by link) | ✅ (read-only, by link) | | | |
 | Deal pipeline | ✅ | ✅ | ✅ | | | | | |
@@ -868,7 +873,7 @@ Actions that need it:
 
 | Area | Actions |
 |---|---|
-| Users | Create user · reset password · add / remove scopes · force sign-out a session |
+| Users | Create user (name, email, **mobile — required, one active account per number, used for the forgot-password code**, role; branch only for branch roles — company-wide roles such as Founder / Super Admin get all branches; type a password or **Generate** a random one, blank = system-generated) · after creating or resetting, the credentials are shown once with **Copy credentials** (clipboard) and **Download CSV**; the user must change the password at first sign-in · reset password · add / remove scopes · force sign-out a session |
 | Configuration | Settings · concession limits · offer activate / deactivate |
 | Money | Approve special closing · verify / fail payment · approve correction · approve / apply fee change · decide refund |
 | Academics | Revoke certificate · alumni support extension |

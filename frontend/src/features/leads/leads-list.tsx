@@ -15,6 +15,9 @@ import { useApiMutation } from "@/lib/mutation";
 import { ImportDialog } from "./import-dialog";
 import { NewLeadDialog } from "./new-lead-dialog";
 
+/** CSV import is hidden for now (the dialog and POST /lead-imports are kept); set true to bring the button back. */
+const SHOW_IMPORT = false;
+
 export type LeadSearch = Omit<LeadFilters, "per_page" | "branch_id">;
 
 const FILTER_KEYS: (keyof LeadSearch)[] = ["lead_status", "stage", "course_id", "source_id", "intake_status", "priority", "queue", "assigned_to"];
@@ -123,10 +126,12 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
               <Plus />
               New lead
             </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload />
-              Import CSV
-            </Button>
+            {SHOW_IMPORT && (
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                <Upload />
+                Import CSV
+              </Button>
+            )}
           </>
         }
       />
@@ -327,7 +332,7 @@ export function LeadsList({ search, onSearch }: { search: LeadSearch; onSearch: 
         <Pagination meta={leads.data?.meta} onPage={(page) => onSearch({ ...search, page })} />
       </div>
       <NewLeadDialog open={newOpen} onOpenChange={setNewOpen} />
-      <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
+      {SHOW_IMPORT && <ImportDialog open={importOpen} onOpenChange={setImportOpen} />}
     </>
   );
 }

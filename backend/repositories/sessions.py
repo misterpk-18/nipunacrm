@@ -1,8 +1,9 @@
 """Login sessions."""
-from sqlalchemy import func, literal_column, select, update
+from sqlalchemy import select
 
 from config.database import db
 from models import ActiveSession, UserSession
+from repositories.common import text
 
 
 def create(session: UserSession) -> UserSession:
@@ -22,35 +23,48 @@ def get(session_id: str) -> UserSession | None:
 
 
 def list_active_for_user(user_id: int) -> list[ActiveSession]:
-    stmt = select(ActiveSession).where(ActiveSession.user_id == user_id).order_by(ActiveSession.last_seen_at.desc())
-    return list(db.session.execute(stmt).scalars())
+    sql = text("""
+        SELECT s.*
+        FROM active_sessions s
+        WHERE s.user_id = :user_id
+        ORDER BY s.last_seen_at DESC
+    """)
+    return list(db.session.execute(select(ActiveSession).from_statement(sql), {"user_id": user_id}).scalars())
 
 
 def touch(session_id: str) -> None:
     """Record activity, at most once a minute per session."""
     db.session.execute(
-        update(UserSession)
-        .where(UserSession.session_id == session_id, UserSession.last_seen_at < func.now() - literal_column("interval '1 minute'"))
-        .values(last_seen_at=func.now())
+        text("""
+            UPDATE user_sessions SET last_seen_at = now()
+            WHERE session_id = :session_id AND last_seen_at < now() - interval '1 minute'
+        """),
+        {"session_id": session_id},
     )
 
 
 def mark_reauthenticated(session_id: str) -> None:
     db.session.execute(
-        update(UserSession).where(UserSession.session_id == session_id).values(reauthenticated_at=func.now())
+        text("UPDATE user_sessions SET reauthenticated_at = now() WHERE session_id = :session_id"),
+        {"session_id": session_id},
     )
 
 
 def revoke(session_id: str, reason: str) -> None:
     db.session.execute(
-        update(UserSession)
-        .where(UserSession.session_id == session_id, UserSession.revoked_at.is_(None))
-        .values(revoked_at=func.now(), revoke_reason=reason)
+        text("""
+            UPDATE user_sessions SET revoked_at = now(), revoke_reason = :reason
+            WHERE session_id = :session_id AND revoked_at IS NULL
+        """),
+        {"session_id": session_id, "reason": reason},
     )
 
 
 def revoke_all_for_user(user_id: int, reason: str, except_session_id: str | None = None) -> int:
-    stmt = update(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+    conditions = ["user_id = :user_id", "revoked_at IS NULL"]
+    params = {"user_id": user_id, "reason": reason}
     if except_session_id:
-        stmt = stmt.where(UserSession.session_id != except_session_id)
-    return db.session.execute(stmt.values(revoked_at=func.now(), revoke_reason=reason)).rowcount
+        conditions.append("session_id != :except_session_id")
+        params["except_session_id"] = except_session_id
+    sql = text("UPDATE user_sessions SET revoked_at = now(), revoke_reason = :reason WHERE " + " AND ".join(conditions))
+    return db.session.execute(sql, params).rowcount

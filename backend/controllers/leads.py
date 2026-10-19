@@ -30,15 +30,20 @@ def _require_changes(data: dict) -> dict:
     return data
 
 
-def _person_rules(v: Validator, creating: bool = True) -> None:
+def _person_rules(v: Validator, creating: bool = True, email_required: bool = False) -> None:
     v.string("full_name", required=creating, min_length=1, max_length=150)
     v.phone("phone", required=creating)
     v.phone("alternate_phone", nullable=True)
     v.phone("whatsapp_number", nullable=True)  # empty = same as mobile
-    v.email("email", nullable=True)
+    v.email("email", required=email_required, nullable=not email_required)
     v.string("city", nullable=True, max_length=100)
     v.string("highest_qualification", nullable=True, max_length=100)
     v.choice("preferred_language", LANGUAGES)
+
+
+def _new_lead_person_rules(v: Validator) -> None:
+    """A person created through the New lead form must have an email (an existing person is linked by person_id)."""
+    _person_rules(v, email_required=True)
 
 
 def _clean_person(data: dict) -> dict:
@@ -139,7 +144,15 @@ def list_enquiries():
 
 
 def get_enquiry(enquiry_id: int):
-    return ok(enquiries_service.get_enquiry(enquiry_id).to_dict())
+    enquiry = enquiries_service.get_enquiry(enquiry_id)
+    return ok({**enquiry.to_dict(), "matches": enquiries_service.matches_for(enquiry)})
+
+
+def update_enquiry(enquiry_id: int):
+    v = Validator(json_body())
+    v.choice("intake_status", MANUAL_INTAKE)
+    v.boolean("is_genuine")
+    return ok(enquiries_service.update_enquiry(enquiry_id, _require_changes(v.validate())).to_dict())
 
 
 def link_enquiry(enquiry_id: int):
@@ -164,7 +177,7 @@ def convert_enquiry(enquiry_id: int):
 def create_lead():
     v = Validator(json_body())
     v.integer("person_id", nullable=True, min_value=1)
-    v.nested("person", _person_rules, nullable=True)
+    v.nested("person", _new_lead_person_rules, nullable=True)
     v.integer("branch_id", required=True, min_value=1)
     v.integer("course_id", nullable=True, min_value=1)
     v.integer("lead_source_id", required=True, min_value=1)

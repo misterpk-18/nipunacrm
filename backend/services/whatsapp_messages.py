@@ -58,6 +58,8 @@ def retry(outbox_id: int, confirm_not_delivered: bool) -> WhatsappOutbox:
         raise BusinessRule(f"A {row.status} message can't be sent again")
     if row.source_type == "lms":
         raise BusinessRule("This message came from the LMS. The LMS sends it again itself, so it can't be resent here")
+    if row.source_type == "password_reset":
+        raise BusinessRule("A password reset code is never sent twice. The user asks for a new one on the sign-in page")
     if row.to_phone is None:
         raise BusinessRule("There is no WhatsApp number on file for this person. Add one, then queue the message again")
     if row.status == "Failed" and UNCLEAR in (row.last_error or "") and not confirm_not_delivered:

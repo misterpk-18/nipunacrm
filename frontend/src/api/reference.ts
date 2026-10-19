@@ -24,7 +24,7 @@ export type Branch = BranchRef & {
   is_active: boolean;
 };
 
-export type Role = { role_id: number; role_code: RoleCode; role_name: string };
+export type Role = { role_id: number; role_code: RoleCode; role_name: string; is_company_wide: boolean };
 
 export type CourseSummary = {
   course_id: number;

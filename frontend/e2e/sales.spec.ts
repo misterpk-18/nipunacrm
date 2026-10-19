@@ -32,7 +32,7 @@ async function createLead(request: APIRequestContext, name: string, withCourse =
     headers,
     data: {
       branch_id: 1,
-      person: { full_name: name, phone },
+      person: { full_name: name, phone, email: `${phone}@example.test` },
       course_id: withCourse ? course.course_id : null,
       lead_source_id: pick("lead_sources", "Walk-in"),
       contact_channel_id: pick("contact_channels", "In person"),

@@ -224,11 +224,15 @@ test("admin users & access: create with one-time password, grant/revoke scope, r
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Full name").fill(`E2E Trainer ${id}`);
   await dialog.getByLabel("Email").fill(email);
+  await dialog.getByLabel("Mobile").fill(`9${String(Date.now()).slice(-9)}`);
   await dialog.getByLabel("Role").selectOption({ label: "Trainer" });
-  await dialog.getByLabel("Branch scope").selectOption({ label: "Guntur" });
+  await dialog.getByLabel("Branch", { exact: true }).selectOption({ label: "Guntur" });
+  await dialog.getByRole("button", { name: "Generate" }).click();
+  const chosen = await dialog.getByLabel("Password (optional)").inputValue();
   await dialog.getByRole("button", { name: "Create user" }).click();
   await expect(page.getByRole("heading", { name: "User created" })).toBeVisible();
-  await expect(page.getByLabel("Temporary password")).not.toBeEmpty();
+  await expect(page.getByLabel("Temporary password")).toHaveText(chosen);
+  await expect(page.getByRole("button", { name: "Download CSV" })).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click();
 
   const detail = page.locator("section", { has: page.getByRole("heading", { name: `E2E Trainer ${id}` }) });

@@ -28,14 +28,15 @@ def create_user():
     v = Validator(json_body())
     v.string("full_name", required=True, max_length=150)
     v.email("email", required=True)
-    v.string("phone", nullable=True, default=None, max_length=20)
+    v.phone("phone", required=True)  # the "forgot password" code goes to this number on WhatsApp (db 046)
     v.integer("person_id", nullable=True, default=None)
+    v.string("password", nullable=True, default=None, strip=False, max_length=128)  # blank = the server generates one
     v.boolean("is_recovery_account", default=False)
     v.list_of("scopes", _scope_rules, required=True, min_items=1)
     data = v.validate()
 
     user, temporary_password = users_service.create_user(data)
-    # The temporary password is shown once; the user must change it at first login
+    # The password (chosen by the admin or generated) is shown once; the user must change it at first login
     return created({"user": user.to_dict(), "temporary_password": temporary_password})
 
 
@@ -47,7 +48,7 @@ def update_user(user_id: int):
     v = Validator(json_body())
     v.string("full_name", required=False, min_length=1, max_length=150)
     v.email("email")
-    v.string("phone", nullable=True, max_length=20)
+    v.phone("phone", nullable=True)
     v.boolean("is_active")
     data = v.validate()
     if not data:

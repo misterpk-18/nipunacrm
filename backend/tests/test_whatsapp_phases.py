@@ -100,9 +100,13 @@ def test_lms_account_is_reported_once_and_only_when_new(client, people, course):
     person_id = flow["admission"]["person"]["person_id"]
     now = datetime.now(timezone.utc)
     lms_pull.apply_person({"crm_person_id": person_id, "lms_user_id": "u-1", "lms_provisioned_at": now.isoformat()})
+    assert of("lms_account_activated") == []      # provisioned only: the student has not activated yet
+    lms_pull.apply_person({"crm_person_id": person_id, "lms_user_id": "u-1", "lms_provisioned_at": now.isoformat(),
+                           "lms_activated_at": now.isoformat()})
     (row,) = of("lms_account_activated")
     assert row.params["admission_no"] == flow["admission"]["admission_code"] and row.to_phone == NUMBER
-    lms_pull.apply_person({"crm_person_id": person_id, "lms_user_id": "u-1", "lms_provisioned_at": now.isoformat()})
+    lms_pull.apply_person({"crm_person_id": person_id, "lms_user_id": "u-1", "lms_provisioned_at": now.isoformat(),
+                           "lms_activated_at": now.isoformat()})
     assert len(of("lms_account_activated")) == 1
 
 
@@ -110,7 +114,7 @@ def test_an_account_the_pull_is_catching_up_on_is_not_news(client, people, cours
     flow = admitted(client, people, course)
     old = datetime.now(timezone.utc) - timedelta(days=30)
     lms_pull.apply_person({"crm_person_id": flow["admission"]["person"]["person_id"], "lms_user_id": "u-1",
-                           "lms_provisioned_at": old.isoformat()})
+                           "lms_provisioned_at": old.isoformat(), "lms_activated_at": old.isoformat()})
     assert of("lms_account_activated") == []
 
 
@@ -485,3 +489,24 @@ def test_a_notification_shows_the_whatsapp_alert_that_went_with_it(client, peopl
         assert verified[0]["external_reason"] == "No WhatsApp number on file"
     plain = [n for n in mine if n["external_channel"] is None]
     assert all(n["external_status"] is None for n in plain)
+
+
+def test_each_new_batch_the_lms_reports_is_messaged_once(client, people, course):
+    """A move in the LMS (old row Moved, new row Active on another batch) tells the student about the new batch;
+    reading the same history again sends nothing more."""
+    from tests.test_lms_pull import academics_entry, allocation, batch_entry
+
+    aid = admitted(client, people, course)["admission"]["admission_id"]
+    today = datetime.now(timezone.utc).date().isoformat()
+    lms_pull.apply_batch(batch_entry(lms_course_id="NIT-GNT-BAT-2026-000101"))
+    lms_pull.apply_batch(batch_entry(lms_course_id="NIT-GNT-BAT-2026-000102"))
+    first = allocation(lms_course_id="NIT-GNT-BAT-2026-000101", allocated_on=today)
+    lms_pull.apply_academics(academics_entry(aid, allocations=[first]))
+    assert len(of("batch_allocated")) == 1
+    moved = [{**first, "status": "Moved", "ended_on": today, "end_reason": "Timing"},
+             allocation(lms_course_id="NIT-GNT-BAT-2026-000102", allocated_on=today)]
+    lms_pull.apply_academics(academics_entry(aid, allocations=moved))
+    assert [r.params["batch_name"][-6:] for r in of("batch_allocated")].count("000102") == 1
+    assert len(of("batch_allocated")) == 2
+    lms_pull.apply_academics(academics_entry(aid, allocations=moved))
+    assert len(of("batch_allocated")) == 2

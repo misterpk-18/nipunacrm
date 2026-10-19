@@ -22,7 +22,7 @@ test("WhatsApp: a new enquiry's message shows on the list and the person tab; co
     headers: sales,
     data: {
       branch_id: 1,
-      person: { full_name: name, phone: uniquePhone() },
+      person: { full_name: name, phone: uniquePhone(), email: `${uniquePhone()}@example.test` },
       course_id: 4,
       lead_source_id: id("lead_sources", "GOOGLE_ADS"),
       contact_channel_id: id("contact_channels", "WEB_FORM"),

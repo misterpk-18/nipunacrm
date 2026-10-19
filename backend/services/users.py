@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from config.database import db
 from models import Branch, Role, User, UserRoleScope
+from repositories import password_reset as reset_repo
 from repositories import sessions as sessions_repo
 from repositories import users as users_repo
 from repositories.common import paginate
@@ -19,6 +20,12 @@ PROFILE_FIELDS = ("full_name", "email", "phone", "is_active")
 
 def _snapshot(user: User) -> dict:
     return {field: getattr(user, field) for field in PROFILE_FIELDS}
+
+
+def _guard_phone_free(phone: str | None, user_id: int | None = None) -> None:
+    """One active account per mobile, so a "forgot password" code always reaches the right person."""
+    if phone and any(u.user_id != user_id for u in reset_repo.active_users_with_phone(phone)):
+        raise Conflict("Another active user has this mobile number", {"phone": ["Already used by another active user"]})
 
 
 def _guard_not_self(user_id: int, message: str) -> None:
@@ -44,10 +51,18 @@ def create_user(data: dict) -> tuple[User, str]:
     actor = current_user()
     if users_repo.email_taken(data["email"]):
         raise Conflict("A user with this email already exists", {"email": ["Already in use"]})
+    _guard_phone_free(data["phone"])
     if data["is_recovery_account"] and not actor.has_role("FOUNDER_CEO"):
         raise Forbidden("Only the Founder / CEO can create a recovery account")
 
-    temporary_password = generate_temporary_password()
+    temporary_password = data.get("password")
+    if temporary_password:
+        try:
+            check_password_policy(temporary_password)
+        except ValidationError as error:
+            raise ValidationError(error.message, {"password": error.details["new_password"]}) from None
+    else:
+        temporary_password = generate_temporary_password()
     user = User(
         full_name=data["full_name"],
         email=data["email"],
@@ -73,6 +88,8 @@ def update_user(user_id: int, data: dict) -> User:
 
     if "email" in data and users_repo.email_taken(data["email"], exclude_user_id=user_id):
         raise Conflict("A user with this email already exists", {"email": ["Already in use"]})
+    if data.get("phone") or data.get("is_active") is True:
+        _guard_phone_free(data.get("phone", user.phone), user_id)
 
     if data.get("is_active") is False and user.is_active:
         # Admins can't deactivate themselves, so the acting admin always remains

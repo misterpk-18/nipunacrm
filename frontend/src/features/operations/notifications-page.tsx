@@ -30,6 +30,8 @@ function EntityLink({ n }: { n: Notification }) {
       return <Link to="/refunds" className={cls}>Open refunds</Link>;
     case "task":
       return <Link to="/tasks" className={cls}>Open tasks</Link>;
+    case "enquiry":
+      return <Link to="/enquiries" search={{ q: undefined }} className={cls}>Open enquiries</Link>;
     case "communication":
       return <Link to="/communications" className={cls}>Open communications</Link>;
     default:

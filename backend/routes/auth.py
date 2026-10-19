@@ -11,6 +11,16 @@ def login():
     return auth_controller.login()
 
 
+@auth_bp.post("/forgot-password")
+def forgot_password():
+    return auth_controller.forgot_password()
+
+
+@auth_bp.post("/reset-password")
+def reset_password_with_code():
+    return auth_controller.reset_password_with_code()
+
+
 @auth_bp.post("/logout")
 @login_required
 def logout():

@@ -1,8 +1,8 @@
-/** Admin → Users & Access: list, create (one-time temporary password), edit, deactivate, reset password, grant / revoke scopes. */
+/** Admin → Users & Access: list, create (chosen or generated temporary password, copy / CSV download), edit, deactivate, reset password, grant / revoke scopes. */
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { Copy, KeyRound, Plus, ShieldPlus, UserPlus } from "lucide-react";
+import { Copy, Download, KeyRound, Plus, ShieldPlus, Shuffle, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
   adminApi,
@@ -48,6 +48,60 @@ function useBranchOptions() {
   }));
 }
 
+/** Credentials shown once after creating a user or resetting a password. */
+type Secret = {
+  title: string;
+  email: string;
+  password: string;
+  name?: string;
+  phone?: string | null;
+  role?: string;
+  branch?: string;
+};
+
+/** A random 14-character password with upper, lower, digit and symbol (no look-alike characters). */
+function generatePassword(): string {
+  const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789", "!@#$%*?"];
+  const all = sets.join("");
+  const pick = (chars: string) => chars[crypto.getRandomValues(new Uint32Array(1))[0] % chars.length];
+  const chars = [pick(sets[0]), ...sets.map(pick), ...Array.from({ length: 9 }, () => pick(all))];
+  // shuffle all but the first, so it always starts with a letter (safe to paste into a spreadsheet)
+  for (let i = chars.length - 1; i > 1; i--) {
+    const j = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % i);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+function credentialRows(secret: Secret): [string, string][] {
+  return [
+    ["Name", secret.name ?? ""],
+    ["Email", secret.email],
+    ["Mobile", secret.phone ?? ""],
+    ["Role", secret.role ?? ""],
+    ["Branch", secret.branch ?? ""],
+    ["Temporary password", secret.password],
+    ["Sign-in", window.location.origin],
+  ].filter(([, v]) => v !== "") as [string, string][];
+}
+
+/** Quote a CSV cell; text cells that a spreadsheet would run as a formula get a leading apostrophe (never the password). */
+function csvCell(value: string, isPassword = false): string {
+  const safe = !isPassword && /^[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function downloadCredentials(secret: Secret) {
+  const rows = credentialRows(secret);
+  const csv = [rows.map(([k]) => csvCell(k)).join(","), rows.map(([k, v]) => csvCell(v, k === "Temporary password")).join(",")].join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv + "\r\n"], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `nipuna-login-${secret.email.split("@")[0]}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function scopeText(s: { role_name: string; branch_code: string | null }) {
   return `${s.role_name} · ${s.branch_code ?? "All branches"}`;
 }
@@ -58,11 +112,7 @@ export function UsersTab() {
   const [filters, setFilters] = useState<UserFilters>({ page: 1 });
   const [selected, setSelected] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
-  const [secret, setSecret] = useState<{
-    title: string;
-    email: string;
-    password: string;
-  } | null>(null);
+  const [secret, setSecret] = useState<Secret | null>(null);
   const users = useQuery({
     queryKey: adminKeys.userList(filters),
     queryFn: () => adminApi.users(filters),
@@ -206,9 +256,9 @@ export function UsersTab() {
       <NewUserDialog
         open={creating}
         onOpenChange={setCreating}
-        onCreated={(u, password) => {
+        onCreated={(u, password, access) => {
           setSelected(u.user_id);
-          setSecret({ title: "User created", email: u.email, password });
+          setSecret({ title: "User created", email: u.email, password, name: u.full_name, phone: u.phone, ...access });
         }}
       />
       <SecretDialog secret={secret} onClose={() => setSecret(null)} />
@@ -220,22 +270,38 @@ function SecretDialog({
   secret,
   onClose,
 }: {
-  secret: { title: string; email: string; password: string } | null;
+  secret: Secret | null;
   onClose: () => void;
 }) {
+  const copy = (text: string, what: string) =>
+    void navigator.clipboard?.writeText(text).then(
+      () => toast.success(`${what} copied`),
+      () => toast.error("Copy failed — select and copy by hand"),
+    );
+  const rows = secret ? credentialRows(secret) : [];
   return (
     <Dialog open={Boolean(secret)} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{secret?.title}</DialogTitle>
           <DialogDescription>
-            Share this temporary password with {secret?.email} securely. It is
+            Share these credentials with {secret?.email} securely. The password is
             shown only once; they must change it at first sign-in.
           </DialogDescription>
         </DialogHeader>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          {rows
+            .filter(([k]) => k !== "Temporary password")
+            .map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="break-all">{v}</dd>
+              </div>
+            ))}
+        </dl>
         <div className="flex items-center gap-2">
           <code
-            className="flex-1 rounded-md border bg-muted px-3 py-2 font-mono text-base"
+            className="flex-1 break-all rounded-md border bg-muted px-3 py-2 font-mono text-base"
             aria-label="Temporary password"
           >
             {secret?.password}
@@ -244,17 +310,23 @@ function SecretDialog({
             variant="outline"
             size="icon"
             aria-label="Copy password"
-            onClick={() => {
-              void navigator.clipboard?.writeText(secret?.password ?? "").then(
-                () => toast.success("Copied"),
-                () => undefined,
-              );
-            }}
+            onClick={() => copy(secret?.password ?? "", "Password")}
           >
             <Copy />
           </Button>
         </div>
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => copy(rows.map(([k, v]) => `${k}: ${v}`).join("\n"), "Credentials")}
+            >
+              <Copy /> Copy credentials
+            </Button>
+            <Button variant="outline" onClick={() => secret && downloadCredentials(secret)}>
+              <Download /> Download CSV
+            </Button>
+          </div>
           <Button onClick={onClose}>Done</Button>
         </DialogFooter>
       </DialogContent>
@@ -269,6 +341,7 @@ type NewUserValues = {
   role_code: string;
   branch_id: string;
   expires_at: string;
+  password: string;
   is_recovery_account: boolean;
 };
 
@@ -279,7 +352,7 @@ function NewUserDialog({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  onCreated: (u: AdminUser, password: string) => void;
+  onCreated: (u: AdminUser, password: string, access: { role?: string; branch?: string }) => void;
 }) {
   const { hasRole } = useAuth();
   const roles = useRoles();
@@ -292,12 +365,23 @@ function NewUserDialog({
       role_code: "",
       branch_id: "",
       expires_at: "",
+      password: "",
       is_recovery_account: false,
     },
   });
-  const { register, handleSubmit, formState, reset } = form;
+  const { register, handleSubmit, formState, reset, watch, setValue } = form;
+  const [showPassword, setShowPassword] = useState(false);
+  const role = (roles.data ?? []).find((r) => r.role_code === watch("role_code"));
+  // Company-wide roles (Founder, Super Admin, …) have no branch; the DB rejects a branch on them
+  const needsBranch = Boolean(role && !role.is_company_wide);
   useEffect(() => {
-    if (open) reset();
+    if (!needsBranch) setValue("branch_id", "");
+  }, [needsBranch, setValue]);
+  useEffect(() => {
+    if (open) {
+      reset();
+      setShowPassword(false);
+    }
   }, [open, reset]);
   const create = useApiMutation(adminApi.createUser, {
     invalidate: [adminKeys.users, ["staff"]],
@@ -305,7 +389,11 @@ function NewUserDialog({
     success: (r) => `${r.user.full_name} created`,
     onSuccess: (r) => {
       onOpenChange(false);
-      onCreated(r.user, r.temporary_password);
+      const scope = r.user.scopes?.[0];
+      onCreated(r.user, r.temporary_password, {
+        role: role?.role_name ?? scope?.role_name,
+        branch: branchOptions.find((b) => String(b.value) === form.getValues("branch_id"))?.label ?? "All branches",
+      });
     },
     onError: (e) => applyServerErrors(form, e),
   });
@@ -313,7 +401,8 @@ function NewUserDialog({
     create.mutate({
       full_name: v.full_name.trim(),
       email: v.email.trim(),
-      phone: v.phone || null,
+      phone: v.phone.trim(),
+      password: v.password || null,
       is_recovery_account: v.is_recovery_account,
       scopes: [
         {
@@ -336,8 +425,9 @@ function NewUserDialog({
         <DialogHeader>
           <DialogTitle>New user</DialogTitle>
           <DialogDescription>
-            A temporary password is generated and shown once. More role scopes
-            can be granted afterwards.
+            Set a password or generate one (leave blank to let the system pick).
+            It is shown once to copy or download; the user must change it at
+            first sign-in. More role scopes can be granted afterwards.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -359,11 +449,12 @@ function NewUserDialog({
             />
           </Field>
           <Field
-            label="Phone (optional)"
+            label="Mobile"
             htmlFor="nu-phone"
             error={err("phone")}
+            hint="Used for the WhatsApp code when they forget their password"
           >
-            <Input id="nu-phone" inputMode="tel" {...register("phone")} />
+            <Input id="nu-phone" inputMode="tel" placeholder="98765 43210" {...register("phone", { required: "Required" })} />
           </Field>
           <Field label="Role" htmlFor="nu-role" error={err("role_code")}>
             <NativeSelect
@@ -375,18 +466,49 @@ function NewUserDialog({
               {...register("role_code", { required: "Required" })}
             />
           </Field>
+          {needsBranch ? (
+            <Field label="Branch" htmlFor="nu-branch" error={err("branch_id")}>
+              <NativeSelect
+                id="nu-branch"
+                placeholder="Select branch…"
+                options={branchOptions}
+                {...register("branch_id", { required: "Required for this role" })}
+              />
+            </Field>
+          ) : (
+            <Field label="Branch" htmlFor="nu-branch-all">
+              <Input id="nu-branch-all" disabled value={role ? "All branches (company-wide role)" : "Pick a role first"} readOnly />
+            </Field>
+          )}
           <Field
-            label="Branch scope"
-            htmlFor="nu-branch"
-            error={err("branch_id")}
-            hint="Blank = all branches (company-wide roles)"
+            label="Password (optional)"
+            htmlFor="nu-password"
+            error={err("password")}
+            hint="Blank = generated by the system"
+            className="sm:col-span-2"
           >
-            <NativeSelect
-              id="nu-branch"
-              placeholder="All branches"
-              options={branchOptions}
-              {...register("branch_id")}
-            />
+            <div className="flex gap-2">
+              <Input
+                id="nu-password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                className="font-mono"
+                {...register("password", { minLength: { value: 10, message: "At least 10 characters" } })}
+              />
+              <Button type="button" variant="outline" onClick={() => setShowPassword((s) => !s)}>
+                {showPassword ? "Hide" : "Show"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setValue("password", generatePassword(), { shouldValidate: true });
+                  setShowPassword(true);
+                }}
+              >
+                <Shuffle /> Generate
+              </Button>
+            </div>
           </Field>
           <Field
             label="Access expires (optional, IST)"

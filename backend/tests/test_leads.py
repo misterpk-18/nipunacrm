@@ -266,3 +266,17 @@ def test_bulk_assign_is_all_or_nothing(client, people):
     assert [row["owner"]["full_name"] for row in done.get_json()["data"]] == ["Sravani", "Sravani"]
     assert client.post(url, headers=people["sravani"]["h"], json={
         "lead_ids": [guntur[0]["lead_id"]], "assigned_to": people["nikhil"]["id"]}).status_code == 403
+
+
+def test_new_person_needs_an_email_but_an_existing_one_does_not(client, people, course):
+    headers = people["bm"]["h"]
+    body = lead_body()
+    nameless = {"full_name": "No Mail", "phone": "9000000777"}  # lead_body would add an email, so build the person here
+    for person in (nameless, {**nameless, "email": ""}, {**nameless, "email": "not-an-email"}):
+        response = client.post(f"{API}/leads", json={**body, "person": person}, headers=headers)
+        assert response.status_code == 400
+        assert "email" in response.get_json()["error"]["details"]["person"]
+    first = create_lead(client, headers, person={"full_name": "Has Mail", "phone": "9000000778", "email": "has@example.test"})
+    again = client.post(f"{API}/leads", json=lead_body(person_id=first["person"]["person_id"], person=None, course_id=course),
+                        headers=headers)
+    assert again.status_code == 201

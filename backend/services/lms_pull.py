@@ -127,11 +127,13 @@ def apply_person(entry: dict) -> str:
     person = db.session.get(Person, _int(entry.get("crm_person_id")))
     if person is None:
         return "ignored"
-    first_login = person.lms_provisioned_at is None
     changed = _set(person, lms_user_id=entry.get("lms_user_id"),
                    lms_provisioned_at=_datetime(entry.get("lms_provisioned_at")))
-    if first_login and person.lms_provisioned_at is not None:
-        whatsapp_events.lms_account_activated(person, person.lms_provisioned_at)
+    # The login exists at provisioning, but the student has activated only when they first set a password
+    # (`lms_activated_at`, LMS db 122). The message is deduped on its event key, so a repeat sends nothing.
+    activated_at = _datetime(entry.get("lms_activated_at"))
+    if activated_at is not None:
+        whatsapp_events.lms_account_activated(person, activated_at)
     return "applied" if changed else "unchanged"
 
 
@@ -213,7 +215,7 @@ def _apply_allocations(admission: Admission, items: list[dict]) -> bool:
         ended = _start_of(_date(item.get("ended_on")))
         changed |= _set(allocation, status=status, joining_date=_date(item.get("joining_date")),
                         ended_at=None if status == "Active" else ended or allocation.ended_at or datetime.now(timezone.utc),
-                        end_reason=item.get("end_reason"))
+                        end_reason=None if status == "Active" else item.get("end_reason"))  # on an Active row it is the allocator's note
         db.session.flush()
         if is_new:
             whatsapp_events.batch_allocated(allocation)

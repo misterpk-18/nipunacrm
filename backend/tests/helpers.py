@@ -30,7 +30,12 @@ def lead_body(**overrides):
         "contact_channel_id": lookup_id(ContactChannel, "WEB_FORM"),
         "entry_method_id": lookup_id(EntryMethod, "GOOGLE_ADS_FORM"),
     }
-    return {**body, **overrides}
+    body = {**body, **overrides}
+    person = body.get("person")
+    if person and "email" not in person:  # email is required for a new person; tests that don't care get a unique one
+        digits = "".join(ch for ch in person["phone"] if ch.isdigit())
+        body["person"] = {**person, "email": f"p{digits}@example.test"}
+    return body
 
 
 def create_lead(client, headers, **overrides):

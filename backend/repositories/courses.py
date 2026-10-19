@@ -1,26 +1,30 @@
 """Course Master queries."""
-from sqlalchemy import Select, exists, or_, select
+from sqlalchemy import Select
 
-from models import Branch, Course, CourseBranch
+from models import Course
+from repositories.common import raw_select, text
 
 
 def list_stmt(filters: dict) -> Select:
-    stmt = select(Course).order_by(Course.is_combo, Course.course_code)
+    conditions = ["TRUE"]
+    params = {}
 
     if filters.get("type") == "standalone":
-        stmt = stmt.where(Course.is_combo.is_(False))
+        conditions.append("c.is_combo IS FALSE")
     elif filters.get("type") == "combo":
-        stmt = stmt.where(Course.is_combo.is_(True))
+        conditions.append("c.is_combo IS TRUE")
     if filters.get("status"):
-        stmt = stmt.where(Course.status == filters["status"])
+        conditions.append("c.status = :status")
+        params["status"] = filters["status"]
     if filters.get("category"):
-        stmt = stmt.where(Course.category == filters["category"])
+        conditions.append("c.category = :category")
+        params["category"] = filters["category"]
     if filters.get("branch_id"):
-        stmt = stmt.where(exists().where(
-            CourseBranch.course_id == Course.course_id,
-            CourseBranch.branch_code == select(Branch.branch_code).where(Branch.branch_id == filters["branch_id"]).scalar_subquery(),
-        ))
+        conditions.append("""EXISTS (SELECT 1 FROM course_branches cb WHERE cb.course_id = c.course_id
+                             AND cb.branch_code = (SELECT b.branch_code FROM branches b WHERE b.branch_id = :branch_id))""")
+        params["branch_id"] = filters["branch_id"]
     if filters.get("q"):
-        pattern = f"%{filters['q']}%"
-        stmt = stmt.where(or_(Course.course_code.ilike(pattern), Course.course_title.ilike(pattern)))
-    return stmt
+        conditions.append("(c.course_code ILIKE :pattern OR c.course_title ILIKE :pattern)")
+        params["pattern"] = f"%{filters['q']}%"
+    sql = text("SELECT c.* FROM courses c WHERE " + " AND ".join(conditions))
+    return raw_select(Course, sql, params, "is_combo, course_code")

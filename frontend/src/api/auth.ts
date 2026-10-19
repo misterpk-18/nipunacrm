@@ -51,6 +51,12 @@ export const authApi = {
   reauthenticate: (password: string) => post<null>("/auth/reauthenticate", { password }),
   changePassword: (current_password: string, new_password: string) =>
     post<null>("/auth/change-password", { current_password, new_password }),
+  /** Public: always the same answer, whether or not the number belongs to an account. */
+  forgotPassword: (phone: string) =>
+    post<{ message: string; resend_after_seconds: number }>("/auth/forgot-password", { phone }),
+  /** Public: set a new password with the 6-digit WhatsApp code; signs the account out everywhere. */
+  resetPassword: (phone: string, code: string, new_password: string) =>
+    post<null>("/auth/reset-password", { phone, code, new_password }),
   sessions: () => get<SessionInfo[]>("/auth/sessions"),
   revokeSession: (id: string) => del<null>(`/auth/sessions/${id}`),
 };

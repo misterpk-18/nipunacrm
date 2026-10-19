@@ -368,7 +368,19 @@ STAFF_PAYMENT_TO_VERIFY = WhatsAppTemplate(
     params=("staff_name", "transaction_no", "learner_name", "payment_amount", "payment_mode", "reference"),
 )
 
-TEMPLATES = {t.name: t for t in (REFUND_PAYOUT_COMPLETED, ADVANCE_PAYMENT_VERIFIED, ADVANCE_ALLOCATED,
+# Forgot password (db 046): Meta fixes the wording of Authentication templates (security line + expiry footer).
+CRM_PASSWORD_RESET_CODE = WhatsAppTemplate(
+    name="nipuna_crm_password_reset_code_auth_v1",
+    language="en",
+    category="Authentication",
+    body=("*{{1}}* is your verification code. For your security, do not share this code.\n"
+          "This code expires in 10 minutes."),
+    params=("code",),
+    buttons=("code",),  # Copy code: the same value
+    secret=("code",),
+)
+
+TEMPLATES = {t.name: t for t in (CRM_PASSWORD_RESET_CODE, REFUND_PAYOUT_COMPLETED, ADVANCE_PAYMENT_VERIFIED, ADVANCE_ALLOCATED,
                                  PAYMENT_CORRECTION_APPLIED, INVOICE_BALANCE_CLEARED, BATCH_ALLOCATED,
                                  LMS_ACCOUNT_ACTIVATED, LMS_COURSE_ACCESS_DELAYED, REFUND_APPROVED,
                                  REFUND_DECLINED, PLACEMENT_APPLICATION_RECORDED,

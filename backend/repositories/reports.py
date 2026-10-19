@@ -5,123 +5,174 @@ verified payment date; refunds by service branch and payout completion date.
 """
 from datetime import date
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 
 from config.database import db
-from models import (
-    Admission, Branch, CommunicationInbox, Demo, Enquiry, InstallmentDue, Lead, LeadActivity, Payment, PaymentAllocation,
-    PaymentGap, RefundCase, TaskBoard, User,
-)
+from models import Branch
 from models.enums import LEAD_STAGES
+from repositories.common import text
 
 
 def local_date(column):
+    """ORM expression for the IST date of a column; kept for callers outside this module (services/dashboard.py)."""
     return func.date(func.timezone(func.business_tz(), column))
 
 
-def _in(column, branch_ids: set[int] | None):
-    return True if branch_ids is None else column.in_(branch_ids)
+def _local_date(column: str) -> str:
+    """SQL for the IST business date of a timestamptz column (column is a fixed literal)."""
+    return f"DATE(timezone(business_tz(), {column}))"
+
+
+def _scope(column: str, branch_ids, fragments: list[str], params: dict, name: str = "branch_ids") -> None:
+    """Branch scoping: add `column = ANY(:name)` only when the user is not unrestricted (branch_ids is None)."""
+    if branch_ids is not None:
+        fragments.append(f"{column} = ANY(:{name})")
+        params[name] = list(branch_ids)
+
+
+def _run(sql: str, params: dict) -> list:
+    return db.session.execute(text(sql), params).all()
 
 
 def branches(branch_ids: set[int] | None) -> list[Branch]:
-    stmt = select(Branch).where(Branch.is_active).order_by(Branch.branch_id)
-    if branch_ids is not None:
-        stmt = stmt.where(Branch.branch_id.in_(branch_ids))
-    return list(db.session.execute(stmt).scalars())
+    fragments, params = ["branches.is_active"], {}
+    _scope("branches.branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT branches.* FROM branches
+        WHERE {" AND ".join(fragments)}
+        ORDER BY branches.branch_id
+    """
+    return list(db.session.execute(select(Branch).from_statement(text(sql)), params).scalars())
 
 
 # ---------------------------------------------------------------- money
 
 def collections_by_branch(start: date, end: date, branch_ids) -> dict[int, dict]:
-    rows = db.session.execute(
-        select(Payment.collecting_branch_id,
-               func.coalesce(func.sum(Payment.amount).filter(Payment.entry_type == "Payment",
-                                                             Payment.verification_status == "Verified"), 0),
-               func.coalesce(func.sum(Payment.amount).filter(Payment.entry_type == "Reversal"), 0),
-               func.coalesce(func.sum(Payment.amount).filter(Payment.verification_status == "Pending Verification",
-                                                             Payment.amount > 0), 0))
-        .where(Payment.payment_date.between(start, end), _in(Payment.collecting_branch_id, branch_ids))
-        .group_by(Payment.collecting_branch_id)
-    ).all()
-    return {b: {"gross_verified": g, "reversals": r, "pending_verification": p} for b, g, r, p in rows}
+    fragments, params = ["payments.payment_date BETWEEN :start AND :end"], {"start": start, "end": end}
+    _scope("payments.collecting_branch_id", branch_ids, fragments, params)
+    params.update({"entry_payment": "Payment", "entry_reversal": "Reversal", "verified": "Verified",
+                   "pending": "Pending Verification"})
+    sql = f"""
+        SELECT payments.collecting_branch_id,
+               COALESCE(SUM(payments.amount) FILTER (WHERE payments.entry_type = :entry_payment
+                                                      AND payments.verification_status = :verified), 0),
+               COALESCE(SUM(payments.amount) FILTER (WHERE payments.entry_type = :entry_reversal), 0),
+               COALESCE(SUM(payments.amount) FILTER (WHERE payments.verification_status = :pending
+                                                      AND payments.amount > 0), 0)
+        FROM payments
+        WHERE {" AND ".join(fragments)}
+        GROUP BY payments.collecting_branch_id
+    """
+    return {b: {"gross_verified": g, "reversals": r, "pending_verification": p} for b, g, r, p in _run(sql, params)}
 
 
 def dues_recovery_by_branch(start: date, end: date, branch_ids) -> dict[int, object]:
     """Verified collections in the period on admitted courses whose first paid date was before the period
     (per course line, db 021)."""
-    rows = db.session.execute(
-        select(Payment.collecting_branch_id, func.coalesce(func.sum(PaymentAllocation.amount), 0))
-        .join(PaymentAllocation, PaymentAllocation.payment_id == Payment.payment_id)
-        .join(Admission, Admission.invoice_line_id == PaymentAllocation.invoice_line_id)
-        .where(Payment.entry_type == "Payment", Payment.verification_status == "Verified",
-               Payment.payment_date.between(start, end), local_date(Admission.first_verified_payment_at) < start,
-               _in(Payment.collecting_branch_id, branch_ids))
-        .group_by(Payment.collecting_branch_id)
-    ).all()
-    return dict(rows)
+    fragments = ["payments.entry_type = :entry_payment", "payments.verification_status = :verified",
+                 "payments.payment_date BETWEEN :start AND :end",
+                 f"{_local_date('admissions.first_verified_payment_at')} < :start"]
+    params = {"entry_payment": "Payment", "verified": "Verified", "start": start, "end": end}
+    _scope("payments.collecting_branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT payments.collecting_branch_id, COALESCE(SUM(payment_allocations.amount), 0)
+        FROM payments
+        JOIN payment_allocations ON payment_allocations.payment_id = payments.payment_id
+        JOIN admissions ON admissions.invoice_line_id = payment_allocations.invoice_line_id
+        WHERE {" AND ".join(fragments)}
+        GROUP BY payments.collecting_branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def refunds_by_branch(start: date, end: date, branch_ids) -> dict[int, object]:
-    rows = db.session.execute(
-        select(Admission.service_branch_id, func.coalesce(func.sum(RefundCase.payout_amount), 0))
-        .join(Admission, Admission.admission_id == RefundCase.admission_id)
-        .where(RefundCase.payout_status == "Completed", local_date(RefundCase.payout_completed_at).between(start, end),
-               _in(Admission.service_branch_id, branch_ids))
-        .group_by(Admission.service_branch_id)
-    ).all()
-    return dict(rows)
+    fragments = ["refund_cases.payout_status = :completed",
+                 f"{_local_date('refund_cases.payout_completed_at')} BETWEEN :start AND :end"]
+    params = {"completed": "Completed", "start": start, "end": end}
+    _scope("admissions.service_branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT admissions.service_branch_id, COALESCE(SUM(refund_cases.payout_amount), 0)
+        FROM refund_cases
+        JOIN admissions ON admissions.admission_id = refund_cases.admission_id
+        WHERE {" AND ".join(fragments)}
+        GROUP BY admissions.service_branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def paid_admissions_by_branch(start: date, end: date, branch_ids, course_id=None) -> dict[int, int]:
-    stmt = (select(Admission.original_branch_id, func.count())
-            .where(local_date(Admission.first_verified_payment_at).between(start, end),
-                   _in(Admission.original_branch_id, branch_ids))
-            .group_by(Admission.original_branch_id))
+    fragments = [f"{_local_date('admissions.first_verified_payment_at')} BETWEEN :start AND :end"]
+    params = {"start": start, "end": end}
+    _scope("admissions.original_branch_id", branch_ids, fragments, params)
     if course_id:
-        stmt = stmt.where(Admission.course_id == course_id)
-    return dict(db.session.execute(stmt).all())
+        fragments.append("admissions.course_id = :course_id")
+        params["course_id"] = course_id
+    sql = f"""
+        SELECT admissions.original_branch_id, COUNT(*)
+        FROM admissions
+        WHERE {" AND ".join(fragments)}
+        GROUP BY admissions.original_branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def overdue_dues(branch_ids) -> dict[int, object]:
-    rows = db.session.execute(
-        select(InstallmentDue.collecting_branch_id, func.coalesce(func.sum(InstallmentDue.balance), 0))
-        .where(InstallmentDue.due_position == "Overdue", _in(InstallmentDue.collecting_branch_id, branch_ids))
-        .group_by(InstallmentDue.collecting_branch_id)
-    ).all()
-    return dict(rows)
+    fragments, params = ["installment_dues.due_position = :overdue"], {"overdue": "Overdue"}
+    _scope("installment_dues.collecting_branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT installment_dues.collecting_branch_id, COALESCE(SUM(installment_dues.balance), 0)
+        FROM installment_dues
+        WHERE {" AND ".join(fragments)}
+        GROUP BY installment_dues.collecting_branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def long_gap_plans(branch_ids) -> dict[int, dict]:
     """Open invoices whose next instalment is due long after the last verified payment (view payment_gaps)."""
-    rows = db.session.execute(
-        select(PaymentGap.collecting_branch_id, func.count(), func.coalesce(func.sum(PaymentGap.outstanding), 0))
-        .where(_in(PaymentGap.collecting_branch_id, branch_ids))
-        .group_by(PaymentGap.collecting_branch_id)
-    ).all()
-    return {branch: {"count": count, "outstanding": outstanding} for branch, count, outstanding in rows}
+    fragments, params = [], {}
+    _scope("payment_gaps.collecting_branch_id", branch_ids, fragments, params)
+    where = f"WHERE {' AND '.join(fragments)}" if fragments else ""
+    sql = f"""
+        SELECT payment_gaps.collecting_branch_id, COUNT(*), COALESCE(SUM(payment_gaps.outstanding), 0)
+        FROM payment_gaps
+        {where}
+        GROUP BY payment_gaps.collecting_branch_id
+    """
+    return {branch: {"count": count, "outstanding": outstanding} for branch, count, outstanding in _run(sql, params)}
 
 
 # ---------------------------------------------------------------- funnel / performance
 
-def _lead_filters(stmt, filters: dict, branch_ids):
-    stmt = stmt.where(_in(Lead.branch_id, branch_ids))
-    for field, column in (("branch_id", Lead.branch_id), ("course_id", Lead.course_id),
-                          ("source_id", Lead.original_source_id), ("staff_id", Lead.assigned_to)):
+# request filter name -> SQL column on leads (fixed allowlist)
+_LEAD_FILTER_COLUMNS = {"branch_id": "leads.branch_id", "course_id": "leads.course_id",
+                        "source_id": "leads.original_source_id", "staff_id": "leads.assigned_to"}
+
+
+def _lead_fragments(filters: dict, branch_ids, fragments: list[str], params: dict) -> None:
+    _scope("leads.branch_id", branch_ids, fragments, params)
+    for field, column in _LEAD_FILTER_COLUMNS.items():
         if filters.get(field):
-            stmt = stmt.where(column == filters[field])
-    return stmt
+            fragments.append(f"{column} = :lf_{field}")
+            params[f"lf_{field}"] = filters[field]
 
 
 def funnel(start: date, end: date, filters: dict, branch_ids) -> dict:
     """Leads created in the period, counted cumulatively: a lead counts for every stage up to the furthest one it
     has reached (now or at any point). Lost is counted on its own."""
-    lead_ids = _lead_filters(select(Lead.lead_id).where(local_date(Lead.created_at).between(start, end)),
-                             filters, branch_ids).subquery()
-    reached = db.session.execute(
-        select(Lead.lead_id, Lead.stage).where(Lead.lead_id.in_(select(lead_ids.c.lead_id)))
-        .union(select(LeadActivity.lead_id, LeadActivity.to_stage)
-               .where(LeadActivity.lead_id.in_(select(lead_ids.c.lead_id)), LeadActivity.to_stage.is_not(None)))
-    ).all()
+    fragments = [f"{_local_date('leads.created_at')} BETWEEN :start AND :end"]
+    params = {"start": start, "end": end}
+    _lead_fragments(filters, branch_ids, fragments, params)
+    sql = f"""
+        WITH lead_ids AS (
+            SELECT leads.lead_id FROM leads WHERE {" AND ".join(fragments)}
+        )
+        SELECT leads.lead_id, leads.stage FROM leads WHERE leads.lead_id IN (SELECT lead_id FROM lead_ids)
+        UNION
+        SELECT lead_activities.lead_id, lead_activities.to_stage FROM lead_activities
+        WHERE lead_activities.lead_id IN (SELECT lead_id FROM lead_ids) AND lead_activities.to_stage IS NOT NULL
+    """
+    reached = _run(sql, params)
     progress = [s for s in LEAD_STAGES if s != "Lost - closed"]
     furthest: dict[int, int] = {}
     lost: set[int] = set()
@@ -137,23 +188,44 @@ def funnel(start: date, end: date, filters: dict, branch_ids) -> dict:
 
 def performance(by: str, start: date, end: date, filters: dict, branch_ids) -> list[dict]:
     """Enquiries, leads, paid admissions and conversion grouped by course, source or staff."""
-    lead_key = {"course": Lead.course_id, "source": Lead.original_source_id, "staff": Lead.assigned_to}[by]
-    enquiry_key = {"course": Enquiry.course_id, "source": Enquiry.lead_source_id, "staff": Enquiry.owner_user_id}[by]
+    lead_key = {"course": "leads.course_id", "source": "leads.original_source_id", "staff": "leads.assigned_to"}[by]
+    enquiry_key = {"course": "enquiries.course_id", "source": "enquiries.lead_source_id",
+                   "staff": "enquiries.owner_user_id"}[by]
 
-    enquiry_stmt = (select(enquiry_key, func.count()).where(local_date(Enquiry.received_at).between(start, end),
-                                                            _in(Enquiry.branch_id, branch_ids)).group_by(enquiry_key))
+    enquiry_fragments = [f"{_local_date('enquiries.received_at')} BETWEEN :start AND :end"]
+    enquiry_params = {"start": start, "end": end}
+    _scope("enquiries.branch_id", branch_ids, enquiry_fragments, enquiry_params)
     if filters.get("branch_id"):
-        enquiry_stmt = enquiry_stmt.where(Enquiry.branch_id == filters["branch_id"])
-    lead_stmt = _lead_filters(select(lead_key, func.count()).where(local_date(Lead.created_at).between(start, end)),
-                              filters, branch_ids).group_by(lead_key)
-    admission_stmt = _lead_filters(
-        select(lead_key, func.count()).join(Admission, Admission.lead_id == Lead.lead_id)
-        .where(local_date(Admission.first_verified_payment_at).between(start, end)), filters, branch_ids
-    ).group_by(lead_key)
+        enquiry_fragments.append("enquiries.branch_id = :filter_branch_id")
+        enquiry_params["filter_branch_id"] = filters["branch_id"]
+    enquiry_sql = f"""
+        SELECT {enquiry_key}, COUNT(*) FROM enquiries
+        WHERE {" AND ".join(enquiry_fragments)}
+        GROUP BY {enquiry_key}
+    """
 
-    enquiries = dict(db.session.execute(enquiry_stmt).all())
-    leads = dict(db.session.execute(lead_stmt).all())
-    admissions = dict(db.session.execute(admission_stmt).all())
+    lead_fragments = [f"{_local_date('leads.created_at')} BETWEEN :start AND :end"]
+    lead_params = {"start": start, "end": end}
+    _lead_fragments(filters, branch_ids, lead_fragments, lead_params)
+    lead_sql = f"""
+        SELECT {lead_key}, COUNT(*) FROM leads
+        WHERE {" AND ".join(lead_fragments)}
+        GROUP BY {lead_key}
+    """
+
+    admission_fragments = [f"{_local_date('admissions.first_verified_payment_at')} BETWEEN :start AND :end"]
+    admission_params = {"start": start, "end": end}
+    _lead_fragments(filters, branch_ids, admission_fragments, admission_params)
+    admission_sql = f"""
+        SELECT {lead_key}, COUNT(*) FROM leads
+        JOIN admissions ON admissions.lead_id = leads.lead_id
+        WHERE {" AND ".join(admission_fragments)}
+        GROUP BY {lead_key}
+    """
+
+    enquiries = dict(_run(enquiry_sql, enquiry_params))
+    leads = dict(_run(lead_sql, lead_params))
+    admissions = dict(_run(admission_sql, admission_params))
     keys = [k for k in dict.fromkeys([*enquiries, *leads, *admissions])]
     return [{"key": k, "enquiries": enquiries.get(k, 0), "leads": leads.get(k, 0), "paid_admissions": admissions.get(k, 0),
              "conversion_pct": round(100 * admissions.get(k, 0) / leads[k], 1) if leads.get(k) else None} for k in keys]
@@ -162,81 +234,118 @@ def performance(by: str, start: date, end: date, filters: dict, branch_ids) -> l
 # ---------------------------------------------------------------- SLA
 
 def task_sla(start: date, end: date, branch_ids, branch_id=None) -> list[dict]:
-    from models import Task
-
-    on_time = and_(TaskBoard.status == "Completed", Task.completed_at <= TaskBoard.due_at)
-    stmt = (select(TaskBoard.owner_user_id, func.count(),
-                   func.count().filter(on_time),
-                   func.count().filter(TaskBoard.status == "Completed", ~on_time),
-                   func.count().filter(TaskBoard.is_overdue),
-                   func.count().filter(TaskBoard.status.not_in(("Completed", "Cancelled")), ~TaskBoard.is_overdue))
-            .join(Task, Task.task_id == TaskBoard.task_id)
-            .where(local_date(TaskBoard.due_at).between(start, end), TaskBoard.status != "Cancelled",
-                   _in(TaskBoard.branch_id, branch_ids))
-            .group_by(TaskBoard.owner_user_id))
+    on_time = "task_board.status = :completed AND tasks.completed_at <= task_board.due_at"
+    fragments = [f"{_local_date('task_board.due_at')} BETWEEN :start AND :end", "task_board.status <> :cancelled"]
+    params = {"start": start, "end": end, "completed": "Completed", "cancelled": "Cancelled",
+              "finished": ["Completed", "Cancelled"]}
+    _scope("task_board.branch_id", branch_ids, fragments, params)
     if branch_id:
-        stmt = stmt.where(TaskBoard.branch_id == branch_id)
-    rows = db.session.execute(stmt).all()
-    names = dict(db.session.execute(select(User.user_id, User.full_name).where(
-        User.user_id.in_([r[0] for r in rows if r[0]]))).all())
+        fragments.append("task_board.branch_id = :branch_id")
+        params["branch_id"] = branch_id
+    sql = f"""
+        SELECT task_board.owner_user_id, COUNT(*),
+               COUNT(*) FILTER (WHERE {on_time}),
+               COUNT(*) FILTER (WHERE task_board.status = :completed AND NOT ({on_time})),
+               COUNT(*) FILTER (WHERE task_board.is_overdue),
+               COUNT(*) FILTER (WHERE task_board.status::text <> ALL(:finished) AND NOT task_board.is_overdue)
+        FROM task_board
+        JOIN tasks ON tasks.task_id = task_board.task_id
+        WHERE {" AND ".join(fragments)}
+        GROUP BY task_board.owner_user_id
+    """
+    rows = _run(sql, params)
+    names = dict(_run("SELECT users.user_id, users.full_name FROM users WHERE users.user_id = ANY(:user_ids)",
+                      {"user_ids": [r[0] for r in rows if r[0]]}))
     return [{"owner_user_id": o, "owner": names.get(o, "Unassigned"), "tasks": t, "completed_on_time": ok,
              "completed_late": late, "overdue_open": overdue, "open": open_,
              "completion_pct": round(100 * (ok + late) / t, 1) if t else None} for o, t, ok, late, overdue, open_ in rows]
 
 
 def response_sla(start: date, end: date, branch_ids, branch_id=None) -> dict[str, int]:
-    stmt = (select(CommunicationInbox.sla_state, func.count())
-            .where(CommunicationInbox.needs_response, local_date(CommunicationInbox.occurred_at).between(start, end),
-                   _in(CommunicationInbox.branch_id, branch_ids))
-            .group_by(CommunicationInbox.sla_state))
+    fragments = ["communication_inbox.needs_response",
+                 f"{_local_date('communication_inbox.occurred_at')} BETWEEN :start AND :end"]
+    params = {"start": start, "end": end}
+    _scope("communication_inbox.branch_id", branch_ids, fragments, params)
     if branch_id:
-        stmt = stmt.where(CommunicationInbox.branch_id == branch_id)
-    found = dict(db.session.execute(stmt).all())
+        fragments.append("communication_inbox.branch_id = :branch_id")
+        params["branch_id"] = branch_id
+    sql = f"""
+        SELECT communication_inbox.sla_state, COUNT(*) FROM communication_inbox
+        WHERE {" AND ".join(fragments)}
+        GROUP BY communication_inbox.sla_state
+    """
+    found = dict(_run(sql, params))
     return {state: found.get(state, 0) for state in ("Within SLA", "At Risk", "Breached", "Met", "Met Late")}
 
 
 # ---------------------------------------------------------------- dashboard tiles
 
 def genuine_enquiries(start: date, end: date, branch_ids) -> dict[int, int]:
-    genuine = or_(Enquiry.is_genuine.is_(True),
-                  and_(Enquiry.is_genuine.is_(None), Enquiry.intake_status.not_in(("Invalid-Spam", "Test"))))
-    return dict(db.session.execute(
-        select(Enquiry.branch_id, func.count()).where(local_date(Enquiry.received_at).between(start, end), genuine,
-                                                     _in(Enquiry.branch_id, branch_ids)).group_by(Enquiry.branch_id)
-    ).all())
+    fragments = [f"{_local_date('enquiries.received_at')} BETWEEN :start AND :end",
+                 "(enquiries.is_genuine IS TRUE OR (enquiries.is_genuine IS NULL "
+                 "AND enquiries.intake_status::text <> ALL(:not_genuine)))"]
+    params = {"start": start, "end": end, "not_genuine": ["Invalid-Spam", "Test"]}
+    _scope("enquiries.branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT enquiries.branch_id, COUNT(*) FROM enquiries
+        WHERE {" AND ".join(fragments)}
+        GROUP BY enquiries.branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def overdue_follow_ups(branch_ids) -> dict[int, int]:
-    return dict(db.session.execute(
-        select(Lead.branch_id, func.count()).where(Lead.stage.not_in(("Admitted", "Lost - closed")),
-                                                  Lead.next_follow_up_at < func.now(), _in(Lead.branch_id, branch_ids))
-        .group_by(Lead.branch_id)).all())
+    fragments = ["leads.stage::text <> ALL(:closed_stages)", "leads.next_follow_up_at < now()"]
+    params = {"closed_stages": ["Admitted", "Lost - closed"]}
+    _scope("leads.branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT leads.branch_id, COUNT(*) FROM leads
+        WHERE {" AND ".join(fragments)}
+        GROUP BY leads.branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def sla_at_risk(branch_ids) -> dict[int, int]:
-    return dict(db.session.execute(
-        select(CommunicationInbox.branch_id, func.count())
-        .where(CommunicationInbox.sla_state.in_(("At Risk", "Breached")), _in(CommunicationInbox.branch_id, branch_ids))
-        .group_by(CommunicationInbox.branch_id)).all())
+    fragments = ["communication_inbox.sla_state = ANY(:states)"]
+    params = {"states": ["At Risk", "Breached"]}
+    _scope("communication_inbox.branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT communication_inbox.branch_id, COUNT(*) FROM communication_inbox
+        WHERE {" AND ".join(fragments)}
+        GROUP BY communication_inbox.branch_id
+    """
+    return dict(_run(sql, params))
 
 
 def demo_counts(start: date, end: date, branch_ids) -> dict[int, dict]:
-    rows = db.session.execute(
-        select(Demo.branch_id,
-               func.count().filter(Demo.status.in_(("Scheduled", "Confirmed", "Attended", "No Show"))),
-               func.count().filter(Demo.status == "Attended"), func.count().filter(Demo.status == "No Show"))
-        .where(local_date(Demo.scheduled_at).between(start, end), _in(Demo.branch_id, branch_ids))
-        .group_by(Demo.branch_id)).all()
-    return {b: {"scheduled": s, "attended": a, "no_show": n} for b, s, a, n in rows}
+    fragments = [f"{_local_date('demos.scheduled_at')} BETWEEN :start AND :end"]
+    params = {"start": start, "end": end, "counted": ["Scheduled", "Confirmed", "Attended", "No Show"],
+              "attended": "Attended", "no_show": "No Show"}
+    _scope("demos.branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT demos.branch_id,
+               COUNT(*) FILTER (WHERE demos.status::text = ANY(:counted)),
+               COUNT(*) FILTER (WHERE demos.status = :attended),
+               COUNT(*) FILTER (WHERE demos.status = :no_show)
+        FROM demos
+        WHERE {" AND ".join(fragments)}
+        GROUP BY demos.branch_id
+    """
+    return {b: {"scheduled": s, "attended": a, "no_show": n} for b, s, a, n in _run(sql, params)}
 
 
 def top_staff(start: date, end: date, branch_ids, limit: int = 5) -> list[dict]:
-    rows = db.session.execute(
-        select(User.user_id, User.full_name, func.count(Admission.admission_id).label("paid"))
-        .join(Admission, Admission.counsellor_id == User.user_id)
-        .where(local_date(Admission.first_verified_payment_at).between(start, end),
-               _in(Admission.original_branch_id, branch_ids))
-        .group_by(User.user_id, User.full_name).order_by(func.count(Admission.admission_id).desc()).limit(limit)
-    ).all()
-    return [{"user_id": u, "full_name": n, "paid_admissions": p} for u, n, p in rows]
-
+    fragments = [f"{_local_date('admissions.first_verified_payment_at')} BETWEEN :start AND :end"]
+    params = {"start": start, "end": end, "limit": limit}
+    _scope("admissions.original_branch_id", branch_ids, fragments, params)
+    sql = f"""
+        SELECT users.user_id, users.full_name, COUNT(admissions.admission_id) AS paid
+        FROM users
+        JOIN admissions ON admissions.counsellor_id = users.user_id
+        WHERE {" AND ".join(fragments)}
+        GROUP BY users.user_id, users.full_name
+        ORDER BY COUNT(admissions.admission_id) DESC
+        LIMIT :limit
+    """
+    return [{"user_id": u, "full_name": n, "paid_admissions": p} for u, n, p in _run(sql, params)]

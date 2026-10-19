@@ -9,7 +9,8 @@ USERS = "/api/v1/users"
 
 
 def new_user_body(**overrides):
-    body = {"full_name": "Mounika", "email": "mounika@nipuna.test", "scopes": [{"role_code": "SALES", "branch_id": 2}]}
+    body = {"full_name": "Mounika", "email": "mounika@nipuna.test", "phone": "+919876500100",
+            "scopes": [{"role_code": "SALES", "branch_id": 2}]}
     return {**body, **overrides}
 
 
@@ -45,6 +46,22 @@ def test_create_user_returns_one_time_temporary_password(client, make_user, logi
     assert audit == [admin.user_id]
 
 
+def test_create_user_with_a_chosen_password(client, make_user, login):
+    headers = login(make_user().email)
+
+    short = client.post(USERS, json=new_user_body(password="short"), headers=headers)
+    assert short.status_code == 400
+    assert "password" in short.get_json()["error"]["details"]
+
+    response = client.post(USERS, json=new_user_body(password="Chosen-Pass-42"), headers=headers)
+    data = response.get_json()["data"]
+    assert response.status_code == 201
+    assert data["temporary_password"] == "Chosen-Pass-42"
+    assert data["user"]["must_change_password"] is True
+    assert client.post("/api/v1/auth/login", json={"email": "mounika@nipuna.test",
+                                                   "password": "Chosen-Pass-42"}).status_code == 200
+
+
 def test_create_user_rejects_duplicate_email_in_any_case(client, make_user, login):
     make_user(email="mounika@nipuna.test")
     headers = login(make_user().email)
@@ -60,7 +77,7 @@ def test_create_user_validates_body(client, make_user, login):
     response = client.post(USERS, json={"full_name": "", "email": "bad", "scopes": []}, headers=headers)
 
     assert response.status_code == 400
-    assert set(response.get_json()["error"]["details"]) == {"full_name", "email", "scopes"}
+    assert set(response.get_json()["error"]["details"]) == {"full_name", "email", "phone", "scopes"}
 
 
 def test_role_and_branch_must_fit_together(client, make_user, login):

@@ -220,7 +220,7 @@ def test_change_password_signs_out_other_sessions(client, make_user, login):
 def test_temporary_password_must_be_changed_before_anything_else(client, make_user, login):
     admin_headers = login(make_user().email)
     created = client.post("/api/v1/users", headers=admin_headers, json={
-        "full_name": "Sravani", "email": "sravani@nipuna.test", "scopes": [{"role_code": "SALES", "branch_id": 1}],
+        "full_name": "Sravani", "email": "sravani@nipuna.test", "phone": "+919876500200", "scopes": [{"role_code": "SALES", "branch_id": 1}],
     }).get_json()["data"]
 
     first_login = login_response(client, "sravani@nipuna.test", created["temporary_password"]).get_json()["data"]

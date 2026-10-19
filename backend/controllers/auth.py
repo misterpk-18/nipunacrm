@@ -1,5 +1,6 @@
 from controllers.common import Validator, json_body, no_content, ok
 from services import auth as auth_service
+from services import password_reset as password_reset_service
 from services.context import current_user
 
 
@@ -46,6 +47,22 @@ def change_password():
     data = v.validate()
 
     auth_service.change_password(data["current_password"], data["new_password"])
+    return no_content()
+
+
+def forgot_password():
+    v = Validator(json_body())
+    v.phone("phone", required=True)
+    return ok(password_reset_service.request_code(v.validate()["phone"]))
+
+
+def reset_password_with_code():
+    v = Validator(json_body())
+    v.phone("phone", required=True)
+    v.string("code", required=True, pattern=r"\d{6}", pattern_message="Enter the 6-digit code")
+    v.string("new_password", required=True, max_length=200, strip=False)
+    data = v.validate()
+    password_reset_service.reset_password(data["phone"], data["code"], data["new_password"])
     return no_content()
 
 

@@ -1,47 +1,63 @@
 """WhatsApp outbox queries (db 033)."""
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select
 
-from models import Communication, ContactChannel, Person, WhatsappOutbox
+from config.database import db
+from models import Communication, WhatsappOutbox
+from repositories.common import raw_select, text
 
 
 def messages_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
-    stmt = select(WhatsappOutbox).order_by(WhatsappOutbox.outbox_id.desc())
+    conditions = ["TRUE"]
+    params = {}
+    joins = ""
     if branch_ids is not None:
-        stmt = stmt.where(WhatsappOutbox.branch_id.in_(branch_ids))
+        conditions.append("w.branch_id = ANY(:branch_ids)")
+        params["branch_ids"] = list(branch_ids)
     if filters.get("branch_id"):
-        stmt = stmt.where(WhatsappOutbox.branch_id == filters["branch_id"])
+        conditions.append("w.branch_id = :branch_id")
+        params["branch_id"] = filters["branch_id"]
     if filters.get("person_id"):
-        stmt = stmt.where(WhatsappOutbox.person_id == filters["person_id"])
+        conditions.append("w.person_id = :person_id")
+        params["person_id"] = filters["person_id"]
     if filters.get("learner_only"):  # a learner's conversation never shows staff alerts about them
-        stmt = stmt.where(WhatsappOutbox.recipient_user_id.is_(None))
+        conditions.append("w.recipient_user_id IS NULL")
     if filters.get("status"):
-        stmt = stmt.where(WhatsappOutbox.status == filters["status"])
+        conditions.append("w.status = :status")
+        params["status"] = filters["status"]
     if filters.get("template"):
-        stmt = stmt.where(WhatsappOutbox.template_name.ilike(f"%{filters['template']}%"))
+        conditions.append("w.template_name ILIKE :template")
+        params["template"] = f"%{filters['template']}%"
     if filters.get("sent_by"):  # CRM or LMS (db 045)
-        lms = WhatsappOutbox.source_type == "lms"
-        stmt = stmt.where(lms if filters["sent_by"] == "LMS" else ~lms)
+        conditions.append("w.source_type = 'lms'" if filters["sent_by"] == "LMS" else "w.source_type != 'lms'")
     if filters.get("category"):
-        stmt = stmt.where(WhatsappOutbox.category == filters["category"])
+        conditions.append("w.category = :category")
+        params["category"] = filters["category"]
     if filters.get("q"):
-        like = f"%{filters['q']}%"
-        stmt = stmt.outerjoin(Person, Person.person_id == WhatsappOutbox.person_id).where(or_(
-            Person.full_name.ilike(like), WhatsappOutbox.to_phone.ilike(like), WhatsappOutbox.body_text.ilike(like)))
-    return stmt
+        joins = "LEFT JOIN persons pe ON pe.person_id = w.person_id"
+        conditions.append("(pe.full_name ILIKE :like OR w.to_phone ILIKE :like OR w.body_text ILIKE :like)")
+        params["like"] = f"%{filters['q']}%"
+    sql = text("SELECT w.* FROM whatsapp_outbox w " + joins + " WHERE " + " AND ".join(conditions))
+    return raw_select(WhatsappOutbox, sql, params, "outbox_id DESC")
 
 
 def status_counts(branch_ids: set[int] | None, branch_id: int | None) -> dict:
-    stmt = select(WhatsappOutbox.status, func.count()).group_by(WhatsappOutbox.status)
+    conditions = ["TRUE"]
+    params = {}
     if branch_ids is not None:
-        stmt = stmt.where(WhatsappOutbox.branch_id.in_(branch_ids))
+        conditions.append("branch_id = ANY(:branch_ids)")
+        params["branch_ids"] = list(branch_ids)
     if branch_id:
-        stmt = stmt.where(WhatsappOutbox.branch_id == branch_id)
-    from config.database import db
-
-    return {status: count for status, count in db.session.execute(stmt).all()}
+        conditions.append("branch_id = :branch_id")
+        params["branch_id"] = branch_id
+    sql = text("SELECT status, COUNT(*) FROM whatsapp_outbox WHERE " + " AND ".join(conditions) + " GROUP BY status")
+    return {status: count for status, count in db.session.execute(sql, params).all()}
 
 
 def inbound_for_person(person_id: int) -> Select:
-    return (select(Communication).join(ContactChannel, ContactChannel.contact_channel_id == Communication.contact_channel_id)
-            .where(Communication.person_id == person_id, ContactChannel.code == "WHATSAPP",
-                   Communication.direction == "Inbound").order_by(Communication.occurred_at.desc()))
+    sql = text("""
+        SELECT c.*
+        FROM communications c
+        JOIN contact_channels cc ON cc.contact_channel_id = c.contact_channel_id
+        WHERE c.person_id = :person_id AND cc.code = 'WHATSAPP' AND c.direction = 'Inbound'
+    """)
+    return raw_select(Communication, sql, {"person_id": person_id}, "occurred_at DESC")

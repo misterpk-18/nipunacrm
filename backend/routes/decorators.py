@@ -1,4 +1,5 @@
-"""Route decorators: @login_required, @require_roles(...), @fresh_auth, and @lms_service_key for calls from the LMS.
+"""Route decorators: @login_required, @require_roles(...), @fresh_auth, and @lms_service_key / @website_service_key
+for server-to-server calls from the LMS and the website.
 
 Order on a route:  @login_required  →  @require_roles(...)  →  @fresh_auth  →  view
 """
@@ -72,14 +73,23 @@ def fresh_auth(view):
     return wrapper
 
 
-def lms_service_key(view):
-    """A call from the Nipuna LMS: header X-Service-Key equal to LMS_SERVICE_KEY (the key both systems share)."""
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        expected = current_app.config.get("LMS_SERVICE_KEY") or ""
-        supplied = request.headers.get("X-Service-Key") or ""
-        if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
-            raise Unauthenticated("Invalid service key")
-        return view(*args, **kwargs)
+def service_key(config_name: str):
+    """A server-to-server call: header X-Service-Key equal to the key in config[config_name]. No key set = refuse all."""
+    def decorator(view):
+        @wraps(view)
+        def wrapper(*args, **kwargs):
+            expected = current_app.config.get(config_name) or ""
+            supplied = request.headers.get("X-Service-Key") or ""
+            if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+                raise Unauthenticated("Invalid service key")
+            return view(*args, **kwargs)
 
-    return wrapper
+        return wrapper
+
+    return decorator
+
+
+# A call from the Nipuna LMS (LMS_SERVICE_KEY, the key both systems share)
+lms_service_key = service_key("LMS_SERVICE_KEY")
+# The nipunatechnologies.com server posting its enquiry form (WEBSITE_INTAKE_KEY, db 047)
+website_service_key = service_key("WEBSITE_INTAKE_KEY")

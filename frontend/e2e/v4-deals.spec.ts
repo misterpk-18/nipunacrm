@@ -29,7 +29,7 @@ async function newLead(request: APIRequestContext, email: string, branchId: numb
     headers,
     data: {
       branch_id: branchId,
-      ...(personId ? { person_id: personId } : { person: { full_name: name, phone: uniquePhone() } }),
+      ...(personId ? { person_id: personId } : { person: { full_name: name, phone: uniquePhone(), email: `${uniquePhone()}@example.test` } }),
       course_id: course.course_id,
       lead_source_id: id("lead_sources", "WEBSITE"),
       contact_channel_id: id("contact_channels", "WEB_FORM"),

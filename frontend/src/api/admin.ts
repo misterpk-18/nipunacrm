@@ -23,6 +23,8 @@ export type NewUser = {
   full_name: string;
   email: string;
   phone?: string | null;
+  /** Blank = the server generates a temporary password. Either way the user must change it at first sign-in. */
+  password?: string | null;
   is_recovery_account?: boolean;
   scopes: ScopeInput[];
 };

@@ -1,6 +1,6 @@
 # Nipuna CRM — working in this repo
 
-Flask API in `backend/`, React app in `frontend/`, SQL migrations in `db/`, docs in `docs/` (exactly four files; update them with every change).
+Flask API in `backend/`, React app in `frontend/`, SQL migrations in `db/`, docs in `docs/` (four core files plus `WEBSITE_INTEGRATION.md`, the website team's contract; update them with every change).
 
 ## Do not read the whole codebase — use the cartograph
 

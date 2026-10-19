@@ -38,7 +38,7 @@ type Values = {
 
 /** Fields that live under "More details" (an error there opens the section so it is never hidden). */
 const MORE_FIELDS: (keyof Values)[] = [
-  "alternate_phone", "email", "whatsapp_number", "city", "branch_id", "campaign", "contact_channel_id", "entry_method_id",
+  "alternate_phone", "whatsapp_number", "city", "branch_id", "campaign", "contact_channel_id", "entry_method_id",
   "intake_status", "assigned_to", "next_follow_up_at", "remarks",
 ];
 
@@ -187,7 +187,7 @@ export function NewLeadDialog({ open, onOpenChange, person: personProp, courseId
           phone: v.phone,
           alternate_phone: v.alternate_phone || null,
           whatsapp_number: v.whatsapp_same ? null : v.whatsapp_number || null,
-          email: v.email || null,
+          email: v.email.trim(),
           city: v.city || null,
         };
       create.mutate(body);
@@ -210,7 +210,7 @@ export function NewLeadDialog({ open, onOpenChange, person: personProp, courseId
         <DialogHeader>
           <DialogTitle>{person ? `Add another course · ${person.full_name}` : "New lead"}</DialogTitle>
           <DialogDescription>
-            {person ? `A new opportunity for ${person.person_code}. Person details stay as recorded.` : "Name, mobile, course and source are enough. Duplicates are never merged automatically."}
+            {person ? `A new opportunity for ${person.person_code}. Person details stay as recorded.` : "Name, mobile, email, course and source are enough. Duplicates are never merged automatically."}
           </DialogDescription>
         </DialogHeader>
         <form id="new-lead-form" onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
@@ -220,6 +220,11 @@ export function NewLeadDialog({ open, onOpenChange, person: personProp, courseId
           <Field label="Primary mobile" error={err("phone")} htmlFor="nl-phone">
             <Input id="nl-phone" inputMode="tel" disabled={!!person} {...register("phone", person ? {} : required)} placeholder="98765 43210" />
           </Field>
+          {!person && (
+            <Field label="Email" error={err("email")} htmlFor="nl-email">
+              <Input id="nl-email" type="email" {...register("email", required)} />
+            </Field>
+          )}
           {linked && !personProp && (
             <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 p-3 text-sm sm:col-span-2">
               <span className="flex items-center gap-1.5">
@@ -277,9 +282,6 @@ export function NewLeadDialog({ open, onOpenChange, person: personProp, courseId
                 <>
                   <Field label="Alternate mobile (optional)" error={err("alternate_phone")} htmlFor="nl-alt">
                     <Input id="nl-alt" inputMode="tel" {...register("alternate_phone")} />
-                  </Field>
-                  <Field label="Email (optional)" error={err("email")} htmlFor="nl-email">
-                    <Input id="nl-email" type="email" {...register("email")} />
                   </Field>
                   <div className="field sm:col-span-2">
                     <label className="flex items-center gap-2 text-sm font-normal text-foreground">

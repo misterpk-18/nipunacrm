@@ -218,10 +218,12 @@ Tables: `users`, `user_role_scopes`, `roles`, `branches`, `user_sessions`, `audi
 | GET | `/auth/me` | Logged in | User, active scopes, allowed branches, home route (Counsellor workspace / Branch Manager dashboard / Dashboard, as in the prototype) |
 | POST | `/auth/reauthenticate` | Logged in | Password → sets `reauthenticated_at` (fresh auth, 15 min) |
 | POST | `/auth/change-password` | Logged in | Needs current password; revokes the user's other sessions |
+| POST | `/auth/forgot-password` | Public | `{phone}`. Sends a 6-digit code on WhatsApp (`nipuna_crm_password_reset_code_auth_v1`, Authentication, Copy code) when **exactly one active user** has that mobile. Always 200 with the same `{message, resend_after_seconds}`, so it never tells whether the number has an account. Limits (settings, db 046): one code per `password_reset_resend_seconds` (60), `password_reset_max_per_hour` (5); a new code retires the earlier ones. Only an HMAC of the code is stored; the code rides in the outbox's `secret_params` until sent. The message obeys the WhatsApp switch and `WHATSAPP_TEST_NUMBERS` (otherwise Skipped); it can't be resent from WhatsApp messages (422) |
+| POST | `/auth/reset-password` | Public | `{phone, code, new_password}`. 204 on success: new password (policy checked first, so a short one never spends a try), `must_change_password` off, lockout cleared, **every session signed out**, code spent. Wrong / expired / spent code → 400 `{code: ["That code is wrong or has expired. Ask for a new one."]}`; each wrong try counts, and `password_reset_max_attempts` (5) wrong tries retire the code. Audit: `PASSWORD_RESET_CODE_SENT`, `PASSWORD_RESET_WITH_CODE` |
 | GET | `/auth/sessions` | Logged in | Own active sessions |
 | DELETE | `/auth/sessions/{session_id}` | Logged in | Sign out another device |
 | GET | `/users` | Admins | Filter by role, branch, active |
-| POST | `/users` | Admins, fresh auth | Create user + initial scopes; returns a one-time temporary password |
+| POST | `/users` | Admins, fresh auth | Create user + initial scopes. `phone` is **required** (db 046: the forgot-password code goes there), normalised to +91…, and must not belong to another active user (409 under `phone`; also checked on PATCH and on reactivation). Optional `password` (admin-chosen, checked against `password_min_length`; error under `password`); blank = generated. Returns it once as `temporary_password`; `must_change_password` is always set |
 | GET / PATCH | `/users/{id}` | Admins | Profile fields, `is_active` |
 | POST | `/users/{id}/reset-password` | Admins, fresh auth | New temporary password; revokes the user's sessions |
 | GET | `/users/{id}/scopes` | Admins | Including expired / revoked |
@@ -299,7 +301,7 @@ Tables: `persons`, `enquiries`, `leads`, `lead_activities`.
 | POST | `/enquiries` | Counsellors, BM | Records the enquiry; returns possible person / lead matches. Matches go to `Duplicate Review` |
 | GET | `/enquiries?intake_status=Duplicate Review` | BM, Counsellors | Duplicate review queue |
 | POST | `/enquiries/{id}/link` | BM, Counsellors | Link to an existing person / lead (manual decision) |
-| POST | `/leads` | Counsellors, BM | Person + enquiry + lead in one transaction |
+| POST | `/leads` | Counsellors, BM | Person + enquiry + lead in one transaction. A new `person` must include `email` (required, 422 otherwise); `person_id` (existing person) does not |
 | GET | `/leads` | Counsellors (own + branch), BM, Admins | Filters: branch, stage, owner, source, intake, priority, course, search; queue tabs: New, Untouched, Due Today, Overdue, Hot, Demos, Fee Discussion, Payment Pending Verification, Collections, Cold / Reactivation, Future Joining |
 | GET | `/leads/workspace` | Counsellors | Today's prioritised queue for the logged-in counsellor |
 | GET / PATCH | `/leads/{id}` | Scoped | Detail header (person, stage, priority + score, owner, sales summary) |
@@ -774,9 +776,9 @@ The LMS owns the student's login and LMS status, enrolment status, batches, allo
 | Key (in this order) | CRM writes |
 |---|---|
 | `batches[]` | Upsert by `lms_course_id` (= LMS `batch_code`): course, branch, mode, status, capacity, dates, `lead_trainer_email` / `trainer_emails` (+ `trainer_user_id` when a CRM user has that email). Name `<course title> · <code>`; the CRM's own `batch_code` is kept Also the timetable `schedule_days`, `start_time`, `end_time`, `location` (null = not confirmed; a clear overwrites), `seats_left`, `readiness` / `readiness_reason` (db 032; *Blocked* = not public to sales) |
-| `persons[]` | `lms_user_id` (student code), `lms_provisioned_at` |
+| `persons[]` | `lms_user_id` (student code), `lms_provisioned_at` (login created), `lms_activated_at` (LMS db 122: null until the student first sets their own password; the CRM's `lms_account_activated` message waits for it) |
 | `admissions[]` | `lms_status`, `lms_last_activity_at`; `lms_last_synced_at` = when the CRM applied a change |
-| `academics[]` | The admission's allocations replaced by the LMS's complete history (one row per track; closed rows first), `enrolment_status`, and on completion `academic_completed_at`, `completion_authorised_by_email` (+ the CRM user when the email matches) |
+| `academics[]` | The admission's allocations replaced by the LMS's complete history (one row per track; closed rows first; `end_reason` is kept only on a row that is not `Active`, since on an `Active` row the LMS uses it for the allocator's note), `enrolment_status`, and on completion `academic_completed_at`, `completion_authorised_by_email` (+ the CRM user when the email matches) |
 | `certificates[]` | One row per number + version (sorted, so v1 Superseded lands before v2 Issued): status, type, holder, issue date, issuer / revoker emails (+ users), `revoke_reason` or `reissue_reason`, `supersedes_version` |
 
 Rules: every entry is the record's full state and only differing fields are written, so a repeated entry changes nothing. Records with IDs the CRM doesn't have are ignored. A cancelled CRM admission keeps its status. An LMS *Withdrawn* (Cancelled) for an admission the CRM hasn't cancelled is not applied: the service branch's Branch Manager gets a task to cancel it if the student has left. A record that can't be applied (unknown batch / course / branch, a constraint) goes to `lms_pull_holds` and is retried on every pull; after 12 pulls Super Admin gets a task "LMS pull: … not applied".
@@ -871,8 +873,8 @@ The CRM sends template messages to learners through Pinbot: `POST {WHATSAPP_API_
 | `POST /refund-cases/{id}/decide` → Refund Approved / Rejected | `refund_approved_u_v1` / `refund_declined_u_v1` | name, service branch, case code (+ approved amount). A waiver sends nothing |
 | `POST /refund-cases/{id}/payout` → Completed | `refund_payout_completed_u_v1` | + amount paid, payout date, payout reference |
 | `POST /leads/{id}/delivery-plan/accept` | `delivery_plan_accepted_u_v1` | plan code, course, mode, planned start ("To be confirmed by our team" when none) |
-| Batch allocated by the CRM, or newly reported by the LMS pull | `batch_allocated_u_v1` | admission, course, batch, class details (days, times, start or joining date, location; "Timing to be confirmed" when none) |
-| The LMS reports a person's first login | `lms_account_activated_u_v1` | name, branch, the latest admission. Once per person |
+| A batch newly reported by the LMS pull (allocation happens only in the LMS; every new `Active` allocation is messaged once, so a move sends the new batch; timetable changes send nothing) | `batch_allocated_u_v1` | admission, course, batch, class details (days, times, start or joining date, location; "Timing to be confirmed" when none) |
+| The LMS reports the student's first activation (`persons[].lms_activated_at`, not the login's creation) | `lms_account_activated_u_v1` | name, branch, the latest admission. Once per person |
 | An `AdmissionQualified` LMS event fails for good | `lms_course_access_delayed_u_v1` | admission. Once per admission |
 | `POST /job-applications` | `placement_application_recorded_u_v1` | application code (`PL-00001`), "company - job title" |
 | `POST /job-applications/{id}/stage`, an interview scheduled | `placement_application_update_u_v1` | + the recorded status (the stage, or "Interview scheduled for …") |
@@ -1039,6 +1041,32 @@ Db 045. One Pinbot number serves both systems, so the LMS never calls Pinbot: it
 - **`/whatsapp/messages`:** rows carry `sent_by` (`CRM` / `LMS`), filter `?sent_by=`; `person_name` / `branch_name` may be null and `recipient_kind` is `Not in the CRM` for a row without a person; category filter accepts `Authentication`.
 
 Tests: `tests/test_lms_whatsapp.py` (13).
+
+#### Step 29 — Website enquiry form ✅ (dev and EC2, 19 Oct 2026)
+
+Db 047. The nipunatechnologies.com form reaches the CRM server-to-server: the visitor's browser posts to the website's own server, which holds the key and calls the CRM. Submissions land in **Enquiries**, never straight in Leads. The website team's contract: [WEBSITE_INTEGRATION.md](WEBSITE_INTEGRATION.md).
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| POST | `/integrations/website/enquiries` | The website's server: header `X-Service-Key` = `WEBSITE_INTAKE_KEY` (wrong, missing or unset = 401; a staff token is not accepted) | `{submission_id, name, phone, email?, branch_code, enquiry_type, marketing_source?, submitted_at?, course_code?, message?, whatsapp_consent?, utm?{source, medium, campaign, term, content}, page_url?, referrer?}` → 201 `{enquiry_code, status: "received"}`; same `submission_id` again → 200 `{enquiry_code, status: "duplicate_submission"}` |
+| GET | `/enquiries/{id}` | Lead roles, branch-scoped | Now also returns `matches`: `persons` (same phone / email, any branch), `open_leads` (theirs at this branch), `enquiries` (other unconverted enquiries with the same phone / email at the user's branches) |
+| PATCH | `/enquiries/{id}` | Lead roles, branch-scoped | `{intake_status?, is_genuine?}` on an unconverted enquiry (422 once linked). `intake_status` one of New, Incomplete, Outreach Prospect, Invalid-Spam, Test (Duplicate Review is set by matching only). Audit `ENQUIRY_UPDATED` |
+
+- **Validation (400):** `submission_id` 1–100 of letters, digits, `. _ : -`; `name` 2–150; `phone` valid (stored `+91XXXXXXXXXX`); `email` valid if given; `branch_code` required and an active branch (NIT-GNT / NIT-VIJ, any case); `message` ≤ 2,000; UTM values ≤ 200; `page_url` / `referrer` ≤ 500.
+- **Classification (owner's decision, 19 Oct 2026):** marketing source and enquiry type are kept apart. `marketing_source` (optional, default `organic`): `google_ads` → source Google Ads, `meta_ads` → Meta Ads, `organic` → Website (organic / direct); anything else 400. `enquiry_type` (required): `form` → channel Web form, `call_request` → Phone call, `whatsapp_request` → WhatsApp (the Call / WhatsApp popup). Entry method is always `WEBSITE`. Both values are also kept in `attribution`; UTM is stored as sent and never changes the source. `created_by` NULL; owner none.
+- **Submission time:** `submitted_at` (ISO 8601 with a timezone, optional) becomes `received_at`, and so the start of the first-contact clock, when it is in the past (5 min clock skew allowed, clamped to now) and under 48 hours old; otherwise the CRM's time is used. Either way the website's value is kept in `attribution.submitted_at`. The request limits count `created_at`, so a back-dated time can't dodge them.
+- **Course:** an active course offered at the branch (by `course_code`, any case) is set; anything else leaves the course empty and starts the message with "Course asked on website: <text>".
+- **Duplicates (never merged):** a person with that phone / email (any branch), or an unconverted enquiry with that phone / email received within `website_repeat_window_hours` (24), puts the enquiry in Duplicate Review. The reply never says so (it would tell a stranger whether a number is known).
+- **Limits (429 `TOO_MANY_ATTEMPTS`):** more than `website_max_per_phone_per_hour` (5) from one phone in an hour, or `website_max_per_minute` (30) in total. A repeated `submission_id` is answered before the limits. Put an nginx `limit_req` on this path on the server as well (see DEVELOPMENT.md).
+- **Notification:** `WEBSITE_ENQUIRY_RECEIVED` to the branch's Branch Managers plus Founder / CEO and Super Admin ("Website enquiry / Website call request / Website WhatsApp request: <name> · <course>", with "Possible duplicate" when in Duplicate Review).
+- **Audit:** `ENQUIRY_CREATED` with no actor and `new.via = "website"`, `new.repeat_of` = the matching enquiry codes.
+- **Convert / link** keep their rules (step 4): convert needs name and phone, refuses a second open lead for the same course at the branch (409, use link), assigns the converting counsellor or raises the Branch Manager's assign task, and queues the `ENQUIRY_RECEIVED` WhatsApp (subject to the switch and test numbers). A ticked `whatsapp_consent` becomes the person's Explicit Consent (source Web form) unless they already have a recorded choice (audit `WHATSAPP_CONSENT`).
+- **SLA:** unchanged. After conversion the first-attempt clock counts from the form submission (`received_at`), so a late conversion is already overdue and the first-attempt alerts follow.
+- **Frontend:** new **Enquiries** screen (Sales group, lead roles): tabs Not converted / Duplicate Review / Converted / Invalid-Spam / All, search, and a review dialog showing matches with **Convert to lead** (person, course, assignee), **Link to <lead>** and **Save status**. Website notifications link to it.
+
+Tests: `tests/test_website_enquiries.py` (15).
+
+**Not built yet (the website team's later asks):** Meta Instant Form leads (needs a Meta app with `leads_retrieval`, app review and a page token, then a CRM webhook) and Google Ads lead-form webhooks (Google's own body format, key in the body: a separate endpoint). Click IDs (`gclid`, `fbclid`) and campaign / ad / form IDs are not stored (owner chose enquiry type only, 19 Oct 2026).
 
 ### 5. Definition of done (every module)
 

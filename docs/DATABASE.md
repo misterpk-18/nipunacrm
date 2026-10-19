@@ -57,6 +57,8 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | UX · Delivery plan | ✅ Done (dev only) | `037_delivery_plan_ux.sql` — preferred batch, how the plan was accepted, WhatsApp confirmation request |
 | UX · Payment alerts | ✅ Done (dev only) | `038_payment_outcome_alerts.sql` — rules `PAYMENT_VERIFIED` / `PAYMENT_FAILED`, setting `whatsapp_staff_alerts_enabled` |
 | UX · Waiting for batch | ✅ Done (dev only) | `039_batch_waiting.sql` — `working_days_between()`, four batch-delay settings, three batch-delay rules |
+| Forgot password (WhatsApp code) | ✅ Done (dev only) | `046_password_reset_codes.sql` — `password_reset_codes` (hashed one-time codes, spent once), `whatsapp_outbox` accepts `password_reset` rows without a person and with a secret, four `password_reset_*` settings |
+| Website enquiry form | ✅ Done (dev and EC2) | `047_website_enquiries.sql` — `enquiries.external_ref` / `attribution` / `whatsapp_consent`, three `website_*` settings, rule `WEBSITE_ENQUIRY_RECEIVED` |
 | LMS WhatsApp (round 6) | ✅ Done (dev only) | `045_lms_whatsapp.sql` — LMS messages in `whatsapp_outbox` (no person / branch needed), `secret_params` cleared once final, category Authentication, `lms_outbox` accepts `WhatsappStatusUpdated` |
 | WhatsApp notifications switch | ✅ Done (dev and EC2) | `044_whatsapp_notifications_switch.sql` — `persons.whatsapp_notifications` (default true) |
 | Staff WhatsApp alerts | ✅ Done (dev only) | `042_staff_whatsapp_alerts.sql` — `whatsapp_outbox.recipient_user_id`, the guard now freezes it, payment-alert rows back-filled, `whatsapp_staff_alerts_enabled` now true |
@@ -618,6 +620,37 @@ The sequence goes 039 → 042: migrations 040 and 041 are not used (the demo / a
 | `app_settings.whatsapp_staff_alerts_enabled` | Now `true` (was `false` in 038) and the description lists every staff alert. Messages still only reach `WHATSAPP_TEST_NUMBERS` while that is set, and nothing is sent while `WHATSAPP_ENABLED` is off |
 
 Tests: `backend/tests/test_whatsapp_auto_w3.py`.
+
+## Website enquiry form (047) ✅ (applied to `nipunacrm-dev` and the EC2 `nipunacrm`, 19 Oct 2026)
+
+The nipunatechnologies.com enquiry form: the website's server posts each submission to `POST /integrations/website/enquiries` ([API.md · Step 29](API.md#step-29--website-enquiry-form--dev-and-ec2-19-oct-2026); contract for the website team: [WEBSITE_INTEGRATION.md](WEBSITE_INTEGRATION.md)). Each one is an `enquiries` row (source from `marketing_source`, channel from `enquiry_type`, entry method Website, `created_by` NULL) that staff convert, link or dismiss; nothing becomes a lead by itself.
+
+| Change | Detail |
+|---|---|
+| `enquiries.external_ref` | VARCHAR(100), the website's `submission_id`. Unique index `enquiries_external_ref_key` on `(entry_method_id, external_ref)` where set: a retried submission can't make a second row |
+| `enquiries.attribution` | JSONB object (`enquiries_attribution_is_object`): UTM `source` / `medium` / `campaign` / `term` / `content`, `page_url`, `referrer`. The source stays Website whatever the UTM says |
+| `enquiries.whatsapp_consent` | BOOLEAN, the form's WhatsApp tick (NULL = not asked). On convert / link the API copies a tick to the person as `Explicit Consent`, source `Web form`, at `received_at`, only while the person is `Not Recorded` |
+| Indexes | `enquiries_unlinked_phone_idx`, `enquiries_unlinked_email_idx` (unconverted enquiries by phone / lower(email), newest first) for the repeat check |
+| `app_settings` | `website_repeat_window_hours` 24 (same phone / email as an unconverted enquiry inside it → Duplicate Review), `website_max_per_phone_per_hour` 5, `website_max_per_minute` 30 (429 above them) |
+| `notification_rules` | `WEBSITE_ENQUIRY_RECEIVED` (Action Required), role Branch Manager of the enquiry's branch; Founder / CEO and Super Admin always get it too |
+
+The first-contact clock is unchanged: a converted website enquiry's `first_attempt_due_at` counts from the enquiry's `received_at` (`lead_capture_at`, 031), i.e. from the form submission (owner's decision, 19 Oct 2026).
+
+Tested in a rolled-back transaction: a second row with the same `external_ref` and a non-object `attribution` are refused; the happy path stores both. Replay check against `nipunacrm-dev`: 0 schema diff lines. Tests: `backend/tests/test_website_enquiries.py`.
+
+## Forgot password (046) ✅ (applied to `nipunacrm-dev` only)
+
+"Forgot password?" on the sign-in page: the staff member types their mobile and gets a 6-digit code on WhatsApp ([API.md · auth](API.md)).
+
+| Change | Detail |
+|---|---|
+| `password_reset_codes` | One row per code sent: `user_id`, `phone` (+91…), `code_hash` (HMAC-SHA256 with the app's `SECRET_KEY`; the code itself is never stored), `expires_at`, `attempts` / `max_attempts`, `used_at`, `retired_at` (a newer code was sent, or too many wrong tries), `requested_ip`. Checks: expiry after creation, `0 ≤ attempts ≤ max_attempts`, not both used and retired |
+| `guard_password_reset_code()` | `trg_password_reset_codes_guard` BEFORE UPDATE: user, phone, hash, expiry, max attempts and created_at never change; a used or retired code can't change again ("This password reset code is no longer valid; ask for a new one") |
+| `whatsapp_outbox_crm_needs_person` | Replaced: `source_type` `lms` **or `password_reset`** may have no person / branch (a staff member has no CRM person); `source_id` = `reset_id` |
+| `whatsapp_outbox_secret_only_lms_or_reset` | Replaces `whatsapp_outbox_secret_only_lms`: `secret_params` (the code) on `lms` and `password_reset` rows only; cleared by `forget_whatsapp_secrets()` once the row is Sent, Failed or Skipped (045) |
+| `app_settings` | `password_reset_code_minutes` 10, `password_reset_max_attempts` 5, `password_reset_resend_seconds` 60, `password_reset_max_per_hour` 5 |
+
+Tested in a rolled-back transaction: changing the hash, attempts over the maximum, reusing a used code and an expiry before creation are refused; a `password_reset` outbox row without a person and with a secret is accepted; a secret on a learner message and a non-reset row without a person are refused. Replay check against `nipunacrm-dev`: 0 schema diff lines. Tests: `backend/tests/test_password_reset.py`.
 
 ## LMS WhatsApp (045) ✅ (applied to `nipunacrm-dev` only)
 

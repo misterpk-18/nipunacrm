@@ -20,6 +20,7 @@ import { DataTable, Empty, PageHead, Pagination, Section, Status, Warning } from
 import { date, dateTime, isPast, money } from "@/lib/format";
 import { AdmissionPanel } from "./admission-detail";
 import { useCan } from "./can";
+import { isHidden } from "@/auth/access";
 
 export type AdmissionSearch = Omit<AdmissionFilters, "per_page" | "branch_id"> & { admission?: number };
 
@@ -62,7 +63,7 @@ export function AdmissionsList({ search, onSearch }: { search: AdmissionSearch; 
                 </Link>
               </Button>
             )}
-            {hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "TRAINER") && (
+            {!isHidden("/batches") && hasRole("FOUNDER_CEO", "SUPER_ADMIN", "BRANCH_MANAGER", "TRAINER") && (
               <Button asChild variant="outline">
                 <Link to="/batches">Batch Workspace</Link>
               </Button>

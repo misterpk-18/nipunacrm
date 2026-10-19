@@ -46,6 +46,8 @@ class BaseConfig:
     # The LMS web app (not its API): "Open in LMS" links on the Waiting for batch screen. Empty = no link shown.
     LMS_WEB_URL = os.getenv("LMS_WEB_URL")
     LMS_TIMEOUT_SECONDS = float(os.getenv("LMS_TIMEOUT_SECONDS", "10"))
+    # Website enquiry form (db 047): the website's server sends it as X-Service-Key. Empty = the endpoint refuses all.
+    WEBSITE_INTAKE_KEY = os.getenv("WEBSITE_INTAKE_KEY")
     # Round 3: deliver a request's events right after it commits (background thread, short timeout)
     LMS_PUSH_ON_COMMIT = os.getenv("LMS_PUSH_ON_COMMIT", "1") not in ("0", "false", "False")
     LMS_PUSH_TIMEOUT_SECONDS = float(os.getenv("LMS_PUSH_TIMEOUT_SECONDS", "3"))
@@ -89,6 +91,7 @@ class TestingConfig(BaseConfig):
     ANTHROPIC_API_KEY = None  # tests never call the real API
     LMS_BASE_URL = "http://lms.test"  # tests replace the HTTP call
     LMS_SERVICE_KEY = "test-service-key"
+    WEBSITE_INTAKE_KEY = "test-website-key"
     LMS_WEB_URL = "http://lms-web.test"
     LMS_PUSH_ON_COMMIT = False        # no background threads inside the test transaction
     WHATSAPP_ENABLED = True           # tests replace the HTTP call

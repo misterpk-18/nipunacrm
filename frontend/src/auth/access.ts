@@ -16,6 +16,13 @@ const ALL_STAFF: RoleCode[] = [
 ];
 
 export type NavItem = { label: string; to: string; icon: string; roles: RoleCode[] };
+
+/**
+ * Sections switched off for every role for now: no menu entry, no phone-bar entry, and a direct URL shows
+ * "no access". The screens and their API are untouched; delete a path here to bring the section back.
+ */
+export const HIDDEN_PATHS = ["/batches", "/waiting-for-batch", "/lms-access", "/placement-alumni"];
+export const isHidden = (path: string) => HIDDEN_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 export type NavGroup = { label: string; items: NavItem[] };
 
 const LEADS: NavItem = { label: "Leads", to: "/leads", icon: "SquareUser", roles: SALES_TEAM };
@@ -23,8 +30,8 @@ const PIPELINE: NavItem = { label: "Deal pipeline", to: "/pipeline", icon: "Colu
 const PAYMENTS: NavItem = { label: "Payments & receipts", to: "/payments", icon: "ReceiptText", roles: FINANCE_TEAM };
 const AI_ASSISTANT: NavItem = { label: "AI assistant", to: "/ai-copilot", icon: "Sparkles", roles: SALES_TEAM };
 
-/** Sidebar groups (V4 names and order). */
-export const NAV_GROUPS: NavGroup[] = [
+/** Sidebar groups (V4 names and order), before hidden sections are taken out. */
+const ALL_NAV_GROUPS: NavGroup[] = [
   {
     label: "Workspace",
     items: [
@@ -36,6 +43,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Sales",
     items: [
+      { label: "Enquiries", to: "/enquiries", icon: "Inbox", roles: SALES_TEAM },
       LEADS,
       PIPELINE,
       { label: "Demos & counselling", to: "/demos", icon: "CalendarDays", roles: [...SALES_TEAM, "TRAINER"] },
@@ -71,6 +79,11 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
+
+/** Sidebar groups (V4 names and order). */
+export const NAV_GROUPS: NavGroup[] = ALL_NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => !isHidden(i.to)) })).filter(
+  (g) => g.items.length > 0,
+);
 
 /** Every main-navigation screen, flat (used by the More hub and the route guard). */
 export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
@@ -114,7 +127,7 @@ export function mobileNavItems(roles: RoleCode[]): NavItem[] {
   ];
   const picked: NavItem[] = [HOME];
   const add = (item: NavItem) => {
-    if (picked.length < 5 && allowed(item, roles) && !picked.some((p) => p.to === item.to)) picked.push(item);
+    if (picked.length < 5 && !isHidden(item.to) && allowed(item, roles) && !picked.some((p) => p.to === item.to)) picked.push(item);
   };
   for (const [who, items] of byRole) if (who.some((r) => roles.includes(r))) items.forEach(add);
   [
@@ -128,6 +141,7 @@ export function mobileNavItems(roles: RoleCode[]): NavItem[] {
 
 /** Route path → roles, for the route guard (first matching prefix wins). */
 export function rolesForPath(path: string): RoleCode[] | null {
+  if (isHidden(path)) return [];
   const items = [...NAV_ITEMS, ...MORE_ITEMS, WORKFLOW_GUIDE].sort((a, b) => b.to.length - a.to.length);
   const extra: Record<string, RoleCode[]> = {
     "/fee-quote": SALES_TEAM,

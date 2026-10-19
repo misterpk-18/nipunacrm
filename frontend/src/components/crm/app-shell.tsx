@@ -81,12 +81,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-background text-foreground">
       <aside className={cn("sidebar", mobile && "sidebar-open")}>
         <div className="sidebar-brand">
-          <div className="logo-mark" aria-hidden>
-            N
-          </div>
-          <div className="brand-name">
-            nipuna<small>CRM</small>
-          </div>
+          <img src="/nipuna-logo.png" alt="Nipuna Technologies" className="brand-logo" />
+          <span className="brand-tag">CRM</span>
           <Button variant="ghost" size="icon" className="ml-auto md:hidden" onClick={() => setMobile(false)} aria-label="Close navigation">
             <X />
           </Button>

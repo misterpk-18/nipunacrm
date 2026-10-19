@@ -98,6 +98,9 @@ class Enquiry(db.Model):
     raw_email: Mapped[str | None] = mapped_column(String(255))
     message: Mapped[str | None] = mapped_column(Text)
     communication_id: Mapped[int | None] = mapped_column(BigInteger)
+    external_ref: Mapped[str | None] = mapped_column(String(100))  # db 047: the website's submission_id
+    attribution: Mapped[Any] = mapped_column(JSONB)                # db 047: UTM, page URL, referrer
+    whatsapp_consent: Mapped[bool | None] = mapped_column(Boolean)  # db 047: website checkbox (None = not asked)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
@@ -130,6 +133,8 @@ class Enquiry(db.Model):
             "raw_phone": self.raw_phone,
             "raw_email": self.raw_email,
             "message": self.message,
+            "attribution": self.attribution,
+            "whatsapp_consent": self.whatsapp_consent,
             "received_at": self.received_at,
         }
 

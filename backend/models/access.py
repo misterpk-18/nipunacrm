@@ -165,3 +165,21 @@ class ActiveSession(db.Model):
             "user_agent": self.user_agent,
             "current": self.session_id == current_session_id,
         }
+
+
+class PasswordResetCode(db.Model):
+    """A one-time "forgot password" code sent on WhatsApp (db 046). Only its HMAC is stored; spent once (trigger)."""
+
+    __tablename__ = "password_reset_codes"
+
+    reset_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"))
+    phone: Mapped[str] = mapped_column(String(20))
+    code_hash: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    requested_ip: Mapped[str | None] = mapped_column(INET)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())

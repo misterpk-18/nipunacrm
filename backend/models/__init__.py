@@ -2,7 +2,7 @@
 
 Models map existing tables (schema lives in db/*.sql); they never create tables.
 """
-from models.access import ActiveSession, Role, User, UserRoleScope, UserSession
+from models.access import ActiveSession, PasswordResetCode, Role, User, UserRoleScope, UserSession
 from models.commercials import (
     ConcessionLimit, Offer, OfferBranch, OfferComplimentaryCourse, OfferCourse, PaymentPlan, PaymentPlanInstallment,
 )

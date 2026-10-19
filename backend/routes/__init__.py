@@ -19,6 +19,7 @@ from routes.playbook import playbook_bp
 from routes.reference import reference_bp
 from routes.students import students_bp
 from routes.users import users_bp
+from routes.website_enquiries import website_enquiries_bp
 from routes.whatsapp import whatsapp_bp
 
 BLUEPRINTS = [
@@ -41,6 +42,7 @@ BLUEPRINTS = [
     ai_bp,
     playbook_bp,
     whatsapp_bp,
+    website_enquiries_bp,
 ]
 
 

@@ -80,6 +80,11 @@ def get_enquiry(enquiry_id: int):
     return leads_controller.get_enquiry(enquiry_id)
 
 
+@lead_route("/enquiries/<int:enquiry_id>", "patch")
+def update_enquiry(enquiry_id: int):
+    return leads_controller.update_enquiry(enquiry_id)
+
+
 @lead_route("/enquiries/<int:enquiry_id>/link", "post")
 def link_enquiry(enquiry_id: int):
     return leads_controller.link_enquiry(enquiry_id)

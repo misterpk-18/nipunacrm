@@ -25,6 +25,7 @@ import { date, dateTime, money, todayIST } from "@/lib/format";
 import { useApiMutation } from "@/lib/mutation";
 import { useCan } from "./can";
 import { CheckResult, FormDialog, LmsOwnedNote, LmsRefreshButton } from "./shared";
+import { isHidden } from "@/auth/access";
 
 const INVALIDATE = [admissionKeys.all, batchKeys.all, studentKeys.all, ["tasks"], ["invoices"]];
 
@@ -416,11 +417,14 @@ function Allocations({ a }: { a: AdmissionDetail }) {
         columns={[
           {
             header: "Batch",
-            cell: (x) => (
-              <Link to="/batches/$batchId" params={{ batchId: String(x.batch_id) }} className="font-medium text-primary">
-                {x.batch_code}
-              </Link>
-            ),
+            cell: (x) =>
+              isHidden("/batches") ? (
+                <span className="font-medium">{x.batch_code}</span>
+              ) : (
+                <Link to="/batches/$batchId" params={{ batchId: String(x.batch_id) }} className="font-medium text-primary">
+                  {x.batch_code}
+                </Link>
+              ),
           },
           { header: "Track", cell: (x) => x.track_code ?? "—" },
           { header: "Status", cell: (x) => <Status>{x.status}</Status> },

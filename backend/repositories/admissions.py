@@ -1,100 +1,128 @@
 """Admissions, batches and allocation queries."""
-from sqlalchemy import Select, exists, or_, select
+from sqlalchemy import Select, select
 
 from config.database import db
 from models import (
     Admission, AdmissionBalance, AdmissionFeeChange, Batch, BatchAllocation, BatchAllocationQueue, Invoice, InvoiceLine,
     Person,
 )
+from repositories.common import text
+
+
+def _equals(where: list[str], params: dict, filters: dict, fields: tuple[tuple[str, str], ...]) -> None:
+    """Add `column = :field` for each filter present; columns are fixed literals from the caller."""
+    for field, column in fields:
+        if filters.get(field) is not None:
+            where.append(f"{column} = :{field}")
+            params[field] = filters[field]
 
 
 def admissions_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
-    stmt = (select(Admission).join(Person, Person.person_id == Admission.person_id)
-            .join(AdmissionBalance, AdmissionBalance.admission_id == Admission.admission_id)
-            .order_by(Admission.created_at.desc(), Admission.admission_id.desc()))
+    """Kept as a Select (paginated with db.paginate, which needs limit/offset): the filter is raw SQL."""
+    where = ["TRUE"]
+    params: dict = {}
     if branch_ids is not None:
-        stmt = stmt.where(or_(Admission.service_branch_id.in_(branch_ids), Admission.original_branch_id.in_(branch_ids)))
+        where.append("(admissions.service_branch_id = ANY(:branch_ids) OR admissions.original_branch_id = ANY(:branch_ids))")
+        params["branch_ids"] = list(branch_ids)
     if filters.get("branch_id"):
-        stmt = stmt.where(or_(Admission.service_branch_id == filters["branch_id"],
-                              Admission.original_branch_id == filters["branch_id"]))
-    for field, column in (("service_branch_id", Admission.service_branch_id),
-                          ("original_branch_id", Admission.original_branch_id),
-                          ("enrolment_status", Admission.enrolment_status),
-                          ("handover_status", Admission.handover_status), ("lms_status", Admission.lms_status),
-                          ("seat_type", Admission.seat_type), ("person_id", Admission.person_id),
-                          ("course_id", Admission.course_id), ("payment_completion", AdmissionBalance.payment_completion)):
-        if filters.get(field) is not None:
-            stmt = stmt.where(column == filters[field])
+        where.append("(admissions.service_branch_id = :branch_id OR admissions.original_branch_id = :branch_id)")
+        params["branch_id"] = filters["branch_id"]
+    _equals(where, params, filters, (
+        ("service_branch_id", "admissions.service_branch_id"), ("original_branch_id", "admissions.original_branch_id"),
+        ("enrolment_status", "admissions.enrolment_status"), ("handover_status", "admissions.handover_status"),
+        ("lms_status", "admissions.lms_status"), ("seat_type", "admissions.seat_type"),
+        ("person_id", "admissions.person_id"), ("course_id", "admissions.course_id"),
+        ("payment_completion", "admission_balances.payment_completion")))
     if filters.get("q"):
-        pattern = f"%{filters['q']}%"
-        stmt = stmt.where(or_(Admission.admission_code.ilike(pattern), Person.full_name.ilike(pattern),
-                              Person.phone.ilike(pattern)))
-    return stmt
+        where.append("(admissions.admission_code ILIKE :pattern OR persons.full_name ILIKE :pattern "
+                     "OR persons.phone ILIKE :pattern)")
+        params["pattern"] = f"%{filters['q']}%"
+    return (select(Admission).join(Person, Person.person_id == Admission.person_id)
+            .join(AdmissionBalance, AdmissionBalance.admission_id == Admission.admission_id)
+            .where(text(" AND ".join(where)).bindparams(**params))
+            .order_by(text("admissions.created_at DESC, admissions.admission_id DESC")))
 
 
 def admission_for_line(invoice_line_id: int) -> Admission | None:
-    return db.session.execute(select(Admission).where(Admission.invoice_line_id == invoice_line_id)).scalar_one_or_none()
+    return db.session.execute(select(Admission).from_statement(
+        text("SELECT * FROM admissions WHERE invoice_line_id = :invoice_line_id")),
+        {"invoice_line_id": invoice_line_id}).scalar_one_or_none()
 
 
 def unadmitted_lines_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
-    """Courses on Issued invoices with no admission yet (the New Admission review)."""
-    stmt = (select(InvoiceLine).join(Invoice, Invoice.invoice_id == InvoiceLine.invoice_id)
-            .join(Person, Person.person_id == Invoice.person_id)
-            .where(Invoice.status == "Issued",
-                   ~exists().where(Admission.invoice_line_id == InvoiceLine.invoice_line_id))
-            .order_by(Invoice.issued_on.desc(), InvoiceLine.invoice_line_id.desc()))
+    """Courses on Issued invoices with no admission yet (the New Admission review).
+    Kept as a Select (paginated with db.paginate, which needs limit/offset): the filter is raw SQL."""
+    where = ["invoices.status = :status",
+             "NOT EXISTS (SELECT 1 FROM admissions WHERE admissions.invoice_line_id = invoice_lines.invoice_line_id)"]
+    params: dict = {"status": "Issued"}
     if branch_ids is not None:
-        stmt = stmt.where(Invoice.collecting_branch_id.in_(branch_ids))
+        where.append("invoices.collecting_branch_id = ANY(:branch_ids)")
+        params["branch_ids"] = list(branch_ids)
     if filters.get("branch_id"):
-        stmt = stmt.where(Invoice.collecting_branch_id == filters["branch_id"])
+        where.append("invoices.collecting_branch_id = :branch_id")
+        params["branch_id"] = filters["branch_id"]
     if filters.get("invoice_id"):
-        stmt = stmt.where(Invoice.invoice_id == filters["invoice_id"])
+        where.append("invoices.invoice_id = :invoice_id")
+        params["invoice_id"] = filters["invoice_id"]
     if filters.get("q"):
-        pattern = f"%{filters['q']}%"
-        stmt = stmt.where(or_(Invoice.invoice_number.ilike(pattern), Person.full_name.ilike(pattern)))
-    return stmt
+        where.append("(invoices.invoice_number ILIKE :pattern OR persons.full_name ILIKE :pattern)")
+        params["pattern"] = f"%{filters['q']}%"
+    return (select(InvoiceLine).join(Invoice, Invoice.invoice_id == InvoiceLine.invoice_id)
+            .join(Person, Person.person_id == Invoice.person_id)
+            .where(text(" AND ".join(where)).bindparams(**params))
+            .order_by(text("invoices.issued_on DESC, invoice_lines.invoice_line_id DESC")))
 
 
 def active_allocations(admission_id: int) -> list[BatchAllocation]:
-    stmt = select(BatchAllocation).where(BatchAllocation.admission_id == admission_id, BatchAllocation.status == "Active")
-    return list(db.session.execute(stmt).scalars())
+    return list(db.session.execute(select(BatchAllocation).from_statement(text("""
+        SELECT * FROM batch_allocations WHERE admission_id = :admission_id AND status = :status
+    """)), {"admission_id": admission_id, "status": "Active"}).scalars())
 
 
 def allocations_for(admission_id: int) -> list[BatchAllocation]:
-    stmt = select(BatchAllocation).where(BatchAllocation.admission_id == admission_id).order_by(BatchAllocation.allocation_id)
-    return list(db.session.execute(stmt).scalars())
+    return list(db.session.execute(select(BatchAllocation).from_statement(text("""
+        SELECT * FROM batch_allocations WHERE admission_id = :admission_id ORDER BY allocation_id
+    """)), {"admission_id": admission_id}).scalars())
 
 
 def fee_changes_for(admission_id: int) -> list[AdmissionFeeChange]:
-    stmt = select(AdmissionFeeChange).where(AdmissionFeeChange.admission_id == admission_id).order_by(
-        AdmissionFeeChange.fee_change_id)
-    return list(db.session.execute(stmt).scalars())
+    return list(db.session.execute(select(AdmissionFeeChange).from_statement(text("""
+        SELECT * FROM admission_fee_changes WHERE admission_id = :admission_id ORDER BY fee_change_id
+    """)), {"admission_id": admission_id}).scalars())
 
 
 def batches_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
-    stmt = select(Batch).order_by(Batch.start_date, Batch.batch_id)
+    """Kept as a Select (paginated with db.paginate, which needs limit/offset): the filter is raw SQL."""
+    where = ["TRUE"]
+    params: dict = {}
     if branch_ids is not None:
-        stmt = stmt.where(Batch.branch_id.in_(branch_ids))
-    for field, column in (("branch_id", Batch.branch_id), ("course_id", Batch.course_id), ("status", Batch.status),
-                          ("trainer_id", Batch.trainer_user_id)):
-        if filters.get(field) is not None:
-            stmt = stmt.where(column == filters[field])
-    return stmt
+        where.append("batches.branch_id = ANY(:branch_ids)")
+        params["branch_ids"] = list(branch_ids)
+    _equals(where, params, filters, (("branch_id", "batches.branch_id"), ("course_id", "batches.course_id"),
+                                     ("status", "batches.status"), ("trainer_id", "batches.trainer_user_id")))
+    return (select(Batch).where(text(" AND ".join(where)).bindparams(**params))
+            .order_by(text("batches.start_date, batches.batch_id")))
 
 
 def batch_allocations(batch_id: int) -> list[BatchAllocation]:
-    stmt = (select(BatchAllocation).where(BatchAllocation.batch_id == batch_id)
-            .order_by(BatchAllocation.status, BatchAllocation.allocation_id))
-    return list(db.session.execute(stmt).scalars())
+    return list(db.session.execute(select(BatchAllocation).from_statement(text("""
+        SELECT * FROM batch_allocations WHERE batch_id = :batch_id ORDER BY status, allocation_id
+    """)), {"batch_id": batch_id}).scalars())
 
 
 def queue_stmt(filters: dict, branch_ids: set[int] | None) -> Select:
-    stmt = select(BatchAllocationQueue).order_by(BatchAllocationQueue.allocate_by.asc().nulls_last())
+    """Kept as a Select (paginated with db.paginate, and executed directly): the filter is raw SQL."""
+    where = ["TRUE"]
+    params: dict = {}
     if branch_ids is not None:
-        stmt = stmt.where(BatchAllocationQueue.service_branch_id.in_(branch_ids))
+        where.append("batch_allocation_queue.service_branch_id = ANY(:branch_ids)")
+        params["branch_ids"] = list(branch_ids)
     if filters.get("branch_id"):
-        stmt = stmt.where(BatchAllocationQueue.service_branch_id == filters["branch_id"])
+        where.append("batch_allocation_queue.service_branch_id = :branch_id")
+        params["branch_id"] = filters["branch_id"]
     if filters.get("course_id"):
-        stmt = stmt.join(Admission, Admission.admission_id == BatchAllocationQueue.admission_id).where(
-            Admission.course_id == filters["course_id"])
-    return stmt
+        where.append("batch_allocation_queue.admission_id IN (SELECT admission_id FROM admissions "
+                     "WHERE course_id = :course_id)")
+        params["course_id"] = filters["course_id"]
+    return (select(BatchAllocationQueue).where(text(" AND ".join(where)).bindparams(**params))
+            .order_by(text("batch_allocation_queue.allocate_by ASC NULLS LAST")))

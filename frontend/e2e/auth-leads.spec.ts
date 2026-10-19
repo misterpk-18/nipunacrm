@@ -48,8 +48,10 @@ test("create a lead, see it in Lead 360, and a duplicate phone goes to review", 
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name").fill("Playwright Learner");
   await dialog.getByLabel("Primary mobile", { exact: true }).fill(phone);
+  await dialog.getByLabel("Email", { exact: true }).fill(`${phone}@example.test`);
   await dialog.getByLabel("Course").selectOption({ label: "AWS with DevOps (NIT-CRS-007)" });
   await dialog.getByLabel("Original source").selectOption({ label: "Website" });
+  await dialog.getByText("More details").click();
   await dialog.getByLabel("Contact channel").selectOption({ label: "Web form" });
   await dialog.getByLabel("Entry method").selectOption({ label: "Website" });
   await dialog.getByRole("button", { name: "Save lead" }).click();
@@ -61,7 +63,9 @@ test("create a lead, see it in Lead 360, and a duplicate phone goes to review", 
   await page.getByRole("button", { name: "New lead" }).click();
   await dialog.getByLabel("Name").fill("Playwright Duplicate");
   await dialog.getByLabel("Primary mobile", { exact: true }).fill(phone);
+  await dialog.getByLabel("Email", { exact: true }).fill(`${phone}@example.test`);
   await dialog.getByLabel("Original source").selectOption({ label: "Walk-in" });
+  await dialog.getByText("More details").click();
   await dialog.getByLabel("Contact channel").selectOption({ label: "In person" });
   await dialog.getByLabel("Entry method").selectOption({ label: "Walk-in desk" });
   await dialog.getByRole("button", { name: "Save lead" }).click();
@@ -77,7 +81,9 @@ test("branch manager creates an unassigned lead and bulk-assigns it", async ({ p
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name").fill("Walk-in Unassigned");
   await dialog.getByLabel("Primary mobile", { exact: true }).fill(phone);
+  await dialog.getByLabel("Email", { exact: true }).fill(`${phone}@example.test`);
   await dialog.getByLabel("Original source").selectOption({ label: "Walk-in" });
+  await dialog.getByText("More details").click();
   await dialog.getByLabel("Contact channel").selectOption({ label: "In person" });
   await dialog.getByLabel("Entry method").selectOption({ label: "Walk-in desk" });
   await dialog.getByRole("button", { name: "Save lead" }).click();

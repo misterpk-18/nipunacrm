@@ -43,12 +43,13 @@ nipuna-crm/
 | `OPENAI_API_KEY`, `LANGSMITH_*` | In `.env` but not read by the code |
 | `LMS_BASE_URL`, `LMS_SERVICE_KEY` | The Nipuna LMS (local: `http://127.0.0.1:5060`); the key is the LMS's `CRM_SERVICE_KEY` — get it from the LMS owner, never commit or print it. Unset = events wait in `lms_outbox` |
 | `LMS_TIMEOUT_SECONDS` | Optional, default 10 |
+| `WEBSITE_INTAKE_KEY` | The key the nipunatechnologies.com server sends as `X-Service-Key` to `POST /api/v1/integrations/website/enquiries` ([API.md · Step 29](API.md#step-29--website-enquiry-form--dev-and-ec2-19-oct-2026), [WEBSITE_INTEGRATION.md](WEBSITE_INTEGRATION.md)). Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`, give it to the website team privately, never commit or print it; a different value per environment. Unset = the endpoint refuses everything. Set on local dev and on EC2 (19 Oct 2026, same value by the owner's choice) |
 | `LMS_WEB_URL` | The LMS web app (dev `http://127.0.0.1:5174`; tests `http://lms-web.test`). Used only for the **Open in LMS** link on Waiting for batch; unset = the link is hidden with a hint. Add it to the server `.env` too |
 | `LMS_PUSH_ON_COMMIT`, `LMS_PUSH_TIMEOUT_SECONDS` | Push a request's LMS events right after it commits (default on, `0` turns it off), with a 3 s timeout |
-| `LMS_WHATSAPP_STATUS_EVENTS` | Default `0`. `1` = tell the LMS when a message it sent through `POST /lms/whatsapp` is Sent / Delivered / Read / Failed / Skipped (`WhatsappStatusUpdated` events, [API.md · Step 28](API.md#step-28--whatsapp-for-the-lms-round-6--dev-only)). Turn on only once the LMS has the handler, or every event fails with a Super Admin task. The same `LMS_SERVICE_KEY` also authenticates the LMS's calls to the CRM |
+| `LMS_WHATSAPP_STATUS_EVENTS` | Default `0` (`1` on local dev since 18 Oct 2026). `1` = tell the LMS when a message it sent through `POST /lms/whatsapp` is Sent / Delivered / Read / Failed / Skipped (`WhatsappStatusUpdated` events, [API.md · Step 28](API.md#step-28--whatsapp-for-the-lms-round-6--dev-only)). Turn on only once the LMS has the handler, or every event fails with a Super Admin task. The same `LMS_SERVICE_KEY` also authenticates the LMS's calls to the CRM |
 | `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_API_KEY` | WhatsApp through Pinbot ([API.md · Step 25](API.md#step-25--whatsapp-messages-outbox--dev-only)). Nothing is sent unless it is `1` and both the URL (`https://partnersv1.pinbot.ai/v3/<number id>/messages`) and the key are set; the key stays in `.env`, never committed or printed. Default off: rows wait in `whatsapp_outbox` |
 | `WHATSAPP_WEBHOOK_TOKEN` | The secret the provider sends (header `X-Webhook-Token` or `?token=`) to `POST /api/v1/webhooks/whatsapp` for delivery status and replies. Unset = the endpoint refuses everything |
-| `WHATSAPP_TEST_NUMBERS` | Comma-separated numbers with country code. When set, only these are messaged; every other row is Skipped. Keep it set on dev: the staging data holds real numbers |
+| `WHATSAPP_TEST_NUMBERS` | Comma-separated numbers with country code. When set, only these are messaged; every other row is Skipped. Keep it set on dev: the staging data holds real numbers. Local dev uses one number, `+919392329248` (owner's rule, 18 Oct 2026) |
 | `WHATSAPP_MAX_AGE_HOURS`, `WHATSAPP_TIMEOUT_SECONDS`, `WHATSAPP_PUSH_ON_COMMIT`, `WHATSAPP_PUSH_TIMEOUT_SECONDS`, `WHATSAPP_INVOICE_CHANNEL` | Optional: 24, 10, on, 3, "your Nipuna counsellor" (the wording after "review the invoice through") |
 
 `backend/.env.example` lists the same variables without secrets.
@@ -91,10 +92,11 @@ Other backend commands (from `backend/`): `flask --app app create-admin` (first 
 
 **The LMS link locally** ([API.md · Steps 22–23](API.md#step-22--lms-sync-outbox--dev-only)). Run the LMS on :5060 (`cd nipunalms/backend && APP_ENV=development ../venv/bin/flask --app app run --port 5060`, its own `nipunalms-dev` database) and set `LMS_BASE_URL` / `LMS_SERVICE_KEY` in `backend/.env`. How it works:
 
-- **CRM → LMS:** every admission, course, branch and money change writes `lms_outbox` rows in the same transaction; they are pushed right after the request commits, and `flask lms worker` is the retry path (the LMS owner sees them in its Super Admin screen **CRM sync**, `/admin/crm-sync`).
+- **CRM → LMS:** every admission, course, branch and money change writes `lms_outbox` rows in the same transaction; they are pushed right after the request commits, and `flask lms worker` is the retry path and also the only thing that delivers the LMS outbox (`WhatsappStatusUpdated` events wait there, not in `whatsapp deliver --loop`; one `flask lms deliver` run sends one event per record, so run it repeatedly) (the LMS owner sees them in its Super Admin screen **CRM sync**, `/admin/crm-sync`).
 - **LMS → CRM:** the status pull mirrors login, LMS status, enrolment, batches (with timetable, seats left and readiness), allocations, completion and certificates. While `academics_managed_in_lms` is on (dev), those academic screens are read-only in the CRM. The CRM holds no curriculum (db 043); the LMS keeps its own.
 - The test suite runs with `academics_managed_in_lms` off (conftest) so the CRM's own academic rules stay covered; `tests/test_lms_pull.py` turns it on.
 - Seed batches in the LMS never come through the pull: create batches in the LMS (Academic → Batches). On a dev database that still has the CRM's own batches, run `flask lms drop-crm-batches --yes` once, then `flask lms pull --full`.
+- **Batches and allocation are LMS-only (round 7, 18 Oct 2026).** A Branch Manager creates batches and allocates students in the LMS (**Waiting for a batch**); the CRM has no allocate action and learns the result by the pull. The pull sends the student `batch_allocated_u_v1` once for **each new `Active` allocation** (a move to another batch messages the new batch; a timetable change sends nothing). `lms_account_activated_u_v1` is sent on the first `persons[].lms_activated_at` (the student set a password), not when the login is created. On an `Active` allocation the LMS's `end_reason` is the allocator's note, so the CRM stores it only when the status is not `Active`. The LMS dev seed command is `flask seed-crm-batches` (LMS repo).
 - Local only: never point this at real student data until the service key, transport and retention are agreed.
 
 ```bash
@@ -141,6 +143,19 @@ E2E_BASE_URL=http://localhost:5190 npx playwright test e2e/whatsapp.spec.ts --pr
 ```
 
 The seed password `Nipuna-staging-1` works on a freshly seeded database. It is rejected on the long-lived `nipunacrm-dev` (those accounts were created or changed some other way), so use a scratch database rather than guessing credentials.
+
+#### Role guides (PDF)
+
+`guides/` holds one illustrated PDF per role (Sales Counsellor & Front Office, Branch Manager, Accounts, Founder / CEO & Super Admin): Part 1 is the role at a glance, Part 2 its daily workflows step by step, with annotated screenshots. They are generated from the dev stack by Playwright scripts in `frontend/e2e/guides/` (`<role>.guide.ts`, config `frontend/playwright.guides.config.ts`; the `.guide.ts` suffix keeps them out of the e2e run). Each script signs in as the role, builds its own records through the API (`demo.ts`: realistic names, unique mobiles, a sample UPI receipt as proof), runs the workflows in the UI and writes text + screenshots to `guides/_build/<role>/` (git-ignored); `build.guide.ts` turns that into the branded A4 PDF with Chromium.
+
+```bash
+cd frontend
+npx playwright test -c playwright.guides.config.ts demo-data      # once per database: base layer of sample records
+npx playwright test -c playwright.guides.config.ts sales.guide    # capture one role (branch-manager, accounts, founder)
+npx playwright test -c playwright.guides.config.ts build          # build every captured role's PDF into ../guides/
+```
+
+Re-run a role after its screens change. Screens hidden for every role (`HIDDEN_PATHS`) are left out of the guides.
 
 #### Clearing test persons, leads and their records
 
@@ -256,6 +271,7 @@ frontend/
 |---|---|---|
 | Login, change password, account (`/login`, `/change-password`, `/account`) | `/auth/*` | core |
 | Persons, Person 360 (`/persons`, `/persons/$personId`) | `/persons`, `/persons/{id}/overview` | leads |
+| Enquiries (`/enquiries`, `features/leads/enquiries-list.tsx`) | `GET /enquiries` (tabs: `linked=false`, `intake_status=Duplicate Review`, `linked=true`, `intake_status=Invalid-Spam`), `GET /enquiries/{id}` (with `matches`), `POST /enquiries/{id}/convert`, `POST /enquiries/{id}/link`, `PATCH /enquiries/{id}` | leads |
 | Leads, Lead 360 (`/leads`, `/leads/$leadId`) | `/leads*` (Active leads by default; `lead_status` filter), `/saved-views`, `/lead-imports`, `/persons`, `/staff`, `/pipeline-entries/{id}` | leads |
 | Counsellor workspace, Pipeline, Demos, Fee discussion, Discount approvals | `/leads/workspace`, `/pipeline` (person cards), `/pipeline-entries*`, `/demos*`, `/fee-discussions*`, `/special-closing-requests*` | sales |
 | Invoices, Payments, Collections, Refunds | `/invoices*`, `/payments*`, `/correction-requests*`, `/collections/*`, `/payment-promises*`, `/refund-cases*` | finance |
@@ -269,7 +285,7 @@ frontend/
 From the V4 handoff ([Part D (V4 plan)](#part-d--v4-handoff-plan-and-review), Phases 1 and 9). `prototype/` is no longer the visual reference; the published V4 UI is.
 
 - **Theme tokens** (`src/styles.css`, `:root`): Open Sans (Google Fonts, `index.html`); `--primary #6251DA`, `--background #F8F9FC`, `--border #E7E9F0`, `--radius 0.75rem`, white sidebar; lead-chip and WhatsApp colours as `--lead-*` / `--whatsapp*`. A `.dark` token set exists for later. Cards (`.panel`, `.metric-card`): white, 1px border, 12px radius. Buttons 8px radius; tabs are underline tabs (`components/ui/tabs.tsx`); tables have a light header row and no uppercase.
-- **Sidebar** (`auth/access.ts` `NAV_GROUPS`, gated with `allowed()`): Workspace (Overview, My work, AI assistant) · Sales (Leads, Deal pipeline, Demos & counselling) · Learning (Students, Admissions, Batches, LMS access) · Finance (Invoices, Payments & receipts, Collections, Refunds) · Operations (Tasks, Communications, Placement & alumni, Reports) · More (`MORE_ITEMS`: Persons, Counsellor Workspace, Branch Manager, Discount Approvals, Offer / Target / Course Master, Notifications, Sales playbook, Ask Nipuna, Admin / Settings) · Workflow guide pinned at the bottom with the signed-in person. Leads shows the new-enquiry count, Payments & receipts the claims awaiting verification. No "SAMPLE DATA" banner.
+- **Sidebar** (`auth/access.ts` `NAV_GROUPS`, gated with `allowed()`): Workspace (Overview, My work, AI assistant) · Sales (Enquiries, Leads, Deal pipeline, Demos & counselling) · Learning (Students, Admissions, Batches, LMS access) · Finance (Invoices, Payments & receipts, Collections, Refunds) · Operations (Tasks, Communications, Placement & alumni, Reports) · More (`MORE_ITEMS`: Persons, Counsellor Workspace, Branch Manager, Discount Approvals, Offer / Target / Course Master, Notifications, Sales playbook, Ask Nipuna, Admin / Settings) · Workflow guide pinned at the bottom with the signed-in person. Leads shows the new-enquiry count, Payments & receipts the claims awaiting verification. No "SAMPLE DATA" banner.
 - **Header**: person search (sales roles), branch switcher ("All Branches", locked for single-branch users), Ask Nipuna (managers), notifications, account avatar menu.
 - **Phone** (< 768px): bottom bar of five items from `mobileNavItems(roles)` — sales roles Home / Leads / Pipeline / Payments / AI; Accounts Home / Invoices / Payments / Collections / Tasks; trainers Home / Admissions / Batches / Tasks / Students; others Home / Tasks / Students / Alerts / More. The sidebar opens from the header. Checked at 360 and 390 px (no horizontal page scroll). `<DataTable stack>` turns a table into labelled cards on phones (opt-in).
 - **Shared components** (`components/crm/ui.tsx`): `LeadChip({ value, label? })`, `PriorityChip({ priority, score? })` and `leadTone(value)` — dot + text in the lead colours (Hot / New / New Enquiry green, Warm amber, Cold blue, Waiting for Batch / Future Joining violet); `Status` renders lead priorities and "New Enquiry" as lead chips automatically. `KpiCard` (label, tinted icon, value, hint, link), `StatTile` (label + count, optional filter toggle), `Avatar`, `WhatsAppButton`; Button variant `whatsapp` (`#25D366` / `#083E20`). `PageHead` takes an `eyebrow` (defaults to the branch scope).
@@ -478,7 +494,7 @@ $KEY ubuntu@$IP 'cd /srv/nipuna && set -a && . backend/.env && set +a &&
   psql "${DATABASE_URL/+psycopg/}" -v ON_ERROR_STOP=1 --single-transaction -f db/017_<name>.sql'
 ```
 
-Applied so far: `001` to `039`, `042`, `043`, `044` and `045` (applied 10 Oct 2026; the pre-V4 backup is `/srv/nipuna/backups/nipunacrm-before-v4-2026-10-10.dump`). `040` and `041` are not used.
+Applied so far: `001` to `039`, `042`, `043`, `044` and `045` (applied 10 Oct 2026; the pre-V4 backup is `/srv/nipuna/backups/nipunacrm-before-v4-2026-10-10.dump`), `046` (15 Oct 2026; backup `/srv/nipuna/backups/nipunacrm-before-046-2026-10-15.dump`) and `047` (19 Oct 2026; backups `nipunacrm-before-047-2026-10-19.dump`, `code-before-047-2026-10-19.tgz`, `env-before-047-2026-10-19`, `nginx-before-047-2026-10-19.tgz` in `/srv/nipuna/backups`). `040` and `041` are not used.
 
 **Applied on 10 Oct 2026** (notes on what each file does and what the server still needs, e.g. LMS or WhatsApp settings):
 
@@ -489,6 +505,13 @@ Applied so far: `001` to `039`, `042`, `043`, `044` and `045` (applied 10 Oct 20
 - **042 (staff WhatsApp alerts):** adds `whatsapp_outbox.recipient_user_id` and turns `whatsapp_staff_alerts_enabled` on by default (040 and 041 are not used). Staff need a number in `users.phone`; test numbers still gate every send.
 - **035–039 (UX build):** 035 lets a qualification tick be made by the system; 036 and 038 add notification rules; 037 adds the preferred batch, acceptance method and confirmation request to delivery plans; 038 adds `whatsapp_staff_alerts_enabled` (false); 039 adds `working_days_between()` and the four batch-delay settings. On the server add `LMS_WEB_URL` to `.env`. The `fee-expiry` and `batch-delay-alerts` jobs run from the existing every-minute cron. The two new WhatsApp templates (`nipuna_delivery_plan_confirm_v1`, `nipuna_staff_payment_status_v1`, both Utility) need Pinbot approval before sending is switched on, and so do the 12 added by the automatic WhatsApp round ([list](#templates-to-submit-to-pinbot)).
 - **031 (playbook):** seeds the six reply templates as Approved (attributed to the first Founder / Super Admin, who exists on the server) and five course paths as Draft; adds the `first-attempt` job's rules.
+
+**`047` (website enquiry form), applied 19 Oct 2026.** Done on the server (repeat these steps on a rebuild): `WEBSITE_INTAKE_KEY` is in `/srv/nipuna/backend/.env` (the owner chose the same value as local dev); nginx has `/etc/nginx/conf.d/website-enquiries-zone.conf` and `/etc/nginx/snippets/website-enquiries.conf`, included in both HTTPS server blocks (`sites-available/nipuna` and `nipunacrm-domain`) before `location /api/`. Checked live: no / wrong key 401, invalid body 400, body over 16 KB 413. The steps:
+
+- Apply `047_website_enquiries.sql`, deploy the backend and frontend, and add `WEBSITE_INTAKE_KEY=<value>` to `/srv/nipuna/backend/.env`, then restart `nipuna.service`. Give the key to the website team privately.
+- Rate-limit the endpoint in nginx as well as in the app. In the `http {}` block: `limit_req_zone $binary_remote_addr zone=website_enquiries:1m rate=30r/m;`. In the server block, before the general `/api/` location:
+  `location = /api/v1/integrations/website/enquiries { limit_req zone=website_enquiries burst=20 nodelay; limit_req_status 429; client_max_body_size 16k; proxy_pass http://127.0.0.1:5050; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }`
+  then `sudo nginx -t && sudo systemctl reload nginx`. Optionally add `allow <website server IP>; deny all;` once the website team gives a fixed IP.
 
 All files replay from scratch against `nipunacrm-dev` with a schema diff of 0. The staging seed on the server predates V4; reload it only if asked (`create-dev-db` refuses non-dev names, so it would be a manual rebuild).
 
@@ -548,12 +571,28 @@ aws ec2 start-instances --profile nipuna --instance-ids i-0f56f0778b34411e7
 
 ---
 
+#### Logs in CloudWatch (since 15 Oct 2026)
+
+The CloudWatch agent ships the server's logs to CloudWatch Logs (ap-south-1, personal account) with **3-day retention** (CloudWatch offers 1, 3, 5, 7 … days; there is no 2).
+
+| Log group | File on the server |
+|---|---|
+| `/nipuna/api` | `/var/log/nipuna/api.log` — gunicorn access lines + app logs (systemd drop-in `/etc/systemd/system/nipuna.service.d/logs.conf`; no longer in `journalctl -u nipuna`) |
+| `/nipuna/nginx-access` | `/var/log/nginx/access.log` (real client IPs) |
+| `/nipuna/nginx-error` | `/var/log/nginx/error.log` (group appears with the first error) |
+| `/nipuna/jobs` | `/srv/nipuna/jobs.log` (the every-minute cron) |
+
+- IAM: instance profile / role `nipuna-ec2-cloudwatch` with `CloudWatchAgentServerPolicy`.
+- Agent config: `/opt/aws/amazon-cloudwatch-agent/etc/nipuna.json`; status: `sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status`. It uses about 130 MB of the 1 GB RAM.
+- On disk, `/etc/logrotate.d/nipuna` rotates `api.log` and `jobs.log` daily and keeps 3.
+- Read: AWS console → CloudWatch → Log groups, or `aws --profile nipuna --region ap-south-1 logs tail /nipuna/api --since 1h`.
+
 ### 6. Not set up yet
 
 | Gap | Note |
 |---|---|
 | AI Copilot | No `ANTHROPIC_API_KEY` in the server `.env`, so the rule-based fallback is used |
-| Fixed address | No Elastic IP or domain, so the URL and certificate change on restart. For a stable address: own domain + Elastic IP, then the same certbot command |
+| Fixed address | **Domain live since 16 Oct 2026:** `https://nipunacrm.com` and `https://www.nipunacrm.com` (DNS A records at Hostinger → 15.252.72.136; nginx `sites-available/nipunacrm-domain`; Let's Encrypt cert `nipunacrm.com`, auto-renews). **Still no Elastic IP**, so a stop / start changes the IP and the domain stops working until the A records are updated. The old `15-252-72-136.sslip.io` block still works |
 | Automated backups | Manual `pg_dump` only |
 | LMS link | Migrations applied, but `LMS_BASE_URL` / `LMS_SERVICE_KEY` are not in the server `.env`, so the LMS jobs skip; no LMS reachable from the server |
 | WhatsApp | Switched on 10 Oct 2026 with `WHATSAPP_TEST_NUMBERS` set (only those numbers are messaged). Not set: `WHATSAPP_WEBHOOK_TOKEN`, so delivery callbacks and replies do not arrive. Templates without Pinbot approval fail with `(#132001)` |
@@ -694,12 +733,12 @@ Decisions waiting on the product owner, and API gaps found while connecting the 
 | D9 | V4 · conversion owner | Converting onto an existing card keeps that card's owner; the owner in the dialog applies to a new card only. Confirm, or let conversion reassign the card |
 | D10 | V4 · independent cash check | Recorded as a tick at verification; should the verifier also have to be someone other than the collector for cash? |
 | D11 | V4 · promises to pay | Moved to the invoice (one promise per invoice, shared by its courses). Confirm per-invoice rather than per-course promises |
-| D13 | LMS · instalments on multi-course invoices | Instalments are per invoice, so each admission on a two-course invoice carries the same schedule (flagged `installments_scope: "invoice"`). Confirm the LMS shows it as the invoice's, or decide a per-course split |
+| D13 | LMS · instalments on multi-course invoices | Instalments are per invoice, so each admission on a two-course invoice carries the same schedule (flagged `installments_scope: "invoice"`). **Settled (LMS round 7, 17 Oct 2026):** the LMS shows and sums the schedule once per invoice and keeps per-course figures per admission; no per-course split |
 | D15 | CRM AI playbook · assumptions (built — confirm) | (1) Converted leads count as contacted for the first-attempt clock (older records have no logged call); (2) alerts only for enquiries captured in the last 2 days; (3) "fee shared, learner silent" = no contact for 3 days; (4) recoverable lost reasons = timing, location, fee too high (+ any due reactivation date); (5) the six spec templates are seeded as Approved, the course paths as Draft; (6) recovery tasks go to the lead owner, else the Sales team queue |
 | D16 | CRM AI playbook · release 2 | Automatic acknowledgement / reminders / unanswered sequences need a live WhatsApp provider (opt-in, 24-hour window, approved templates, delivery webhooks). `ai_branch_controls` refuses Approved automatic until then |
-| D17 | LMS · batch readiness values | The CRM stores the LMS's readiness as free text and treats only `Blocked` as not public (LMS Q3). Confirm no other readiness value should hide a batch from sales |
+| D17 | LMS · batch readiness values | The CRM stores the LMS's readiness as free text and treats only `Blocked` as not public (LMS Q3). **Settled (LMS round 7):** the LMS sends only `Ready`, `Pending Verification` and `Blocked`; only `Blocked` hides a batch from sales |
 | D18 | WhatsApp · new templates | `nipuna_delivery_plan_confirm_v1` ("Reply YES to confirm this plan"; params customer_name, branch_name, delivery_plan_no, course_name, learning_mode, start_window) and `nipuna_staff_payment_status_v1` (staff alert) await Pinbot approval. Until then plan acceptance is recorded by hand (In person / On a call) and the staff alert switch `whatsapp_staff_alerts_enabled` is now on by default (db 042). Every template to submit is listed in [Templates to submit to Pinbot](#templates-to-submit-to-pinbot) |
-| D19 | LMS · preferred batch | The CRM now sends optional `admission.preferred_batch_code` on `AdmissionQualified`. The LMS has to read it (ask in the LMS repo's `nipuna crm-docs/CRM_ROUND4_BATCH_PREFERENCE.md`); unknown keys are ignored today. The delivery plan is frozen once the deal is admitted, so the preference must be set before admission |
+| D19 | LMS · preferred batch | The CRM now sends optional `admission.preferred_batch_code` on `AdmissionQualified`. The LMS has to read it (ask in the LMS repo's `nipuna crm-docs/CRM_ROUND4_BATCH_PREFERENCE.md`); unknown keys are ignored today. The delivery plan is frozen once the deal is admitted, so the preference must be set before admission. **Settled (LMS round 7, LMS db 116):** the LMS reads and stores it as a preference only (never refused); a code naming no LMS batch comes back in `result.warnings`. The Branch Manager still allocates, in the LMS |
 | D20 | UX build follow-ups | `pipeline_stalled_days` has no seed row (default 7 in code; add one to make it editable in Settings); the pipeline card link casts `search` until Lead 360 declares `validateSearch` for `action`; `batch-delay-alerts` runs only while academics are managed in the LMS (the CRM's own `batch-allocation` job covers CRM-run academics); the new screens have no e2e spec beyond the updated `sales.spec.ts` "books a demo" |
 
 #### Templates to submit to Pinbot
@@ -722,6 +761,7 @@ All Utility, language `en`, none yet approved by Pinbot (the code in `backend/se
 | `nipuna_staff_leads_assigned_v1` | W3 | staff_name, lead_count, branch_name | Hello {{1}}, {{2}} new leads have been assigned to you at Nipuna Technologies ({{3}}). Please open the CRM, My leads, to start following them up. |
 | `nipuna_staff_approval_waiting_v1` | W3 | staff_name, request_code, learner_name, requested_extra, branch_name | Hello {{1}}, special closing request {{2}} for {{3}} of INR {{4}} at the {{5}} branch is waiting for your approval at Nipuna Technologies. Please open the CRM to decide it. |
 | `nipuna_staff_payment_to_verify_v1` | W3 | staff_name, transaction_no, learner_name, payment_amount, payment_mode, reference | Hello {{1}}, payment claim {{2}} from {{3}} of INR {{4}} by {{5}} (reference {{6}}) is waiting for verification at Nipuna Technologies. Please open the CRM to verify it. |
+| `nipuna_crm_password_reset_code_auth_v1` | Forgot password (db 046) | code | **Authentication** category, Meta's fixed wording: \*{{1}}\* is your verification code. For your security, do not share this code. — footer: This code expires in 10 minutes. — button: Copy code. Sample `{{1}}` = 482913 |
 
 **The nine LMS templates (round 6).** Sent by the LMS through `POST /lms/whatsapp`. Their drafts, with buttons and sample values, are in the LMS repo `docs/whatsapp-templates/` (replace `LMS_HOST` in each button before submitting); the CRM's copy, which must match what Pinbot approves, is `LMS_TEMPLATES` in `whatsapp_templates.py`: `nipuna_lms_password_reset_code_auth_v1` (Authentication, Copy code), `nipuna_lms_student_activation_link_u_v1`, `nipuna_lms_staff_account_invite_u_v1` (URL button with the token), `nipuna_lms_class_reminder_u_v1`, `nipuna_lms_class_cancelled_u_v1`, `nipuna_lms_class_rescheduled_u_v1`, `nipuna_lms_result_published_u_v1`, `nipuna_lms_certificate_issued_u_v1` (URL button with the certificate number), `nipuna_lms_batch_change_agreement_u_v1`. If Pinbot approves a different wording, update both copies.
 
