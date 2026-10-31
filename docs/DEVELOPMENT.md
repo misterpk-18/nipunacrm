@@ -39,17 +39,19 @@ nipuna-crm/
 | `DEV_DATABASE_URL` | Dev replica `nipunacrm-dev` with staging data; used when `APP_ENV=development` |
 | `TEST_DATABASE_URL` | Optional; defaults to `DATABASE_URL` + `_test` (`nipunacrm_test`) |
 | `SECRET_KEY`, `LOG_LEVEL`, `UPLOAD_DIR` | App settings |
+| `S3_IMPORT_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | Where CSV lead imports keep the uploaded file: private, encrypted, versioned bucket `nipuna-crm-imports` (ap-south-1, personal account, created 20 Oct 2026). Empty bucket = local disk under `UPLOAD_DIR`. Keys unset = the instance role (the EC2 role needs `s3:PutObject` on the bucket before the server `.env` gets `S3_IMPORT_BUCKET`) |
 | `ANTHROPIC_API_KEY`, `AI_MODEL` | Claude for the AI briefs, counselling brief and Ask Nipuna (`AI_MODEL` default `claude-opus-5-5`, Claude Opus 5.5). Unset = rule-based answers (the case today) |
 | `OPENAI_API_KEY`, `LANGSMITH_*` | In `.env` but not read by the code |
 | `LMS_BASE_URL`, `LMS_SERVICE_KEY` | The Nipuna LMS (local: `http://127.0.0.1:5060`); the key is the LMS's `CRM_SERVICE_KEY` — get it from the LMS owner, never commit or print it. Unset = events wait in `lms_outbox` |
 | `LMS_TIMEOUT_SECONDS` | Optional, default 10 |
 | `WEBSITE_INTAKE_KEY` | The key the nipunatechnologies.com server sends as `X-Service-Key` to `POST /api/v1/integrations/website/enquiries` ([API.md · Step 29](API.md#step-29--website-enquiry-form--dev-and-ec2-19-oct-2026), [WEBSITE_INTEGRATION.md](WEBSITE_INTEGRATION.md)). Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`, give it to the website team privately, never commit or print it; a different value per environment. Unset = the endpoint refuses everything. Set on local dev and on EC2 (19 Oct 2026, same value by the owner's choice) |
 | `LMS_WEB_URL` | The LMS web app (dev `http://127.0.0.1:5174`; tests `http://lms-web.test`). Used only for the **Open in LMS** link on Waiting for batch; unset = the link is hidden with a hint. Add it to the server `.env` too |
+| `LMS_SYNC_FROM_DATE` | Optional `YYYY-MM-DD`. Admissions dated before it are never sent to the LMS (their Pending events become Superseded). Set it when linking a production LMS so it starts without test data; a future date sends no admissions ([API.md · Step 22](API.md#step-22--lms-sync-outbox--dev-only)). Production: `2099-12-31` until go-live, then `2026-10-31` ([Part C · 8](#8-the-nipuna-lms-link-production)) |
 | `LMS_PUSH_ON_COMMIT`, `LMS_PUSH_TIMEOUT_SECONDS` | Push a request's LMS events right after it commits (default on, `0` turns it off), with a 3 s timeout |
-| `LMS_WHATSAPP_STATUS_EVENTS` | Default `0` (`1` on local dev since 18 Oct 2026). `1` = tell the LMS when a message it sent through `POST /lms/whatsapp` is Sent / Delivered / Read / Failed / Skipped (`WhatsappStatusUpdated` events, [API.md · Step 28](API.md#step-28--whatsapp-for-the-lms-round-6--dev-only)). Turn on only once the LMS has the handler, or every event fails with a Super Admin task. The same `LMS_SERVICE_KEY` also authenticates the LMS's calls to the CRM |
+| `LMS_WHATSAPP_STATUS_EVENTS` | Default `0` (`1` on local dev since 18 Oct 2026). `1` = tell the LMS when a message it sent through `POST /lms/whatsapp` is Sent / Delivered / Read / Failed / Skipped (`WhatsappStatusUpdated` events, [API.md · Step 28](API.md#step-28--whatsapp-for-the-lms-round-6--dev-only)). Turn on only once the LMS has the handler, or every event fails with a Super Admin task. The same `LMS_SERVICE_KEY` also authenticates the LMS's calls to the CRM. Production: `1` since 31 Oct 2026 |
 | `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_API_KEY` | WhatsApp through Pinbot ([API.md · Step 25](API.md#step-25--whatsapp-messages-outbox--dev-only)). Nothing is sent unless it is `1` and both the URL (`https://partnersv1.pinbot.ai/v3/<number id>/messages`) and the key are set; the key stays in `.env`, never committed or printed. Default off: rows wait in `whatsapp_outbox` |
 | `WHATSAPP_WEBHOOK_TOKEN` | The secret the provider sends (header `X-Webhook-Token` or `?token=`) to `POST /api/v1/webhooks/whatsapp` for delivery status and replies. Unset = the endpoint refuses everything |
-| `WHATSAPP_TEST_NUMBERS` | Comma-separated numbers with country code. When set, only these are messaged; every other row is Skipped. Keep it set on dev: the staging data holds real numbers. Local dev uses one number, `+919392329248` (owner's rule, 18 Oct 2026) |
+| `WHATSAPP_TEST_NUMBERS` | Comma-separated numbers with country code. When set, only these are messaged; every other row is Skipped. Keep it set on dev: the staging data holds real numbers. Local dev uses one number, `+919392329248` (owner's rule, 18 Oct 2026). **Production: unset since 31 Oct 2026** (owner's decision), so the server messages real numbers |
 | `WHATSAPP_MAX_AGE_HOURS`, `WHATSAPP_TIMEOUT_SECONDS`, `WHATSAPP_PUSH_ON_COMMIT`, `WHATSAPP_PUSH_TIMEOUT_SECONDS`, `WHATSAPP_INVOICE_CHANNEL` | Optional: 24, 10, on, 3, "your Nipuna counsellor" (the wording after "review the invoice through") |
 
 `backend/.env.example` lists the same variables without secrets.
@@ -420,7 +422,7 @@ How the test server is built, how to redeploy to it, and how to run it day to da
 | OS | Ubuntu 24.04 LTS, timezone Asia/Kolkata |
 | Disk | 20 GB gp3 |
 | Public address | Auto-assigned public IPv4, **no Elastic IP**, so it **changes on every stop/start** (see section 5) |
-| URL | **https://15-252-72-136.sslip.io** (sslip.io maps the dashed IP to the address; HTTP redirects to HTTPS) |
+| URL | **https://nipunacrm.com** (and `www`; since 16 Oct 2026, see section 6). The old **https://15-252-72-136.sslip.io** still works (sslip.io maps the dashed IP to the address; HTTP redirects to HTTPS) |
 | TLS certificate | Let's Encrypt via certbot (nginx plugin), registered without an email, auto-renewed by `certbot.timer`. It is tied to the hostname, so it has to be re-issued when the IP changes |
 | Security group | `sg-02132530c3cbda43c` (`nipuna-crm-test`): 22 from the developer's IP only, 80 and 443 from anywhere. 5432 is not open |
 | SSH key | `~/.ssh/nipuna-crm-test` (AWS key pair `nipuna-crm-test`) |
@@ -438,27 +440,22 @@ open https://${IP//./-}.sslip.io
 | Path / unit | What |
 |---|---|
 | `/srv/nipuna/backend` | Flask app (no tests, no local `.env`) |
-| `/srv/nipuna/backend/.env` | Server-only config: `APP_ENV=production`, `DATABASE_URL`, `SECRET_KEY`, `UPLOAD_DIR`. Generated on the server, never copied from a laptop, mode 600 |
+| `/srv/nipuna/backend/.env` | Server-only config: `APP_ENV=production`, `DATABASE_URL`, `SECRET_KEY`, `UPLOAD_DIR`, plus the WhatsApp, website, S3 import and LMS settings. Generated on the server, never copied from a laptop, mode 600. Back it up (`cp -p` into `backups/`) before every change |
 | `/srv/nipuna/backend/uploads` | Uploaded documents, payment proofs, CVs |
 | `/srv/nipuna/db` | SQL migrations |
 | `/srv/nipuna/frontend` | Built frontend (`frontend/dist` contents) |
 | `/srv/nipuna/venv` | Python 3.12 venv (`requirements.txt` + gunicorn) |
 | `nipuna.service` (systemd) | gunicorn, 2 workers, `127.0.0.1:5050`, restarts automatically |
 | `/etc/nginx/sites-available/nipuna` | Port 443 (certbot-managed TLS, port 80 redirects): static frontend with SPA fallback to `index.html`, `/api/` → `127.0.0.1:5050`, 10 MB upload limit |
-| `ubuntu` crontab | `flask --app app jobs run` every minute → `/srv/nipuna/jobs.log` (this runs **every registered job**, so the new `fee-expiry` and `batch-delay-alerts` need no extra line; `batch-delay-alerts` is working-day based, so `flask --app app jobs run batch-delay-alerts` hourly is also enough). Once the LMS link is live, add `flask --app app lms worker --duration 55` every minute too (delivery every 10 s, pull every minute) |
+| `ubuntu` crontab | `flask --app app jobs run` every minute → `/srv/nipuna/jobs.log` (this runs **every registered job**, so the new `fee-expiry` and `batch-delay-alerts` need no extra line; `batch-delay-alerts` is working-day based, so `flask --app app jobs run batch-delay-alerts` hourly is also enough). Since 28 Oct 2026 also `flask --app app lms worker --duration 55` every minute → `/srv/nipuna/lms-worker.log` (delivery every 10 s, pull every minute). Both log files print the time without the date: read new lines from a byte offset, not by time |
 
 #### Database
 
 - **PostgreSQL 18** (PGDG repo, the same major version as local development), listening on `127.0.0.1:5432` only.
 - **One database: `nipunacrm`** (production), owned by role `nipuna`. The password is only in the server's `.env`.
 - Built from `db/*.sql` in order. There is no `nipunacrm-dev` on the server.
-- Holds the first Founder / CEO login (`flask create-admin`, a real email) **plus the staging test data** (the 20 accounts in [Staging accounts](#staging-accounts), 8 courses, 20 leads, 5 admissions). The data was loaded on 27 Sep 2026 at the owner's request by running the seeder class directly, because `flask seed-dev` refuses any database not named `*-dev` or that already has users:
-  ```bash
-  cd /srv/nipuna/backend && APP_ENV=production ../venv/bin/python -c \
-    "from app import create_app; from cli.seed import Seeder; app = create_app(); app.app_context().push(); Seeder().run()"
-  ```
-  The pre-seed backup is `/srv/nipuna/backups/nipunacrm-before-seed-2026-09-27-2321.dump`. Don't run it again: the accounts already exist, so a second run fails.
-- ⚠️ The staging password is in the repo and the site is public, so anyone with the URL can log in as `founder@nipuna.test`. Fine for fictional test data only. Before any real data goes in, restore the backup or deactivate these accounts.
+- **Real data since 15 Oct 2026.** The staging data (loaded 27 Sep) was wiped on 15 Oct down to courses, config and one Founder / CEO login (backup `nipunacrm-before-wipe-2026-10-15.dump`). Since then it holds the real staff accounts, real leads and, from 31 Oct, two real admissions. Never load the staging seed here.
+- The combined LMS production test (28 Oct – 1 Nov 2026) ran on this database and was then restored, with the real rows replayed on top ([section 8](#8-the-nipuna-lms-link-production)).
 
 ---
 
@@ -494,7 +491,7 @@ $KEY ubuntu@$IP 'cd /srv/nipuna && set -a && . backend/.env && set +a &&
   psql "${DATABASE_URL/+psycopg/}" -v ON_ERROR_STOP=1 --single-transaction -f db/017_<name>.sql'
 ```
 
-Applied so far: `001` to `039`, `042`, `043`, `044` and `045` (applied 10 Oct 2026; the pre-V4 backup is `/srv/nipuna/backups/nipunacrm-before-v4-2026-10-10.dump`), `046` (15 Oct 2026; backup `/srv/nipuna/backups/nipunacrm-before-046-2026-10-15.dump`) and `047` (19 Oct 2026; backups `nipunacrm-before-047-2026-10-19.dump`, `code-before-047-2026-10-19.tgz`, `env-before-047-2026-10-19`, `nginx-before-047-2026-10-19.tgz` in `/srv/nipuna/backups`). `040` and `041` are not used.
+Applied so far: `001` to `039`, `042`, `043`, `044` and `045` (applied 10 Oct 2026; the pre-V4 backup is `/srv/nipuna/backups/nipunacrm-before-v4-2026-10-10.dump`), `046` (15 Oct 2026; backup `/srv/nipuna/backups/nipunacrm-before-046-2026-10-15.dump`) and `047` (19 Oct 2026; backups `nipunacrm-before-047-2026-10-19.dump`, `code-before-047-2026-10-19.tgz`, `env-before-047-2026-10-19`, `nginx-before-047-2026-10-19.tgz` in `/srv/nipuna/backups`) and `048` (CSV lead import, 20 Oct 2026; backups `nipunacrm-before-csv-import-2026-10-20-1618.dump`, `code-before-csv-import-2026-10-20-1618.tgz`; `S3_IMPORT_BUCKET` set). `040` and `041` are not used.
 
 **Applied on 10 Oct 2026** (notes on what each file does and what the server still needs, e.g. LMS or WhatsApp settings):
 
@@ -542,6 +539,16 @@ $KEY ubuntu@$IP 'cd /srv/nipuna && set -a && . backend/.env && set +a && pg_dump
 ```
 
 For a whole-disk copy, take an EBS snapshot (check the account first).
+
+Dumps kept in `/srv/nipuna/backups` (mode 600, real data):
+
+| File | What |
+|---|---|
+| `nipunacrm-before-link-test-2026-10-28.dump` | State before the LMS production test (28 Oct 08:07); restored on 1 Nov |
+| `nipunacrm-after-link-test-2026-10-31.dump` | Evidence of the whole test, taken just before that restore (sha256 `5e75b51b…`) |
+| `real-data-since-link-test-2026-10-31.txt`, `m3b-replay-2026-10-31.sql` | The real rows made during the test, and the SQL that replayed them |
+
+**Restoring over the live database:** stop the API and comment out the cron lines first, then `pg_restore -d "$DBURL" --clean --if-exists --no-owner --single-transaction --exit-on-error <dump>` (about 1 s). To rehearse, restore a copy of live into a scratch database first and run the same command over it: `--clean` into an empty database fails on a view.
 
 ---
 
@@ -594,8 +601,8 @@ The CloudWatch agent ships the server's logs to CloudWatch Logs (ap-south-1, per
 | AI Copilot | No `ANTHROPIC_API_KEY` in the server `.env`, so the rule-based fallback is used |
 | Fixed address | **Domain live since 16 Oct 2026:** `https://nipunacrm.com` and `https://www.nipunacrm.com` (DNS A records at Hostinger → 15.252.72.136; nginx `sites-available/nipunacrm-domain`; Let's Encrypt cert `nipunacrm.com`, auto-renews). **Still no Elastic IP**, so a stop / start changes the IP and the domain stops working until the A records are updated. The old `15-252-72-136.sslip.io` block still works |
 | Automated backups | Manual `pg_dump` only |
-| LMS link | Migrations applied, but `LMS_BASE_URL` / `LMS_SERVICE_KEY` are not in the server `.env`, so the LMS jobs skip; no LMS reachable from the server |
-| WhatsApp | Switched on 10 Oct 2026 with `WHATSAPP_TEST_NUMBERS` set (only those numbers are messaged). Not set: `WHATSAPP_WEBHOOK_TOKEN`, so delivery callbacks and replies do not arrive. Templates without Pinbot approval fail with `(#132001)` |
+| LMS go-live | **Linked since 28 Oct 2026**, but admissions are held back by `LMS_SYNC_FROM_DATE=2099-12-31` until the start date ([section 8](#8-the-nipuna-lms-link-production)) |
+| WhatsApp | Switched on 10 Oct 2026; **`WHATSAPP_TEST_NUMBERS` removed on 31 Oct 2026**, so real learners and staff are messaged. Not set: `WHATSAPP_WEBHOOK_TOKEN`, so delivery callbacks and replies do not arrive (only Sent / Failed, never Delivered / Read). Templates without Pinbot approval fail with `(#132001)`: today the staff alerts, `nipuna_instalment_due_u_v1` and `nipuna_demo_booked_u_v1` |
 
 ---
 
@@ -611,6 +618,107 @@ This is how the current one was built (27 Sep 2026). Check the account first.
 6. Install `nipuna.service`, the nginx site (remove `sites-enabled/default`) and the jobs crontab line.
 7. HTTPS: open 443 in the security group, set `server_name <dashed-ip>.sslip.io` in the nginx site, install `certbot python3-certbot-nginx`, then run the `certbot --nginx ... --redirect` command from section 5.
 8. `APP_ENV=production flask --app app create-admin --role FOUNDER_CEO` for the first login. Share the password privately, and change it after the first login.
+
+---
+
+### 8. The Nipuna LMS link (production)
+
+Linked on 28 Oct 2026. The two teams agree each change through notes exchanged between the repos, and the owner approves every production step. The LMS repo keeps the full test plan and results (`docs/PRODUCTION_TEST_PLAN.md`); this section keeps what the CRM side needs.
+
+#### Settings
+
+| Where | Value |
+|---|---|
+| Server `.env` | `LMS_BASE_URL` and `LMS_WEB_URL` = `https://3-111-225-125.sslip.io` (the LMS's temporary address; it changes when the LMS gets its real hostname). `LMS_SERVICE_KEY` = the LMS's `CRM_SERVICE_KEY`, rotated on 1 Nov 2026. `LMS_SYNC_FROM_DATE=2099-12-31` until go-live. `LMS_WHATSAPP_STATUS_EVENTS=1` |
+| The LMS calls the CRM at | `https://nipunacrm.com/api/v1` (`POST /lms/whatsapp`, same key). Never the sslip.io name: it changes with the IP |
+| Crontab | `jobs run` and `lms worker --duration 55`, both every minute (section 1). `jobs run` also delivers (job `lms-sync`), so pausing only the worker line does not stop pushes |
+| Agreed with the LMS (23 Oct) | The LMS keeps CRM event payloads for 1 year (its purge is still to be built). There is no deletion event: an erasure request is handled by hand on the LMS side |
+
+#### The service key
+
+- **Hand it over in person or through a password manager, never in chat or email.** The first key was pasted in chat, and on 31 Oct it also leaked into the server's sudo log, so it was rotated on 1 Nov.
+- **Never put a secret on a command line**, above all after `sudo`: sudo writes the full command to `/var/log/auth.log` and the journal. Feed it through a script on stdin (`ssh host 'bash -s' < script.sh`). The script reads the key from `.env` into a `mktemp` file under `/dev/shm`, uses `grep -Ff <file>` or `cmp` (never `echo`), and ends with `shred -u`.
+- **`/dev/shm` files vanish when the ssh session ends** (logind removes the user's IPC files), so keep each step that needs the file in one session.
+- **On a 401** the delivery run stops without counting an attempt. The row stays Pending and goes once the key is right.
+- **Rotation.**
+  1. The LMS sets a new `CRM_SERVICE_KEY`; from then on the old key gets 401.
+  2. Comment out the `lms worker` line.
+  3. Set `LMS_SERVICE_KEY` through stdin, restart, and resume the worker.
+  4. Check that the next pull in `lms-worker.log` has no 401.
+  5. Replace the old value in every `.env` backup and search the server for it. Before trusting the search, test it on a file that holds the key.
+
+#### Go-live (step M5, waiting for the owner's start date)
+
+1. The owner confirms the start date with the LMS team.
+2. Set `LMS_SYNC_FROM_DATE=2026-10-31` (the date of the first two real admissions) and restart.
+3. Run `flask --app app lms backfill`. Admissions that were Superseded don't count as sent, so it writes fresh events for admissions 3 and 4, and for every real admission entered since.
+4. Check:
+   - the worker delivers everything;
+   - `lms outbox` has no Failed rows;
+   - `lms reconcile` shows drift 0.
+
+   The two students then get a fresh LMS invite.
+
+Notes:
+- **A cutoff later than 31 Oct would not work.** The worker would supersede the backfilled events again for anything dated before it.
+- **Until go-live**, `lms reconcile` reports admissions 3 and 4 as "not on the LMS" (drift 2), and the daily `lms-reconcile` job raises one Super Admin task a day. This is expected.
+
+#### The combined production test (28 Oct – 1 Nov 2026)
+
+**Phases.** A to M of the LMS's plan, signed off by both teams on 1 Nov 00:20. All passed or were recorded as Skipped:
+- K5 and H2, H3 and H8 ran on the dev pair instead.
+- J2 was valid only while the test-number list was set.
+
+**How the test ran.**
+- **Before:** dump `nipunacrm-before-link-test-2026-10-28.dump` at 08:07, with counts in `backups/link-test-counts-before-2026-10-28.txt`.
+- **TEST records:** `TEST Student LMS` on WhatsApp `…9248`. Admission `NIT-GNT-2026-000001` was completed with certificate `NIT-CERT-2026-000001`. Admission `-000002` was transferred to Vijayawada, then cancelled.
+- **Phase D:** the cutoff was lowered to `2026-10-28` for this phase only.
+
+**What we learned about the CRM:**
+- Transfer and cancel refuse a Completed admission.
+- A new lead for an existing person sends `nipuna_enquiry_received_u_v3` again.
+- Finance snapshots and branch and course events ignore the cutoff.
+- UPI payments need a proof file.
+- The LMS keeps an allocation Active after completion until the batch ends.
+
+**Incident, 31 Oct.**
+- **Real admissions reached the LMS.** The cutoff was still at the phase D value, so two real admissions made on 31 Oct (`NIT-VIJ-2026-000001`, `NIT-GNT-2026-000003`) reached the LMS. The cutoff went back to `2099-12-31` at 16:46, and the LMS revoked both activation links.
+- **Messages to real students.** The owner removed `WHATSAPP_TEST_NUMBERS` at 16:17, and 10 waiting messages went to the two real students. 9 more failed on templates missing in Pinbot.
+
+**Restore, 1 Nov 00:01–00:02.**
+1. Paused both cron lines and stopped the API.
+2. Took the evidence dump, then restored the 28 Oct dump. Counts matched the P1 counts.
+3. Replayed the real rows made during the window: both real admissions with everything under them, `LD-00005`, the approval of `SCR-00001`, and a staff password change.
+
+**How the replay works:**
+- **Source:** `backups/m3b-replay-2026-10-31.sql`, run as `postgres`, rehearsed first on a scratch copy.
+- **Rows:** copied back exactly, with codes, dates and staff unchanged, inside one transaction with `session_replication_role = replica`, so triggers don't fire twice.
+- **Checks:** every foreign key is then checked by hand. The result was compared with the saved rows byte for byte.
+- **Left out:**
+  - generated columns (`leads.lead_status`);
+  - the LMS fields of those people and admissions, which were cleared;
+  - the two `lms-account-activated` WhatsApp rows, whose event keys would block the go-live message.
+- **Counters:** code counters and id sequences were set to their values before the restore, so nothing from the test is reused.
+
+**Voided TEST codes** (gaps in the numbering):
+
+| Records | Codes |
+|---|---|
+| Guntur admissions, invoices, payments and receipts | `NIT-GNT-2026-000001`–`000002`, `INV-GNT-2627-0001`–`0002`, `TXN-GNT-00001`–`00003`, `GNT-R-2627-00001`–`00003` |
+| Others | `PER-GNT-00003`, `ENQ-00004`, `ENQ-00006`, `LD-00004`, `LD-00006`, `PL-GNT-00003`, `PL-GNT-00005`, `FD-00003`, `FD-00004`, `DP-00001`, `DP-00002` |
+| Guntur batch | `NIT-GNT-BAT-2026-000001`. The next real batch is `-000002` |
+
+On the LMS side, `ENR-000001`–`000004` and student codes 1–3 of 2026 are void too.
+
+#### Open after the test
+
+| Item | Owner |
+|---|---|
+| Deploy the local `lms_pull.py` fix. Production sends "LMS account activated" on Invited instead of on activation, and fills `end_reason` on an Active allocation | CRM, owner's go-ahead |
+| Templates missing in Pinbot (9 failed sends): the staff alerts, `nipuna_instalment_due_u_v1`, `nipuna_demo_booked_u_v1`. The student activation link and staff invite templates are Rejected until the LMS has a real hostname | Owner, LMS |
+| Elastic IP: a stop / start changes the IP and breaks `nipunacrm.com` and the LMS's calls until DNS is edited | Owner |
+| `ENQ-00008` and its person are named / marked "Test" on a real admission | Owner to check |
+| LMS side: a student's email change does not re-sync their batch group; a student Google won't add stops that batch's Drive sync; learning reminders are off by default | LMS |
 
 ---
 
@@ -763,7 +871,7 @@ All Utility, language `en`, none yet approved by Pinbot (the code in `backend/se
 | `nipuna_staff_payment_to_verify_v1` | W3 | staff_name, transaction_no, learner_name, payment_amount, payment_mode, reference | Hello {{1}}, payment claim {{2}} from {{3}} of INR {{4}} by {{5}} (reference {{6}}) is waiting for verification at Nipuna Technologies. Please open the CRM to verify it. |
 | `nipuna_crm_password_reset_code_auth_v1` | Forgot password (db 046) | code | **Authentication** category, Meta's fixed wording: \*{{1}}\* is your verification code. For your security, do not share this code. — footer: This code expires in 10 minutes. — button: Copy code. Sample `{{1}}` = 482913 |
 
-**The nine LMS templates (round 6).** Sent by the LMS through `POST /lms/whatsapp`. Their drafts, with buttons and sample values, are in the LMS repo `docs/whatsapp-templates/` (replace `LMS_HOST` in each button before submitting); the CRM's copy, which must match what Pinbot approves, is `LMS_TEMPLATES` in `whatsapp_templates.py`: `nipuna_lms_password_reset_code_auth_v1` (Authentication, Copy code), `nipuna_lms_student_activation_link_u_v1`, `nipuna_lms_staff_account_invite_u_v1` (URL button with the token), `nipuna_lms_class_reminder_u_v1`, `nipuna_lms_class_cancelled_u_v1`, `nipuna_lms_class_rescheduled_u_v1`, `nipuna_lms_result_published_u_v1`, `nipuna_lms_certificate_issued_u_v1` (URL button with the certificate number), `nipuna_lms_batch_change_agreement_u_v1`. If Pinbot approves a different wording, update both copies.
+**The nine LMS templates (round 6).** Sent by the LMS through `POST /lms/whatsapp`. Their drafts, with buttons and sample values, are in the LMS repo `docs/whatsapp-templates/` (replace `LMS_HOST` in each button before submitting); the CRM's copy, which must match what Pinbot approves, is `LMS_TEMPLATES` in `whatsapp_templates.py`: `nipuna_lms_password_reset_code_auth_v2` (Authentication, Copy code), `nipuna_lms_student_activation_link_u_v1`, `nipuna_lms_staff_account_invite_u_v1` (URL button with the token), `nipuna_lms_class_reminder_u_v1`, `nipuna_lms_class_cancelled_u_v1`, `nipuna_lms_class_rescheduled_u_v1`, `nipuna_lms_result_published_u_v1`, `nipuna_lms_certificate_issued_u_v1` (URL button with the certificate number), `nipuna_lms_batch_change_agreement_u_v1`. If Pinbot approves a different wording, update both copies.
 
 ### 2. API gaps
 

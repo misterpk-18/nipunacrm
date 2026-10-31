@@ -37,12 +37,22 @@ class BaseConfig:
 
     # AI Copilot (step 19): without a key the rule-based fallback is used
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    # CSV lead imports keep the original file in S3 (private bucket). Credentials: AWS_ACCESS_KEY / AWS_SECRET_KEY, or the
+    # instance role when unset. Without S3_IMPORT_BUCKET the file is kept under UPLOAD_DIR instead.
+    S3_IMPORT_BUCKET = os.getenv("S3_IMPORT_BUCKET")
+    AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
+    AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+    AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+
     AI_MODEL = os.getenv("AI_MODEL", "claude-opus-5-5")
 
     # Nipuna LMS (db 026): admission / course / finance events are posted there by the lms-sync job.
     # Without both values the events stay Pending in lms_outbox.
     LMS_BASE_URL = os.getenv("LMS_BASE_URL")
     LMS_SERVICE_KEY = os.getenv("LMS_SERVICE_KEY")
+    # Production link: only admissions dated on or after this day (YYYY-MM-DD) are sent. Older admissions' events are
+    # marked Superseded instead, so a newly linked LMS starts without test or old data. Empty = no limit.
+    LMS_SYNC_FROM_DATE = os.getenv("LMS_SYNC_FROM_DATE")
     # The LMS web app (not its API): "Open in LMS" links on the Waiting for batch screen. Empty = no link shown.
     LMS_WEB_URL = os.getenv("LMS_WEB_URL")
     LMS_TIMEOUT_SECONDS = float(os.getenv("LMS_TIMEOUT_SECONDS", "10"))
@@ -89,6 +99,7 @@ class TestingConfig(BaseConfig):
     LOG_LEVEL = "WARNING"
     UPLOAD_DIR = Path(os.getenv("TEST_UPLOAD_DIR", "/tmp/nipuna-test-uploads"))
     ANTHROPIC_API_KEY = None  # tests never call the real API
+    S3_IMPORT_BUCKET = None           # CSV imports stay on local disk; the S3 call is faked where it is tested
     LMS_BASE_URL = "http://lms.test"  # tests replace the HTTP call
     LMS_SERVICE_KEY = "test-service-key"
     WEBSITE_INTAKE_KEY = "test-website-key"

@@ -422,11 +422,13 @@ def upload_import():
         v.string("content", required=True, strip=False)
         data = v.validate()
         file_name, content = data["file_name"], data["content"]
-    return created(imports_service.upload(file_name, content).to_dict())
+    batch = imports_service.upload(file_name, content)
+    return created({**batch.to_dict(), "preview": imports_service.preview(batch)})
 
 
 def get_import(import_id: int):
-    return ok(imports_service.get_import(import_id).to_dict())
+    batch = imports_service.get_import(import_id)
+    return ok({**batch.to_dict(), "preview": imports_service.preview(batch)})
 
 
 def run_import(import_id: int):

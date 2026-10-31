@@ -352,6 +352,7 @@ class LeadImport(db.Model):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=db.func.now())
     imported_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.user_id"))
     imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    storage_path: Mapped[str | None] = mapped_column(Text)  # db 048: s3://bucket/key (or a local path) of the uploaded CSV
 
     rows: Mapped[list["LeadImportRow"]] = relationship(
         cascade="all, delete-orphan", lazy="selectin", order_by="LeadImportRow.row_no"
@@ -375,6 +376,9 @@ class LeadImport(db.Model):
             "uploaded_at": self.uploaded_at,
             "imported_by": self.imported_by,
             "imported_at": self.imported_at,
+            "storage_path": self.storage_path,
+            "imported_rows": sum(r.result == "Imported" for r in self.rows),
+            "merged_rows": sum(r.merged for r in self.rows),
             "field_mapping": self.FIELD_MAPPING,
         }
         if include_rows:
@@ -400,6 +404,8 @@ class LeadImportRow(db.Model):
     matched_lead_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("leads.lead_id"))
     lead_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("leads.lead_id"))
     enquiry_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("enquiries.enquiry_id"))
+    matched_person_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("persons.person_id"))  # db 048
+    merged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     def to_dict(self) -> dict:
         return {
@@ -416,4 +422,6 @@ class LeadImportRow(db.Model):
             "matched_lead_id": self.matched_lead_id,
             "lead_id": self.lead_id,
             "enquiry_id": self.enquiry_id,
+            "matched_person_id": self.matched_person_id,
+            "merged": self.merged,
         }

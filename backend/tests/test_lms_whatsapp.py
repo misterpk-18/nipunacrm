@@ -87,7 +87,7 @@ def test_activation_token_is_hidden_and_forgotten_once_sent(client, student, mon
 
 def test_reset_code_fills_its_copy_button(client, student, monkeypatch):
     fake = provider(monkeypatch)
-    answer = send(client, template="nipuna_lms_password_reset_code_auth_v1", params=["482913"], lms_user_id=None,
+    answer = send(client, template="nipuna_lms_password_reset_code_auth_v2", params=["482913"], lms_user_id=None,
                   to=PHONE, dedupe_key="pwd-reset:5:1")
     message = row(answer["outbox_id"])
     assert message.category == "Authentication" and message.person_id is None

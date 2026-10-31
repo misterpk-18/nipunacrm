@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import current_app
 from sqlalchemy import func, select, text, update
@@ -231,11 +231,30 @@ def release_when_back() -> int:
     return db.session.execute(update(LmsOutbox).where(waiting).values(next_attempt_at=func.now())).rowcount
 
 
+def skip_before_cutoff() -> int:
+    """With LMS_SYNC_FROM_DATE set, a Pending row of an admission dated before it becomes Superseded and is never
+    sent (the production LMS starts without test or old students). Branch, course and finance-snapshot rows carry
+    no student data and still go."""
+    raw = current_app.config.get("LMS_SYNC_FROM_DATE")
+    if not raw:
+        return 0
+    cutoff = date.fromisoformat(raw)
+    skipped = db.session.execute(text("""
+        UPDATE lms_outbox o SET status = 'Superseded', last_error = 'Before LMS_SYNC_FROM_DATE', locked_until = NULL
+        WHERE o.status = 'Pending' AND o.record_key LIKE 'admission:%'
+          AND EXISTS (SELECT 1 FROM admissions a
+                      WHERE a.admission_id = CAST(substring(o.record_key FROM 11) AS BIGINT) AND a.admission_date < :cutoff)
+    """), {"cutoff": cutoff}).rowcount
+    db.session.commit()
+    return skipped
+
+
 def deliver(limit: int = 200, record_keys: list[str] | None = None) -> dict:
     """Post due Pending rows to the LMS (job lms-sync; or only the given records, for push_soon)."""
     if not configured():
         pending = db.session.execute(select(func.count()).where(LmsOutbox.status == "Pending")).scalar_one()
         return {"skipped": "LMS_BASE_URL / LMS_SERVICE_KEY not set", "pending": pending}
+    skipped = skip_before_cutoff()
     released = release_when_back() if record_keys is None else 0
     claimed = _claim(limit, record_keys)
     counts: Counter = Counter()
@@ -257,6 +276,8 @@ def deliver(limit: int = 200, record_keys: list[str] | None = None) -> dict:
             break
     if released:
         counts["released_after_outage"] = released
+    if skipped:
+        counts["skipped_before_cutoff"] = skipped
     return dict(counts) or {"delivered": 0}
 
 

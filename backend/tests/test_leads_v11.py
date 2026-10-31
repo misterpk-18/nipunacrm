@@ -103,53 +103,142 @@ def test_saved_views_shared_and_own(client, people):
 
 # ---------------------------------------------------------------- CSV import
 
-CSV = """full_name,mobile,email,course,branch,source
-Lokesh Babu,9000031001,lokesh.b@example.test,Data Science,NIT-GNT,Website
-Ananya Again,98765 43210,,NIT-CRS-018,Guntur,Google Ads
-Test Row,12345,invalid-email,Unknown Course,NIT-GNT,Website
-Mahesh T,9000031005,,Data Science,Hyderabad,Referral
-Pavani Sri,9000031002,,Data Science,NIT-VIJ,Meta Ads
+CSV = """full_name,mobile,email,course,branch,source,notes
+Lokesh Babu,9000031001,lokesh.b@example.test,Data Science,NIT-GNT,Website,ignored
+Ananya Again,98765 43210,ananya.new@example.test,NIT-CRS-018,Guntur,Google Ads,
+Ananya Rao,98765 43210,ananya.rao@example.test,,NIT-GNT,Website,
+Test Row,12345,invalid-email,Unknown Course,NIT-GNT,Website,
+Mahesh T,9000031005,mahesh@example.test,Data Science,Hyderabad,Referral,
+Pavani Sri,9000031002,pavani@example.test,Data Science,NIT-VIJ,Meta Ads,
+Only Name,,,,,,
+Lokesh Again,9000031001,lokesh.b@example.test,,NIT-GNT,Website,
+Lokesh Twice,9000031001,lokesh.b@example.test,Data Science,NIT-GNT,Website,
 """
 
 
-def test_csv_import_validates_then_imports(client, people, course):
-    create_lead(client, people["sravani"]["h"], course_id=course)  # Ananya, +919876543210
+def _upload_csv(client, headers, text=CSV, name="leads.csv"):
+    return client.post(f"{API}/lead-imports", headers=headers, data={"file": (io.BytesIO(text.encode()), name)},
+                       content_type="multipart/form-data")
+
+
+def test_csv_import_validates_then_merges(client, people, course, app):
+    from pathlib import Path
+
+    from models import Person
+
+    ananya = create_lead(client, people["sravani"]["h"], course_id=course)  # Ananya, +919876543210, no CSV match by course
+    ananya_person = db.session.get(Person, ananya["person"]["person_id"])
+    ananya_person.email = None  # an empty field the import may fill
+    db.session.flush()
     headers = people["sravani"]["h"]
 
-    upload = client.post(f"{API}/lead-imports", headers=headers, data={"file": (io.BytesIO(CSV.encode()), "leads.csv")},
-                         content_type="multipart/form-data")
+    upload = _upload_csv(client, headers)
     assert upload.status_code == 201, upload.get_json()
     batch = upload.get_json()["data"]
     assert batch["import_code"] == "IMP-00001" and batch["status"] == "Validated"
-    results = {row["full_name"]: row for row in batch["rows"]}
-    assert results["Lokesh Babu"]["result"] == "Ready"
-    assert results["Ananya Again"]["result"] == "Duplicate Review" and results["Ananya Again"]["matched_lead_id"]
-    assert set(results["Test Row"]["issues"]) >= {"Mobile number is not valid", "Invalid email", "Course not in Course Master"}
-    assert results["Mahesh T"]["issues"] == ["Branch not found"]
-    assert "Outside your branch scope" in results["Pavani Sri"]["issues"]
-    assert (batch["ready_rows"], batch["duplicate_rows"], batch["invalid_rows"]) == (1, 1, 3)
+    rows = {row["row_no"]: row for row in batch["rows"]}
+    assert rows[1]["result"] == "Ready"
+    assert rows[2]["result"] == "Invalid" and "already has the open lead" in rows[2]["issues"][0]  # same person, same course
+    assert rows[3]["result"] == "Duplicate Review" and rows[3]["matched_person_id"] == ananya_person.person_id
+    assert rows[4]["issues"] == ["mobile: not a valid phone number (10 digits, optional +91)",
+                                 "email: not a valid email address", "course: not in Course Master"]
+    assert rows[5]["issues"] == ["branch: not found"]
+    assert rows[6]["issues"][0] == "branch: outside your branch scope"
+    assert rows[7]["issues"] == ["mobile: required", "email: required", "branch: required", "source: required"]
+    assert rows[8]["result"] == "Duplicate Review" and rows[8]["matched_person_id"] is None  # same person as row 1
+    assert rows[9]["result"] == "Invalid" and "same mobile, course and branch as row 1" in rows[9]["issues"][0]
+    assert (batch["ready_rows"], batch["duplicate_rows"], batch["invalid_rows"]) == (1, 2, 6)
+
+    # sample records + per-column checks
+    preview = batch["preview"]
+    assert [r["row_no"] for r in preview["sample_rows"]] == [1, 2, 3, 4, 5] and preview["ignored_columns"] == ["notes"]
+    columns = {c["column"]: c for c in preview["columns"]}
+    assert columns["email"]["required"] and columns["email"]["filled"] == 8 and columns["email"]["invalid"] == 2
+    assert not columns["course"]["required"] and columns["mobile"]["invalid"] == 2
+
+    # the original file was kept (no bucket in tests -> local disk)
+    assert batch["storage_path"] == "lead-imports/IMP-00001/leads.csv"
+    assert (Path(app.config["UPLOAD_DIR"]) / batch["storage_path"]).read_text().startswith("full_name,mobile")
 
     assert client.get(f"{API}/lead-imports/{batch['import_id']}", headers=people["mounika"]["h"]).status_code == 404
     assert client.get(f"{API}/lead-imports/{batch['import_id']}", headers=people["bm"]["h"]).status_code == 200
 
+    persons_before = db.session.execute(select(db.func.count()).select_from(Person)).scalar()
     imported = client.post(f"{API}/lead-imports/{batch['import_id']}/import", headers=headers).get_json()["data"]
-    assert imported["status"] == "Imported"
-    rows = {row["full_name"]: row for row in imported["rows"]}
-    lokesh = db.session.get(Lead, rows["Lokesh Babu"]["lead_id"])
-    dup = db.session.get(Lead, rows["Ananya Again"]["lead_id"])
+    assert imported["status"] == "Imported" and (imported["imported_rows"], imported["merged_rows"]) == (3, 2)
+    done = {row["row_no"]: row for row in imported["rows"]}
+    lokesh = db.session.get(Lead, done[1]["lead_id"])
     assert lokesh.entry_method.code == "CSV_IMPORT" and lokesh.intake_status == "New" and lokesh.last_contacted_at is None
-    matched = db.session.get(Lead, results["Ananya Again"]["matched_lead_id"])
-    assert dup.intake_status == "Duplicate Review" and dup.person_id != matched.person_id  # never auto-merged
-    assert rows["Test Row"]["lead_id"] is None
+
+    # row 3 merged into Ananya: same person, a second lead, her empty email filled from the row
+    merged = db.session.get(Lead, done[3]["lead_id"])
+    assert done[3]["merged"] and merged.person_id == ananya_person.person_id and merged.intake_status == "New"
+    assert merged.lead_id != ananya["lead_id"] and ananya_person.email == "ananya.rao@example.test"
+    # row 8: merged into the person row 1 created, email already there
+    assert done[8]["merged"] and db.session.get(Lead, done[8]["lead_id"]).person_id == lokesh.person_id
+    # only Lokesh is a new person
+    assert db.session.execute(select(db.func.count()).select_from(Person)).scalar() == persons_before + 1
+    assert done[4]["lead_id"] is None and done[9]["result"] == "Invalid"
     assert client.post(f"{API}/lead-imports/{batch['import_id']}/import", headers=headers).status_code == 422
+
+
+def test_csv_import_merge_fills_empty_email_only(client, people, course):
+    from models import Person
+
+    lead = create_lead(client, people["sravani"]["h"], course_id=course, person={"full_name": "Ananya Rao", "phone": "98765 43210", "email": "old@example.test"})
+    person = db.session.get(Person, lead["person"]["person_id"])
+    text = "full_name,mobile,email,branch,source\nAnanya R,9876543210,new@example.test,NIT-GNT,Website\n"
+    batch = _upload_csv(client, people["sravani"]["h"], text).get_json()["data"]
+    assert batch["rows"][0]["result"] == "Duplicate Review"
+    client.post(f"{API}/lead-imports/{batch['import_id']}/import", headers=people["sravani"]["h"])
+    assert person.email == "old@example.test" and person.full_name == "Ananya Rao"  # nothing overwritten
 
 
 def test_csv_import_json_body_and_missing_columns(client, people):
     headers = people["bm"]["h"]
     bad = client.post(f"{API}/lead-imports", headers=headers, json={"content": "name,phone\nA,1\n"})
     assert bad.status_code == 400 and "Missing column: full_name" in bad.get_json()["error"]["details"]["content"]
+    partial = client.post(f"{API}/lead-imports", headers=headers, json={"content": "full_name,mobile\nA,9000000123\n"})
+    assert partial.status_code == 400
+    assert set(partial.get_json()["error"]["details"]["content"]) == {"Missing column: email", "Missing column: branch", "Missing column: source"}
     ok = client.post(f"{API}/lead-imports", headers=headers,
-                     json={"file_name": "x.csv", "content": "full_name,mobile,source,branch\nRavi,9000000123,Walk-in,NIT-GNT\n"})
+                     json={"file_name": "x.csv", "content": "full_name,mobile,email,source,branch\nRavi,9000000123,ravi@example.test,Walk-in,NIT-GNT\n"})
     assert ok.status_code == 201 and ok.get_json()["data"]["rows"][0]["result"] == "Ready"
+    assert client.post(f"{API}/lead-imports", headers=headers, json={"file_name": "x.xlsx", "content": "x"}).status_code == 400
     assert client.post(f"{API}/lead-imports", headers=people["accounts"]["h"], json={"content": "x"}).status_code == 403
     assert db.session.execute(select(LeadActivity)).first() is None
+
+
+class _FakeS3:
+    def __init__(self, fail=False):
+        self.puts, self.fail = [], fail
+
+    def put_object(self, **kwargs):
+        if self.fail:
+            raise RuntimeError("AccessDenied")
+        self.puts.append(kwargs)
+
+
+def test_csv_import_is_kept_in_s3(client, people, app, monkeypatch):
+    from services import storage
+
+    fake = _FakeS3()
+    monkeypatch.setattr(storage, "_s3_client", lambda: fake)
+    monkeypatch.setitem(app.config, "S3_IMPORT_BUCKET", "crm-test-bucket")
+    text = "full_name,mobile,email,branch,source\nRavi,9000000123,ravi@example.test,NIT-GNT,Website\n"
+    batch = _upload_csv(client, people["bm"]["h"], text, "my leads (1).csv").get_json()["data"]
+    assert batch["storage_path"] == "s3://crm-test-bucket/lead-imports/IMP-00001/my_leads__1_.csv"
+    assert fake.puts[0]["Bucket"] == "crm-test-bucket" and fake.puts[0]["Body"] == text.encode()
+    assert fake.puts[0]["ServerSideEncryption"] == "AES256"
+
+
+def test_csv_import_rejected_when_s3_fails(client, people, app, monkeypatch):
+    from models import LeadImport
+    from services import storage
+
+    monkeypatch.setattr(storage, "_s3_client", lambda: _FakeS3(fail=True))
+    monkeypatch.setitem(app.config, "S3_IMPORT_BUCKET", "crm-test-bucket")
+    text = "full_name,mobile,email,branch,source\nRavi,9000000123,ravi@example.test,NIT-GNT,Website\n"
+    response = _upload_csv(client, people["bm"]["h"], text)
+    assert response.status_code == 503 and response.get_json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+    assert db.session.execute(select(LeadImport)).first() is None  # nothing saved without the stored file

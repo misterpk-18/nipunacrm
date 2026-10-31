@@ -57,6 +57,11 @@ class BusinessRule(AppError):
     code = "BUSINESS_RULE"
 
 
+class StorageUnavailable(AppError):
+    status = 503
+    code = "STORAGE_UNAVAILABLE"
+
+
 class TooManyAttempts(AppError):
     status = 429
     code = "TOO_MANY_ATTEMPTS"

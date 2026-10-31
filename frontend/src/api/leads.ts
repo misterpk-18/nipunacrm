@@ -116,7 +116,13 @@ export type LeadImportRow = {
   matched_lead_id: number | null;
   lead_id: number | null;
   enquiry_id: number | null;
+  matched_person_id: number | null;
+  merged: boolean;
 };
+
+export type LeadImportColumn = { column: string; type: string; required: boolean; filled: number; invalid: number };
+
+export type LeadImportPreview = { columns: LeadImportColumn[]; ignored_columns: string[]; sample_rows: LeadImportRow[] };
 
 export type LeadImport = {
   import_id: number;
@@ -129,8 +135,12 @@ export type LeadImport = {
   invalid_rows: number;
   uploaded_at: DateTime;
   imported_at: DateTime | null;
+  storage_path: string | null;
+  imported_rows: number;
+  merged_rows: number;
   field_mapping: Record<string, string>;
   rows?: LeadImportRow[];
+  preview?: LeadImportPreview;
 };
 
 export type LeadFilters = {

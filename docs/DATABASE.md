@@ -35,36 +35,37 @@ The dev replica (`nipunacrm-dev`) and the pytest database (`nipunacrm_test`) are
 | Intake → genuine sync | ✅ Done | `014_lead_intake_sync_genuine.sql` — lead Invalid-Spam / Test excludes its enquiries from Genuine Enquiries |
 | Offer once per person | ✅ Done | `015_offer_once_per_person.sql` — a person can use each offer only once |
 | Complimentary rules | ✅ Done | `016_complimentary_rules.sql` — one complimentary course per offer per admission; never a course the person already has |
-| Person pipeline | ✅ Done (dev only) | `017_pipeline_entries.sql` — pipeline cards are persons (one per person per branch); leads get `lead_status` Active / Inactive |
-| Flexible instalments | ✅ Done (dev only) | `018_flexible_instalments.sql` — dates and amounts per instalment on the fee version, ₹1,000 admission token, due-soon and payment-gap alerts |
-| V4 · Qualify and convert | ✅ Done (dev only) | `019_qualify_convert.sql` — six-check qualification review; a lead joins the pipeline only through Convert; expected close on the card |
-| V4 · Delivery plans | ✅ Done (dev only) | `020_delivery_plans.sql` — one delivery plan per course deal (DP-00001), replacing the fee discussion's accepted plan |
-| V4 · Multi-course invoices | ✅ Done (dev only) | `021_multi_course_invoices.sql` — invoice lines, per-course payment allocation and balances, admission per line, issuer snapshot, invoice-level promises |
-| V4 · Fee change self-approval | ✅ Done (dev only) | `023_fee_change_self_approval.sql` — Founder / CEO and Super Admin may approve their own fee change request |
-| Admin Accounts access | ✅ Done (dev only) | `024_admin_accounts_access.sql` — Founder / CEO and Super Admin may apply approved fee changes |
-| Admin refund payout | ✅ Done (dev only) | `025_refund_admin_payout.sql` — an admin may pay out a refund they decided |
-| V4 · Transactions and receipts | ✅ Done (dev only) | `022_transaction_receipts.sql` — TXN numbers on record; receipt numbers only at verification; evidence and cash checks |
-| LMS outbox | ✅ Done (dev only) | `026_lms_outbox.sql` — admission / course / finance events for the Nipuna LMS, written in the same transaction as the change; per-record source versions |
-| LMS status pull | ✅ Done (dev only) | `027_lms_pull_enums.sql`, `028_lms_status_pull.sql` — the CRM mirrors what the LMS owns (login, LMS status, enrolment, batches, allocations, completion, certificate register); academic writes read-only while `academics_managed_in_lms` is on; Deferred refused |
+| Person pipeline | ✅ Done | `017_pipeline_entries.sql` — pipeline cards are persons (one per person per branch); leads get `lead_status` Active / Inactive |
+| Flexible instalments | ✅ Done | `018_flexible_instalments.sql` — dates and amounts per instalment on the fee version, ₹1,000 admission token, due-soon and payment-gap alerts |
+| V4 · Qualify and convert | ✅ Done | `019_qualify_convert.sql` — six-check qualification review; a lead joins the pipeline only through Convert; expected close on the card |
+| V4 · Delivery plans | ✅ Done | `020_delivery_plans.sql` — one delivery plan per course deal (DP-00001), replacing the fee discussion's accepted plan |
+| V4 · Multi-course invoices | ✅ Done | `021_multi_course_invoices.sql` — invoice lines, per-course payment allocation and balances, admission per line, issuer snapshot, invoice-level promises |
+| V4 · Fee change self-approval | ✅ Done | `023_fee_change_self_approval.sql` — Founder / CEO and Super Admin may approve their own fee change request |
+| Admin Accounts access | ✅ Done | `024_admin_accounts_access.sql` — Founder / CEO and Super Admin may apply approved fee changes |
+| Admin refund payout | ✅ Done | `025_refund_admin_payout.sql` — an admin may pay out a refund they decided |
+| V4 · Transactions and receipts | ✅ Done | `022_transaction_receipts.sql` — TXN numbers on record; receipt numbers only at verification; evidence and cash checks |
+| LMS outbox | ✅ Done | `026_lms_outbox.sql` — admission / course / finance events for the Nipuna LMS, written in the same transaction as the change; per-record source versions |
+| LMS status pull | ✅ Done | `027_lms_pull_enums.sql`, `028_lms_status_pull.sql` — the CRM mirrors what the LMS owns (login, LMS status, enrolment, batches, allocations, completion, certificate register); academic writes read-only while `academics_managed_in_lms` is on; Deferred refused |
 | LMS curriculum mapping | ⛔ Removed by 043 | `030_lms_curriculum_mapping.sql` (superseded) — LMS catalogue on `curriculum_versions` (track, Draft / Active / Retired); CRM mappings pushed to the LMS wait as Pending LMS → Confirmed / Refused; event `AdmissionCurriculumMapped`; daily drift-check marker |
-| Curriculum removal | ✅ Done (dev only) | `043_remove_curriculum.sql` — curriculum versions and mapping dropped; allocation checks course / branch / seat / enrolment status only; Academic Coordinator role merged into Branch Manager |
-| CRM AI sales playbook | ✅ Done (dev only) | `031_sales_playbook.sql` — first-response clock, stop contact, contact outcomes / states, objections, approved sales knowledge and reply templates, course paths, AI branch controls, AI action record |
-| LMS batch offerability | ✅ Done (dev only) | `032_lms_batch_offerability.sql` — the LMS's seats left and readiness on mirrored batches; `offerable_batches` view (what sales may name to a learner) |
-| WhatsApp outbox | ✅ Done (dev only) | `033_whatsapp_outbox.sql` — template messages to learners (Pinbot), written in the same transaction as the payment, refund or invoice they report; Queued → Sent → Delivered → Read, Failed, Skipped |
-| WhatsApp phases 2–4 | ✅ Done (dev only) | `034_whatsapp_phase2_4.sql` — a code for placement applications, WhatsApp marketing consent on persons, a 30-day log of the provider's callbacks |
-| UX · System ticks | ✅ Done (dev only) | `035_qualification_system_ticks.sql` — a qualification tick can be made by the system (`reviewed_by` NULL) |
-| UX · Demo outcome alert | ✅ Done (dev only) | `036_demo_outcome_notification.sql` — notification rule `DEMO_OUTCOME_RECORDED` |
-| UX · Delivery plan | ✅ Done (dev only) | `037_delivery_plan_ux.sql` — preferred batch, how the plan was accepted, WhatsApp confirmation request |
-| UX · Payment alerts | ✅ Done (dev only) | `038_payment_outcome_alerts.sql` — rules `PAYMENT_VERIFIED` / `PAYMENT_FAILED`, setting `whatsapp_staff_alerts_enabled` |
-| UX · Waiting for batch | ✅ Done (dev only) | `039_batch_waiting.sql` — `working_days_between()`, four batch-delay settings, three batch-delay rules |
-| Forgot password (WhatsApp code) | ✅ Done (dev only) | `046_password_reset_codes.sql` — `password_reset_codes` (hashed one-time codes, spent once), `whatsapp_outbox` accepts `password_reset` rows without a person and with a secret, four `password_reset_*` settings |
-| Website enquiry form | ✅ Done (dev and EC2) | `047_website_enquiries.sql` — `enquiries.external_ref` / `attribution` / `whatsapp_consent`, three `website_*` settings, rule `WEBSITE_ENQUIRY_RECEIVED` |
-| LMS WhatsApp (round 6) | ✅ Done (dev only) | `045_lms_whatsapp.sql` — LMS messages in `whatsapp_outbox` (no person / branch needed), `secret_params` cleared once final, category Authentication, `lms_outbox` accepts `WhatsappStatusUpdated` |
-| WhatsApp notifications switch | ✅ Done (dev and EC2) | `044_whatsapp_notifications_switch.sql` — `persons.whatsapp_notifications` (default true) |
-| Staff WhatsApp alerts | ✅ Done (dev only) | `042_staff_whatsapp_alerts.sql` — `whatsapp_outbox.recipient_user_id`, the guard now freezes it, payment-alert rows back-filled, `whatsapp_staff_alerts_enabled` now true |
-| LMS branch events | ✅ Done (dev only) | `029_lms_branch_events.sql` — outbox accepts `BranchUpserted` and `BranchFinanceSnapshot` (owner decisions D3 / D4); new outbox status Superseded for a snapshot replaced before it was sent |
+| Curriculum removal | ✅ Done | `043_remove_curriculum.sql` — curriculum versions and mapping dropped; allocation checks course / branch / seat / enrolment status only; Academic Coordinator role merged into Branch Manager |
+| CRM AI sales playbook | ✅ Done | `031_sales_playbook.sql` — first-response clock, stop contact, contact outcomes / states, objections, approved sales knowledge and reply templates, course paths, AI branch controls, AI action record |
+| LMS batch offerability | ✅ Done | `032_lms_batch_offerability.sql` — the LMS's seats left and readiness on mirrored batches; `offerable_batches` view (what sales may name to a learner) |
+| WhatsApp outbox | ✅ Done | `033_whatsapp_outbox.sql` — template messages to learners (Pinbot), written in the same transaction as the payment, refund or invoice they report; Queued → Sent → Delivered → Read, Failed, Skipped |
+| WhatsApp phases 2–4 | ✅ Done | `034_whatsapp_phase2_4.sql` — a code for placement applications, WhatsApp marketing consent on persons, a 30-day log of the provider's callbacks |
+| UX · System ticks | ✅ Done | `035_qualification_system_ticks.sql` — a qualification tick can be made by the system (`reviewed_by` NULL) |
+| UX · Demo outcome alert | ✅ Done | `036_demo_outcome_notification.sql` — notification rule `DEMO_OUTCOME_RECORDED` |
+| UX · Delivery plan | ✅ Done | `037_delivery_plan_ux.sql` — preferred batch, how the plan was accepted, WhatsApp confirmation request |
+| UX · Payment alerts | ✅ Done | `038_payment_outcome_alerts.sql` — rules `PAYMENT_VERIFIED` / `PAYMENT_FAILED`, setting `whatsapp_staff_alerts_enabled` |
+| UX · Waiting for batch | ✅ Done | `039_batch_waiting.sql` — `working_days_between()`, four batch-delay settings, three batch-delay rules |
+| Forgot password (WhatsApp code) | ✅ Done | `046_password_reset_codes.sql` — `password_reset_codes` (hashed one-time codes, spent once), `whatsapp_outbox` accepts `password_reset` rows without a person and with a secret, four `password_reset_*` settings |
+| Website enquiry form | ✅ Done | `047_website_enquiries.sql` — `enquiries.external_ref` / `attribution` / `whatsapp_consent`, three `website_*` settings, rule `WEBSITE_ENQUIRY_RECEIVED` |
+| CSV lead import: S3 file + merge | ✅ Done | `048_lead_import_s3_merge.sql` — `lead_imports.storage_path`, `lead_import_rows.matched_person_id` / `merged` |
+| LMS WhatsApp (round 6) | ✅ Done | `045_lms_whatsapp.sql` — LMS messages in `whatsapp_outbox` (no person / branch needed), `secret_params` cleared once final, category Authentication, `lms_outbox` accepts `WhatsappStatusUpdated` |
+| WhatsApp notifications switch | ✅ Done | `044_whatsapp_notifications_switch.sql` — `persons.whatsapp_notifications` (default true) |
+| Staff WhatsApp alerts | ✅ Done | `042_staff_whatsapp_alerts.sql` — `whatsapp_outbox.recipient_user_id`, the guard now freezes it, payment-alert rows back-filled, `whatsapp_staff_alerts_enabled` now true |
+| LMS branch events | ✅ Done | `029_lms_branch_events.sql` — outbox accepts `BranchUpserted` and `BranchFinanceSnapshot` (owner decisions D3 / D4); new outbox status Superseded for a snapshot replaced before it was sent |
 
-Migrations 017–039, 042 and 043 exist only on `nipunacrm-dev` (and the test database); the main `nipunacrm` and the EC2 server are at 016 until a deploy is approved ([DEVELOPMENT.md · Part C](DEVELOPMENT.md#new-migrations)).
+Every file from `001` to `048` (`040` and `041` are not used) is applied on `nipunacrm-dev`, the test database and the EC2 production server, the last one (`048`) on 20 Oct 2026 ([DEVELOPMENT.md · Part C](DEVELOPMENT.md#new-migrations)).
 
 > **Read the "Prototype alignment" section at the end.** A full review of the prototype changed several earlier decisions (roles, payments before admission, advisory floor, fee changes). Where a phase section below disagrees with it, the alignment section wins.
 
@@ -287,7 +288,7 @@ Source: the Lovable project's code (`prototype/`), checked by running it with Pl
 | `invoices`, `invoice_balances` (view) | Invoice register: billed, verified paid, pending (never counted), waived, outstanding, completion, state |
 | `payment_correction_requests` | `CR-GNT-0001`; one pending per receipt; links the reversal it produced |
 | `demo_reminders`; `demos.demo_code` (`DM-GNT-0001`), `trainer_feedback`, `outcome`, `recommended_course_id`, `commercial_owner_id`, `next_follow_up_at`, `cancel_reason`, `reschedule_reason` | Demo scheduling, outcomes and reminders (`feedback` → `student_feedback`, `next_step` → `next_action`) |
-| `lead_imports`, `lead_import_rows` | CSV import review: row validation issues, Ready / Duplicate Review / Invalid / Imported, created lead |
+| `lead_imports`, `lead_import_rows` | CSV import review: row validation issues, Ready / Duplicate Review / Invalid / Imported, created lead. db 048: `lead_imports.storage_path` (S3 location of the uploaded file), `lead_import_rows.matched_person_id` (person a Duplicate Review row merges into) and `merged` (true once merged; only on Imported rows) |
 | `saved_views` | Lead list saved filters (5 shared views seeded) |
 | `leads.campaign`, `leads.remarks`, `persons.whatsapp_number` | Lead capture fields |
 | `lead_activities.purpose`, `lead_activities.demo_id` | Follow-up log (purpose + response) and demo timeline entries |

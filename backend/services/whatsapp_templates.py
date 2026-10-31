@@ -399,7 +399,7 @@ TEMPLATES = {t.name: t for t in (CRM_PASSWORD_RESET_CODE, REFUND_PAYOUT_COMPLETE
 # ---------------------------------------------------------------- sent by the LMS (round 6)
 
 LMS_PASSWORD_RESET_CODE = WhatsAppTemplate(
-    name="nipuna_lms_password_reset_code_auth_v1",
+    name="nipuna_lms_password_reset_code_auth_v2",
     language="en",
     category="Authentication",
     body=("*{{1}}* is your verification code. For your security, do not share this code.\n"

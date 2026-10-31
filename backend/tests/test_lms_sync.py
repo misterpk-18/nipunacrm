@@ -230,6 +230,20 @@ def test_not_configured_keeps_rows_pending(app, client, people, course):
     assert lms_delivery.deliver()["pending"] == 2
 
 
+def test_cutoff_date_skips_older_admissions(app, client, people, course, monkeypatch):
+    aid = admitted(client, people, course)["admission"]["admission_id"]
+    lms = FakeLms()
+    monkeypatch.setattr(lms_delivery, "post_event", lms)
+    app.config["LMS_SYNC_FROM_DATE"] = "2999-01-01"
+    result = lms_delivery.deliver()
+    assert result["skipped_before_cutoff"] == 2
+    assert {r.status for r in rows(f"admission:{aid}")} == {"Superseded"}
+    assert "AdmissionQualified" not in [b["event_type"] for b in lms.received]
+    app.config["LMS_SYNC_FROM_DATE"] = "2000-01-01"   # an older cutoff lets new admissions through
+    admitted(client, people, course)
+    assert lms_delivery.deliver().get("skipped_before_cutoff") is None
+
+
 # ---------------------------------------------------------------- backfill
 
 def test_backfill_is_resumable(app, client, people, course):
